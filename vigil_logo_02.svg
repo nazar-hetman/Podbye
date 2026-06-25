@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <!--
+    Vigil logo concept 02: Data Constellation.
+    Connected semantic nodes with thick orthogonal links. It suggests
+    relationships and meaning without using search, folders, locks, or shields.
+  -->
+  <title id="title">Vigil Data Constellation logo concept</title>
+  <desc id="desc">A compact network of connected data nodes in a retro system-map style.</desc>
+  <g fill="none" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M72 80H128V128H184M128 128V184M72 80V152H128" stroke="#8a9b8f" stroke-width="14"/>
+    <path d="M128 80V52M184 128h28M128 184v28M72 152H44" stroke="#7cc596" stroke-width="14"/>
+    <rect x="52" y="60" width="40" height="40" fill="#141d18" stroke="#7cc596" stroke-width="10"/>
+    <rect x="108" y="108" width="40" height="40" fill="#141d18" stroke="#d6e2da" stroke-width="10"/>
+    <rect x="164" y="108" width="40" height="40" fill="#141d18" stroke="#7cc596" stroke-width="10"/>
+    <rect x="108" y="164" width="40" height="40" fill="#141d18" stroke="#8a9b8f" stroke-width="10"/>
+    <rect x="60" y="140" width="24" height="24" fill="#7cc596"/>
+    <rect x="120" y="36" width="16" height="16" fill="#d6e2da"/>
+    <rect x="212" y="120" width="16" height="16" fill="#d6e2da"/>
+    <rect x="120" y="212" width="16" height="16" fill="#7cc596"/>
+    <rect x="28" y="144" width="16" height="16" fill="#8a9b8f"/>
+  </g>
+</svg>

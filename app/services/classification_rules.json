@@ -1,0 +1,647 @@
+{
+  "app_markers": {
+    "steam_appid.txt": {
+      "type": "game",
+      "name": null
+    },
+    "steamapps": {
+      "type": "game",
+      "name": "Steam Library"
+    },
+    "steam.exe": {
+      "type": "application",
+      "name": "Steam"
+    },
+    "epicgameslauncher.exe": {
+      "type": "application",
+      "name": "Epic Games Launcher"
+    },
+    "gog galaxy.exe": {
+      "type": "application",
+      "name": "GOG Galaxy"
+    },
+    "origin.exe": {
+      "type": "application",
+      "name": "EA Origin"
+    },
+    "riotclientservices.exe": {
+      "type": "application",
+      "name": "Riot Client"
+    },
+    "battlenet.exe": {
+      "type": "application",
+      "name": "Battle.net"
+    },
+    ".uproject": {
+      "type": "dev_project",
+      "name": null
+    },
+    "unrealengine": {
+      "type": "application",
+      "name": "Unreal Engine"
+    },
+    "deriveddatacache": {
+      "type": "shader_cache",
+      "name": "Unreal DDC"
+    },
+    "projectsettings": {
+      "type": "dev_project",
+      "name": null
+    },
+    "assembly-csharp.csproj": {
+      "type": "dev_project",
+      "name": null
+    },
+    "project.godot": {
+      "type": "dev_project",
+      "name": null
+    },
+    "blender.exe": {
+      "type": "application",
+      "name": "Blender"
+    },
+    "blender_cache": {
+      "type": "ai_cache",
+      "name": "Blender Cache"
+    },
+    "photoshop.exe": {
+      "type": "application",
+      "name": "Adobe Photoshop"
+    },
+    "afterfx.exe": {
+      "type": "application",
+      "name": "Adobe After Effects"
+    },
+    "illustrator.exe": {
+      "type": "application",
+      "name": "Adobe Illustrator"
+    },
+    "premiere pro.exe": {
+      "type": "application",
+      "name": "Adobe Premiere Pro"
+    },
+    "lightroom.exe": {
+      "type": "application",
+      "name": "Adobe Lightroom"
+    },
+    "bridge.exe": {
+      "type": "application",
+      "name": "Adobe Bridge"
+    },
+    "code.exe": {
+      "type": "application",
+      "name": "Visual Studio Code"
+    },
+    "devenv.exe": {
+      "type": "application",
+      "name": "Visual Studio"
+    },
+    "pycharm64.exe": {
+      "type": "application",
+      "name": "PyCharm"
+    },
+    "idea64.exe": {
+      "type": "application",
+      "name": "IntelliJ IDEA"
+    },
+    "webstorm64.exe": {
+      "type": "application",
+      "name": "WebStorm"
+    },
+    "rider64.exe": {
+      "type": "application",
+      "name": "JetBrains Rider"
+    },
+    "clion64.exe": {
+      "type": "application",
+      "name": "CLion"
+    },
+    "goland64.exe": {
+      "type": "application",
+      "name": "GoLand"
+    },
+    "sublime_text.exe": {
+      "type": "application",
+      "name": "Sublime Text"
+    },
+    "notepad++.exe": {
+      "type": "application",
+      "name": "Notepad++"
+    },
+    "ollama.exe": {
+      "type": "application",
+      "name": "Ollama"
+    },
+    "koboldcpp.exe": {
+      "type": "ai_models",
+      "name": "KoboldCpp"
+    },
+    "chrome.exe": {
+      "type": "application",
+      "name": "Google Chrome"
+    },
+    "firefox.exe": {
+      "type": "application",
+      "name": "Firefox"
+    },
+    "msedge.exe": {
+      "type": "application",
+      "name": "Microsoft Edge"
+    },
+    "brave.exe": {
+      "type": "application",
+      "name": "Brave Browser"
+    },
+    "obs64.exe": {
+      "type": "application",
+      "name": "OBS Studio"
+    },
+    "discord.exe": {
+      "type": "application",
+      "name": "Discord"
+    },
+    "slack.exe": {
+      "type": "application",
+      "name": "Slack"
+    },
+    "telegram.exe": {
+      "type": "application",
+      "name": "Telegram"
+    },
+    "spotify.exe": {
+      "type": "application",
+      "name": "Spotify"
+    },
+    ".sqlite": {
+      "type": "database",
+      "name": null
+    },
+    ".sqlite3": {
+      "type": "database",
+      "name": null
+    },
+    ".db": {
+      "type": "database",
+      "name": null
+    },
+    "lightroom catalog.lrcat": {
+      "type": "photo_collection",
+      "name": "Lightroom Catalog"
+    },
+    "captureone": {
+      "type": "photo_collection",
+      "name": "Capture One"
+    },
+    "davinci resolve": {
+      "type": "video_collection",
+      "name": "DaVinci Resolve"
+    },
+    "premiere pro proj": {
+      "type": "video_collection",
+      "name": "Premiere Pro Project"
+    },
+    "after effects proj": {
+      "type": "video_collection",
+      "name": "After Effects Project"
+    },
+    "ableton": {
+      "type": "audio_collection",
+      "name": "Ableton Live"
+    },
+    "fl studio": {
+      "type": "audio_collection",
+      "name": "FL Studio"
+    },
+    "saved games": {
+      "type": "game_saves",
+      "name": "Saved Games"
+    },
+    "saves": {
+      "type": "game_saves",
+      "name": "Game Saves"
+    },
+    "userdata": {
+      "type": "game_saves",
+      "name": "User Data"
+    },
+    "profiles": {
+      "type": "game_saves",
+      "name": "Profiles"
+    },
+    "docker-compose.yml": {
+      "type": "dev_project",
+      "name": null
+    },
+    "package.json": {
+      "type": "dev_project",
+      "name": null
+    },
+    "requirements.txt": {
+      "type": "dev_project",
+      "name": null
+    },
+    "pyproject.toml": {
+      "type": "dev_project",
+      "name": null
+    },
+    "cargo.toml": {
+      "type": "dev_project",
+      "name": null
+    },
+    "go.mod": {
+      "type": "dev_project",
+      "name": null
+    },
+    "pom.xml": {
+      "type": "dev_project",
+      "name": null
+    },
+    "build.gradle": {
+      "type": "dev_project",
+      "name": null
+    },
+    "portable": {
+      "type": "portable_app",
+      "name": null
+    },
+    "setup.exe": {
+      "type": "installer",
+      "name": "Installer"
+    },
+    "install.exe": {
+      "type": "installer",
+      "name": "Installer"
+    },
+    "unins000.exe": {
+      "type": "application",
+      "name": null
+    }
+  },
+  "dir_entity_map": {
+    "node_modules": "node_modules",
+    ".venv": "venv",
+    "venv": "venv",
+    "__pycache__": "cache_folder",
+    ".mypy_cache": "cache_folder",
+    ".pytest_cache": "cache_folder",
+    ".tox": "dev_artifacts",
+    ".gradle": "dev_artifacts",
+    ".cargo": "dev_artifacts",
+    ".rustup": "dev_artifacts",
+    ".m2": "dev_artifacts",
+    ".ivy2": "dev_artifacts",
+    ".nuget": "dev_artifacts",
+    "bower_components": "dev_artifacts",
+    "packages": "dev_artifacts",
+    ".git": "dev_project",
+    ".svn": "dev_project",
+    ".hg": "dev_project",
+    "dist": "build_folder",
+    "build": "build_folder",
+    "out": "build_folder",
+    "target": "build_folder",
+    ".next": "build_folder",
+    ".nuxt": "build_folder",
+    "coverage": "dev_artifacts",
+    "__snapshots__": "dev_artifacts",
+    "vendor": "dev_artifacts",
+    "gems": "dev_artifacts",
+    "site-packages": "dev_artifacts",
+    "dist-packages": "dev_artifacts",
+    "pods": "dev_artifacts",
+    ".terraform": "dev_artifacts",
+    "virtualbox vms": "vm_storage",
+    "memuhyperv vms": "vm_storage",
+    "vmware vms": "vm_storage",
+    "virtual machines": "vm_storage",
+    "virtual hard disks": "vm_storage",
+    "bluestacks_hdd": "vm_storage",
+    "qemu": "vm_storage",
+    "qemu vms": "vm_storage",
+    "qemu vm": "vm_storage",
+    "miniconda3": "development_environment",
+    "anaconda3": "development_environment",
+    "miniforge3": "development_environment",
+    "mambaforge": "development_environment",
+    "miniconda": "development_environment",
+    "anaconda": "development_environment",
+    "miniforge": "development_environment",
+    "huggingface": "ai_models",
+    "comfyui": "ai_models",
+    "invokeai": "ai_models",
+    "fooocus": "ai_models",
+    "stable-diffusion": "ai_models",
+    "stable-diffusion-webui": "ai_models",
+    "text-generation-webui": "ai_models",
+    "oobabooga": "ai_models",
+    ".ollama": "ai_models",
+    "checkpoints": "ai_models",
+    "embeddings": "ai_models",
+    "lora": "ai_models",
+    "vae": "ai_models",
+    "unet": "ai_models",
+    "text_encoder": "ai_models",
+    "tokenizer": "ai_models",
+    "safetensors": "ai_models",
+    "shadercache": "shader_cache",
+    "shader cache": "shader_cache",
+    "gpucache": "shader_cache",
+    "dxcache": "shader_cache",
+    "dxvk-cache": "shader_cache",
+    "glcache": "shader_cache",
+    "d3dscache": "shader_cache",
+    "pipelinecache": "shader_cache",
+    "deriveddatacache": "shader_cache",
+    "agisoft": "dataset",
+    "metashape": "dataset",
+    "realitycapture": "dataset",
+    "cache": "cache_folder",
+    "caches": "cache_folder",
+    ".cache": "cache_folder",
+    "tmp": "temp_folder",
+    "temp": "temp_folder",
+    "thumbnails": "cache_folder",
+    "thumbcache": "cache_folder",
+    "httpcache": "cache_folder",
+    "webcache": "cache_folder",
+    "diskcache": "cache_folder",
+    "logs": "log_folder",
+    "log": "log_folder",
+    "crashdumps": "log_folder",
+    "crashes": "log_folder",
+    "dump": "log_folder",
+    "dumps": "log_folder",
+    "backup": "backup_group",
+    "backups": "backup_group",
+    "old": "backup_group",
+    "archive": "archive_group",
+    "archives": "archive_group",
+    "export": "backup_group",
+    "exports": "backup_group",
+    "photos": "photo_collection",
+    "pictures": "photo_collection",
+    "images": "photo_collection",
+    "screenshots": "photo_collection",
+    "videos": "video_collection",
+    "movies": "video_collection",
+    "music": "audio_collection",
+    "audio": "audio_collection",
+    "songs": "audio_collection",
+    "podcasts": "audio_collection",
+    "documents": "document_folder",
+    "docs": "document_folder",
+    "saved games": "game_saves",
+    "saves": "game_saves",
+    "userdata": "game_saves",
+    "sav": "game_saves"
+  },
+  "cache_source_hints": {
+    "chrome": "Google Chrome",
+    "chromium": "Chromium",
+    "firefox": "Firefox",
+    "mozilla": "Firefox",
+    "edge": "Microsoft Edge",
+    "opera": "Opera",
+    "brave": "Brave",
+    "vivaldi": "Vivaldi",
+    "spotify": "Spotify",
+    "discord": "Discord",
+    "slack": "Slack",
+    "teams": "Microsoft Teams",
+    "onedrive": "OneDrive",
+    "dropbox": "Dropbox",
+    "steam": "Steam",
+    "epicgames": "Epic Games",
+    "blender": "Blender",
+    "unity": "Unity",
+    "unreal": "Unreal Engine",
+    "nvidia": "NVIDIA",
+    "amd": "AMD",
+    "intel": "Intel",
+    "windows": "Windows",
+    "microsoft": "Microsoft",
+    "adobe": "Adobe",
+    "npm": "npm",
+    "pip": "pip / Python",
+    "nuget": "NuGet",
+    "gradle": "Gradle",
+    "maven": "Maven",
+    "yarn": "Yarn",
+    "forticlient": "FortiClient",
+    "fortinet": "Fortinet",
+    "cisco": "Cisco",
+    "vpn": "VPN Client",
+    "malwarebytes": "Malwarebytes",
+    "avast": "Avast",
+    "avira": "Avira",
+    "kaspersky": "Kaspersky",
+    "bitdefender": "Bitdefender",
+    "eset": "ESET",
+    "sophos": "Sophos",
+    "mcafee": "McAfee",
+    "norton": "Norton",
+    "comodo": "Comodo",
+    "crowdstrike": "CrowdStrike",
+    "sentinelone": "SentinelOne",
+    "nordvpn": "NordVPN",
+    "expressvpn": "ExpressVPN",
+    "protonvpn": "ProtonVPN",
+    "mullvad": "Mullvad VPN",
+    "windscribe": "Windscribe",
+    "razer": "Razer",
+    "synapse": "Razer Synapse",
+    "logitech": "Logitech",
+    "corsair": "Corsair",
+    "icue": "iCUE (Corsair)",
+    "steelseries": "SteelSeries",
+    "asus": "ASUS",
+    "aura": "ASUS Aura",
+    "msi": "MSI",
+    "wacom": "Wacom",
+    "elgato": "Elgato",
+    "streamdeck": "Elgato Stream Deck",
+    "3dconnexion": "3Dconnexion",
+    "geforce": "NVIDIA GeForce",
+    "nvcorp": "NVIDIA",
+    "origin": "EA Origin",
+    "eadesktop": "EA Desktop",
+    "battlenet": "Battle.net",
+    "blizzard": "Blizzard Entertainment",
+    "riot": "Riot Games",
+    "gog": "GOG Galaxy",
+    "ubisoft": "Ubisoft Connect",
+    "uplay": "Ubisoft Connect",
+    "rockstar": "Rockstar Games",
+    "bethesda": "Bethesda",
+    "2k": "2K Games",
+    "paradox": "Paradox Interactive",
+    "ea": "Electronic Arts",
+    "python": "Python",
+    "java": "Java",
+    "jdk": "Java JDK",
+    "dotnet": "Microsoft .NET",
+    "node": "Node.js",
+    "nodejs": "Node.js",
+    "git": "Git",
+    "github": "GitHub",
+    "gitlab": "GitLab",
+    "jetbrains": "JetBrains",
+    "pycharm": "PyCharm",
+    "intellij": "IntelliJ IDEA",
+    "vscode": "VS Code",
+    "visualstudio": "Visual Studio",
+    "androidstudio": "Android Studio",
+    "eclipse": "Eclipse",
+    "docker": "Docker",
+    "terraform": "Terraform",
+    "azure": "Azure",
+    "autodesk": "Autodesk",
+    "maya": "Autodesk Maya",
+    "photoshop": "Adobe Photoshop",
+    "illustrator": "Adobe Illustrator",
+    "premiere": "Adobe Premiere Pro",
+    "aftereffects": "Adobe After Effects",
+    "lightroom": "Adobe Lightroom",
+    "acrobat": "Adobe Acrobat",
+    "substance": "Adobe Substance",
+    "figma": "Figma",
+    "gimp": "GIMP",
+    "davinci": "DaVinci Resolve",
+    "resolve": "DaVinci Resolve",
+    "handbrake": "HandBrake",
+    "obs": "OBS Studio",
+    "obs-studio": "OBS Studio",
+    "zoom": "Zoom",
+    "webex": "Cisco Webex",
+    "skype": "Skype",
+    "telegram": "Telegram",
+    "signal": "Signal",
+    "whatsapp": "WhatsApp",
+    "viber": "Viber",
+    "office": "Microsoft Office",
+    "onenote": "Microsoft OneNote",
+    "outlook": "Microsoft Outlook",
+    "softwaredistribution": "Windows Update Cache",
+    "mysql": "MySQL",
+    "postgresql": "PostgreSQL",
+    "mongodb": "MongoDB",
+    "redis": "Redis",
+    "qbittorrent": "qBittorrent",
+    "utorrent": "uTorrent",
+    "filezilla": "FileZilla",
+    "winscp": "WinSCP",
+    "wireshark": "Wireshark",
+    "winrar": "WinRAR",
+    "7zip": "7-Zip",
+    "notepadpp": "Notepad++",
+    "sublime": "Sublime Text",
+    "lenovo": "Lenovo",
+    "dell": "Dell",
+    "acer": "Acer",
+    "samsung": "Samsung",
+    "hp": "HP",
+    "virtualbox": "VirtualBox",
+    "vmware": "VMware",
+    "realtek": "Realtek",
+    "qualcomm": "Qualcomm",
+    "broadcom": "Broadcom",
+    "wg": "WireGuard"
+  },
+  "monolith_patterns": [
+    "texlive",
+    "miktex",
+    "matlab",
+    "paraview ",
+    "cygwin",
+    "msys64",
+    "msys2",
+    "vcpkg",
+    "androidsdk",
+    "android-sdk",
+    "android sdk",
+    "javasoft",
+    "jetbrains",
+    "qgis ",
+    "blender foundation",
+    "krita",
+    "gimp",
+    "inkscape",
+    "unity hub",
+    "python3",
+    "python 3",
+    "r-",
+    "microsoft visual studio",
+    "microsoft sdks",
+    "windows kits",
+    "obs studio",
+    "obs-studio",
+    "ffmpeg",
+    "imagemagick",
+    "wireshark",
+    "postgresql",
+    "mysql",
+    "mongodb",
+    "redis",
+    "docker",
+    "podman"
+  ],
+  "monolith_display_names": {
+    "texlive": "TeX Live",
+    "miktex": "MiKTeX",
+    "matlab": "MATLAB",
+    "paraview ": "ParaView",
+    "cygwin": "Cygwin",
+    "msys64": "MSYS2",
+    "msys2": "MSYS2",
+    "vcpkg": "vcpkg",
+    "androidsdk": "Android SDK",
+    "android-sdk": "Android SDK",
+    "android sdk": "Android SDK",
+    "javasoft": "Java Runtime",
+    "jetbrains": "JetBrains IDEs",
+    "qgis ": "QGIS",
+    "blender foundation": "Blender Foundation",
+    "krita": "Krita",
+    "gimp": "GIMP",
+    "inkscape": "Inkscape",
+    "unity hub": "Unity Hub",
+    "python3": "Python",
+    "python 3": "Python",
+    "r-": "R Statistical Computing",
+    "microsoft visual studio": "Microsoft Visual Studio",
+    "microsoft sdks": "Microsoft SDKs",
+    "windows kits": "Windows Kits",
+    "obs studio": "OBS Studio",
+    "obs-studio": "OBS Studio",
+    "ffmpeg": "FFmpeg",
+    "imagemagick": "ImageMagick",
+    "wireshark": "Wireshark",
+    "postgresql": "PostgreSQL",
+    "mysql": "MySQL",
+    "mongodb": "MongoDB",
+    "redis": "Redis",
+    "docker": "Docker",
+    "podman": "Podman"
+  },
+  "monolith_entity_types": {
+    "texlive": "dev_artifacts",
+    "miktex": "dev_artifacts",
+    "cygwin": "dev_artifacts",
+    "msys64": "dev_artifacts",
+    "msys2": "dev_artifacts",
+    "vcpkg": "dev_artifacts",
+    "androidsdk": "dev_artifacts",
+    "android-sdk": "dev_artifacts",
+    "android sdk": "dev_artifacts",
+    "javasoft": "dev_artifacts",
+    "python3": "dev_artifacts",
+    "python 3": "dev_artifacts",
+    "r-": "dev_artifacts",
+    "microsoft sdks": "dev_artifacts",
+    "windows kits": "dev_artifacts",
+    "postgresql": "database",
+    "mysql": "database",
+    "mongodb": "database",
+    "redis": "database"
+  }
+}

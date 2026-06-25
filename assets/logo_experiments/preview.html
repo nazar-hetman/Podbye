@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vigil Logo Experiments</title>
+  <style>
+    :root {
+      --forest: #7cc596;
+      --text: #d6e2da;
+      --muted: #8a9b8f;
+      --ink: #141d18;
+      --dark: #07110c;
+      --panel: #101a15;
+      --paper: #f2f5f0;
+      --paper-ink: #1c251f;
+      font-family: "JetBrains Mono", Consolas, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--ink);
+      color: var(--text);
+    }
+
+    main {
+      padding: 28px;
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: 18px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    p {
+      margin: 0 0 22px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .section {
+      margin: 18px 0 28px;
+      border: 1px solid rgba(138, 155, 143, 0.28);
+    }
+
+    .section h2 {
+      margin: 0;
+      padding: 10px 12px;
+      font-size: 11px;
+      letter-spacing: 0.24em;
+      text-transform: uppercase;
+      border-bottom: 1px solid rgba(138, 155, 143, 0.22);
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(140px, 1fr));
+      gap: 1px;
+      background: rgba(138, 155, 143, 0.18);
+    }
+
+    .card {
+      min-height: 230px;
+      padding: 18px;
+      background: var(--panel);
+    }
+
+    .light .card {
+      background: var(--paper);
+      color: var(--paper-ink);
+    }
+
+    .light h2 {
+      background: var(--paper);
+      color: var(--paper-ink);
+    }
+
+    .mono .card {
+      background: #111;
+      color: #eee;
+    }
+
+    .logo-box {
+      display: grid;
+      place-items: center;
+      height: 132px;
+      margin-bottom: 14px;
+      border: 1px solid rgba(138, 155, 143, 0.24);
+    }
+
+    img {
+      width: 104px;
+      height: 104px;
+      image-rendering: crisp-edges;
+    }
+
+    .mono img {
+      filter: grayscale(1) contrast(1.2);
+    }
+
+    h3 {
+      margin: 0 0 7px;
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .note {
+      margin: 0;
+      font-size: 11px;
+      line-height: 1.45;
+      color: var(--muted);
+    }
+
+    .light .note {
+      color: #536058;
+    }
+
+    .mono .note {
+      color: #aaa;
+    }
+
+    .scale-strip {
+      display: flex;
+      align-items: end;
+      gap: 10px;
+      margin-top: 14px;
+      min-height: 34px;
+    }
+
+    .scale-strip img:nth-child(1) {
+      width: 16px;
+      height: 16px;
+    }
+
+    .scale-strip img:nth-child(2) {
+      width: 32px;
+      height: 32px;
+    }
+
+    .scale-strip img:nth-child(3) {
+      width: 64px;
+      height: 64px;
+    }
+
+    @media (max-width: 980px) {
+      .row {
+        grid-template-columns: repeat(2, minmax(160px, 1fr));
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Vigil Logo Experiments</h1>
+    <p>Five SVG-only directions for a local-first system awareness console.</p>
+
+    <section class="section dark">
+      <h2>Dark Background</h2>
+      <div class="row">
+        <article class="card">
+          <div class="logo-box"><img src="vigil_logo_01.svg" alt="Signal Node logo"></div>
+          <h3>01 Signal Node</h3>
+          <p class="note">A telemetry beacon with a central datum and blocky signal reach.</p>
+          <div class="scale-strip"><img src="vigil_logo_01.svg" alt=""><img src="vigil_logo_01.svg" alt=""><img src="vigil_logo_01.svg" alt=""></div>
+        </article>
+        <article class="card">
+          <div class="logo-box"><img src="vigil_logo_02.svg" alt="System Grid logo"></div>
+          <h3>02 System Grid</h3>
+          <p class="note">Connected system nodes for topology, structure, and relationships.</p>
+          <div class="scale-strip"><img src="vigil_logo_02.svg" alt=""><img src="vigil_logo_02.svg" alt=""><img src="vigil_logo_02.svg" alt=""></div>
+        </article>
+        <article class="card">
+          <div class="logo-box"><img src="vigil_logo_03.svg" alt="Watchpoint logo"></div>
+          <h3>03 Watchpoint</h3>
+          <p class="note">An observer marker built from brackets and a central inspection datum.</p>
+          <div class="scale-strip"><img src="vigil_logo_03.svg" alt=""><img src="vigil_logo_03.svg" alt=""><img src="vigil_logo_03.svg" alt=""></div>
+        </article>
+        <article class="card">
+          <div class="logo-box"><img src="vigil_logo_04.svg" alt="Memory Map logo"></div>
+          <h3>04 Memory Map</h3>
+          <p class="note">Structured storage blocks with a semantic route through local data.</p>
+          <div class="scale-strip"><img src="vigil_logo_04.svg" alt=""><img src="vigil_logo_04.svg" alt=""><img src="vigil_logo_04.svg" alt=""></div>
+        </article>
+        <article class="card">
+          <div class="logo-box"><img src="vigil_logo_05.svg" alt="Operator Mark logo"></div>
+          <h3>05 Operator Mark</h3>
+          <p class="note">A compact standalone emblem with a subtle V structure and signal core.</p>
+          <div class="scale-strip"><img src="vigil_logo_05.svg" alt=""><img src="vigil_logo_05.svg" alt=""><img src="vigil_logo_05.svg" alt=""></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section light">
+      <h2>Light Background</h2>
+      <div class="row">
+        <article class="card"><div class="logo-box"><img src="vigil_logo_01.svg" alt="Signal Node logo"></div><h3>01 Signal Node</h3><p class="note">Beacon and monitoring activity.</p></article>
+        <article class="card"><div class="logo-box"><img src="vigil_logo_02.svg" alt="System Grid logo"></div><h3>02 System Grid</h3><p class="note">Topology and relationships.</p></article>
+        <article class="card"><div class="logo-box"><img src="vigil_logo_03.svg" alt="Watchpoint logo"></div><h3>03 Watchpoint</h3><p class="note">Observation without surveillance.</p></article>
+        <article class="card"><div class="logo-box"><img src="vigil_logo_04.svg" alt="Memory Map logo"></div><h3>04 Memory Map</h3><p class="note">Structured data regions.</p></article>
+        <article class="card"><div class="logo-box"><img src="vigil_logo_05.svg" alt="Operator Mark logo"></div><h3>05 Operator Mark</h3><p class="note">Distinct product symbol.</p></article>
+      </div>
+    </section>
+
+    <section class="section mono">
+      <h2>Monochrome Mode</h2>
+      <div class="row">
+        <article class="card"><div class="logo-box"><img src="vigil_logo_01.svg" alt="Signal Node logo"></div><h3>01 Signal Node</h3><p class="note">Readable by silhouette.</p></article>
+        <article class="card"><div class="logo-box"><img src="vigil_logo_02.svg" alt="System Grid logo"></div><h3>02 System Grid</h3><p class="note">Clear node pattern.</p></article>
+        <article class="card"><div class="logo-box"><img src="vigil_logo_03.svg" alt="Watchpoint logo"></div><h3>03 Watchpoint</h3><p class="note">Strong bracket shape.</p></article>
+        <article class="card"><div class="logo-box"><img src="vigil_logo_04.svg" alt="Memory Map logo"></div><h3>04 Memory Map</h3><p class="note">Block-map silhouette.</p></article>
+        <article class="card"><div class="logo-box"><img src="vigil_logo_05.svg" alt="Operator Mark logo"></div><h3>05 Operator Mark</h3><p class="note">Best compact icon form.</p></article>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

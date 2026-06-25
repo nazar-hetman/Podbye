@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <!--
+    Vigil logo concept 03: Watch Grid.
+    Minimal pixel matrix for calm awareness. The lit cells imply system
+    visibility and active understanding without eye, surveillance, or security symbols.
+  -->
+  <title id="title">Vigil Watch Grid logo concept</title>
+  <desc id="desc">A pixel matrix with highlighted cells forming a calm awareness field.</desc>
+  <g>
+    <rect x="40" y="40" width="32" height="32" fill="#8a9b8f"/>
+    <rect x="88" y="40" width="32" height="32" fill="#141d18" stroke="#8a9b8f" stroke-width="8"/>
+    <rect x="136" y="40" width="32" height="32" fill="#7cc596"/>
+    <rect x="184" y="40" width="32" height="32" fill="#141d18" stroke="#8a9b8f" stroke-width="8"/>
+
+    <rect x="40" y="88" width="32" height="32" fill="#141d18" stroke="#8a9b8f" stroke-width="8"/>
+    <rect x="88" y="88" width="32" height="32" fill="#7cc596"/>
+    <rect x="136" y="88" width="32" height="32" fill="#d6e2da"/>
+    <rect x="184" y="88" width="32" height="32" fill="#7cc596"/>
+
+    <rect x="40" y="136" width="32" height="32" fill="#7cc596"/>
+    <rect x="88" y="136" width="32" height="32" fill="#d6e2da"/>
+    <rect x="136" y="136" width="32" height="32" fill="#7cc596"/>
+    <rect x="184" y="136" width="32" height="32" fill="#141d18" stroke="#8a9b8f" stroke-width="8"/>
+
+    <rect x="40" y="184" width="32" height="32" fill="#141d18" stroke="#8a9b8f" stroke-width="8"/>
+    <rect x="88" y="184" width="32" height="32" fill="#7cc596"/>
+    <rect x="136" y="184" width="32" height="32" fill="#141d18" stroke="#8a9b8f" stroke-width="8"/>
+    <rect x="184" y="184" width="32" height="32" fill="#8a9b8f"/>
+
+    <rect x="120" y="120" width="16" height="16" fill="#141d18"/>
+  </g>
+</svg>

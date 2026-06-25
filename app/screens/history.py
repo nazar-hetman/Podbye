@@ -1,0 +1,1113 @@
+"""History screen — dual-panel investigation console.
+
+Two independent operational feeds, side by side:
+  Left  — Cleanup Sessions  (what was deleted, when, how much freed)
+  Right — Analyze Sessions  (scan runs, re-run / open findings)
+
+Each panel owns its own table, contextual detail, and empty state.
+"""
+from __future__ import annotations
+
+import datetime
+import os
+import time
+from collections import Counter
+
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QFrame, QScrollArea, QMessageBox,
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
+    QSizePolicy,
+)
+from PySide6.QtCore import Qt, Signal, QObject, QEvent
+from PySide6.QtGui import QColor, QBrush, QFontMetrics
+
+
+class _RowHoverFilter(QObject):
+    """Highlight the whole row on hover, not just the single cell under the cursor.
+
+    QTableWidget's ``::item:hover`` QSS selector only repaints the single cell
+    under the cursor — clicking a row gives row-level feedback, but hover never
+    does. We install this filter on the table's viewport, track the mouse-over
+    row ourselves and paint a background brush across every cell in that row.
+    """
+
+    def __init__(self, table: "QTableWidget", color: QColor):
+        super().__init__(table)
+        self._table = table
+        self._color = color
+        self._row = -1
+        table.viewport().installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if obj is self._table.viewport():
+            et = event.type()
+            if et == QEvent.MouseMove:
+                try:
+                    y = int(event.position().y())
+                except AttributeError:  # PySide6 < 6.x fallback
+                    y = event.pos().y()
+                new_row = self._table.rowAt(y)
+                if new_row != self._row:
+                    self._paint_row(self._row, False)
+                    self._row = new_row
+                    self._paint_row(new_row, True)
+            elif et == QEvent.Leave:
+                self._paint_row(self._row, False)
+                self._row = -1
+        return False
+
+    def _paint_row(self, row: int, hovered: bool):
+        if row < 0:
+            return
+        selected = self._table.selectionModel().isRowSelected(row, self._table.rootIndex())
+        p = get_palette()
+        if selected:
+            color = QColor(p.get("accent_soft", "#1b2e22"))
+        elif hovered:
+            color = self._color
+        else:
+            color = None
+        brush = QBrush(color) if color is not None else QBrush()
+        widget_bg = color.name() if color is not None else "transparent"
+        for col in range(self._table.columnCount()):
+            item = self._table.item(row, col)
+            if item is not None:
+                item.setBackground(brush)
+            widget = self._table.cellWidget(row, col)
+            if widget is not None:
+                widget.setStyleSheet(f"background: {widget_bg};")
+
+from app.themes.theme_manager import get_palette
+from app.models.finding import _format_size
+from app.models.risk import normalized_risk_totals
+from app.i18n import tr
+from app.services.cleanup_result_classifier import (
+    STATE_FAILED,
+    STATE_IN_USE,
+    STATE_PARTIAL,
+    assess_cleanup_counts,
+)
+from app.widgets.panels import apply_tactical_label
+
+
+# ── Helpers ───────────────────────────────────────────────────────
+
+
+def _format_when(ts: float) -> str:
+    if not ts:
+        return "—"
+    now = time.time()
+    days_ago = (now - ts) / 86400
+    dt = datetime.datetime.fromtimestamp(ts)
+    if days_ago < 1:
+        return f"Today {dt.strftime('%H:%M')}"
+    if days_ago < 2:
+        return f"Yesterday {dt.strftime('%H:%M')}"
+    if days_ago < 7:
+        return f"{int(days_ago)}d ago"
+    return dt.strftime("%Y-%m-%d")
+
+
+def _format_duration(seconds: float) -> str:
+    if seconds <= 0:
+        return "—"
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    m, s = divmod(int(seconds), 60)
+    if m < 60:
+        return f"{m}m {s:02d}s"
+    h, m = divmod(m, 60)
+    return f"{h}h {m:02d}m"
+
+
+def _short_target(target: str) -> str:
+    if not target:
+        return "—"
+    parts = target.replace("\\", "/").rstrip("/").split("/")
+    if len(parts) <= 3:
+        return target
+    return parts[0] + "/…/" + "/".join(parts[-2:])
+
+
+def _risk_pcts(risk_totals: dict) -> tuple:
+    risk_totals = normalized_risk_totals(risk_totals)
+    total = sum(risk_totals.values())
+    if not total:
+        return 33, 34, 33
+    safe = int(risk_totals.get("Safe", 0) * 100 / total)
+    review = int((risk_totals.get("Optional", 0) + risk_totals.get("Review", 0)) * 100 / total)
+    risk = max(100 - safe - review, 0)
+    return safe, review, risk
+
+
+def _category_totals_summary(category_totals: dict) -> str:
+    normalized = {}
+    for cat, value in (category_totals or {}).items():
+        if isinstance(value, dict):
+            count = value.get("count")
+            if count is None:
+                count = value.get("size_bytes", 0)
+        else:
+            count = value
+        try:
+            normalized[cat] = int(count or 0)
+        except (TypeError, ValueError):
+            normalized[cat] = 0
+    counts = Counter(normalized)
+    parts = [f"{cat} ({n})" for cat, n in counts.most_common(3) if n > 0]
+    if len(counts) > 3:
+        parts.append(f"+{len(counts) - 3} more")
+    return ", ".join(parts) if parts else "—"
+
+
+def _category_totals_top(category_totals: dict, limit: int = 3) -> list[tuple[str, int, int]]:
+    """Return [(category, count, size_bytes)] sorted by size, then count."""
+    rows: list[tuple[str, int, int]] = []
+    for cat, value in (category_totals or {}).items():
+        count = 0
+        size = 0
+        if isinstance(value, dict):
+            try:
+                count = int(value.get("count", 0) or 0)
+            except (TypeError, ValueError):
+                count = 0
+            try:
+                size = int(value.get("size_bytes", 0) or 0)
+            except (TypeError, ValueError):
+                size = 0
+        else:
+            try:
+                count = int(value or 0)
+            except (TypeError, ValueError):
+                count = 0
+        if count > 0 or size > 0:
+            rows.append((str(cat), count, size))
+    rows.sort(key=lambda row: (row[2], row[1]), reverse=True)
+    return rows[:limit]
+
+
+def _category_totals_outcome(category_totals: dict) -> str:
+    parts = []
+    for cat, count, size in _category_totals_top(category_totals):
+        if size:
+            parts.append(f"{cat} {_format_size(size)}")
+        else:
+            parts.append(f"{cat} {count}")
+    return ", ".join(parts) if parts else "No categories recorded"
+
+
+def _item_size_bytes(item: dict) -> int:
+    for key in ("reclaimable_bytes", "size_bytes", "bytes", "size"):
+        value = item.get(key)
+        if isinstance(value, (int, float)):
+            return int(value)
+    return 0
+
+
+def _cleanup_top_categories(items: list, limit: int = 3) -> list[tuple[str, int, int]]:
+    grouped: dict[str, dict[str, int]] = {}
+    for item in items:
+        label = _cleanup_target_label(item)
+        if label not in grouped:
+            grouped[label] = {"count": 0, "size": 0}
+        grouped[label]["count"] += 1
+        grouped[label]["size"] += _item_size_bytes(item)
+    rows = [
+        (label, data["count"], data["size"])
+        for label, data in grouped.items()
+    ]
+    rows.sort(key=lambda row: (row[2], row[1]), reverse=True)
+    return rows[:limit]
+
+
+def _cleanup_categories_outcome(items: list) -> str:
+    parts = []
+    for label, count, size in _cleanup_top_categories(items):
+        suffix = _format_size(size) if size else f"{count} items"
+        parts.append(f"{label} {suffix}")
+    return ", ".join(parts) if parts else "No cleaned categories recorded"
+
+
+def _attention_count(risk_totals: dict) -> int:
+    risk_totals = normalized_risk_totals(risk_totals)
+    review = int(risk_totals.get("Review", 0) or 0)
+    protected = int(risk_totals.get("Protected", 0) or 0)
+    return review + protected
+
+
+def _estimated_reclaimable(record: dict) -> int:
+    explicit = record.get("reclaimable_bytes") or record.get("total_reclaimable_bytes")
+    if isinstance(explicit, (int, float)):
+        return int(explicit)
+    return 0
+
+
+def _impact_label(size_bytes: int, *, attention_count: int = 0, found_count: int = 0) -> str:
+    if size_bytes >= 10 * 1024 ** 3 or attention_count >= 100:
+        return "High"
+    if size_bytes >= 1024 ** 3 or attention_count >= 10 or found_count >= 100:
+        return "Medium"
+    if size_bytes > 0 or attention_count > 0 or found_count > 0:
+        return "Low"
+    return "None"
+
+
+def _impact_color(impact: str, p: dict) -> str:
+    return {
+        "High": p.get("review", "#c7a66c"),
+        "Medium": p.get("safe", "#7aa88a"),
+        "Low": p.get("text_dim", "#8a9b8f"),
+        "None": p.get("text_faint", "#57685e"),
+    }.get(impact, p.get("text_dim", "#8a9b8f"))
+
+
+def _scan_mode_label(mode: str) -> str:
+    return tr("Adaptive scan") if mode == "smart" else tr("All files scan")
+
+
+def _cleanup_target_label(item: dict) -> str:
+    path = item.get("path", "") or ""
+    category = item.get("category", "") or ""
+    name = item.get("name", "") or ""
+    lowered = path.lower().replace("\\", "/")
+    known_labels = [
+        ("thumbcache", "Windows thumbnail database"),
+        ("softwaredistribution", "Windows update cache"),
+        ("google/chrome", "Chrome cache"),
+        ("microsoft/edge", "Edge cache"),
+        ("mozilla/firefox", "Firefox cache"),
+        ("appdata/local/temp", "User temporary files"),
+        ("/temp/", "Temporary files"),
+    ]
+    for token, label in known_labels:
+        if token in lowered:
+            return label
+    if category and category != name:
+        return category
+    if path:
+        return os.path.basename(path.rstrip("/\\")) or path
+    return name or category or "—"
+
+
+def _grouped_targets(items: list) -> list:
+    """Group cleaned items by readable target label → [(label, count), …]."""
+    counts = Counter(_cleanup_target_label(i) for i in items)
+    return counts.most_common()
+
+
+# ── Shared small widgets ──────────────────────────────────────────
+
+
+class _Elided(QLabel):
+    """QLabel that elides with '…' when its column is too narrow."""
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(parent)
+        self._full = text
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.setToolTip(text)
+        super().setText(text)
+
+    def set_full_text(self, text: str):
+        self._full = text
+        self.setToolTip(text)
+        self._elide()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._elide()
+
+    def _elide(self):
+        fm = self.fontMetrics()
+        super().setText(fm.elidedText(self._full, Qt.ElideRight, max(1, self.width() - 2)))
+
+
+def _kv(key: str, val: str, p: dict, *, val_size: int = 12,
+        val_color: str = "", bold: bool = False, wrap: bool = False) -> QVBoxLayout:
+    """Compact key/value pair — silkscreen eyebrow above a mono value."""
+    col = QVBoxLayout()
+    col.setSpacing(1)
+    k = QLabel(key)
+    k.setStyleSheet(
+        "font-family: 'Silkscreen', 'JetBrains Mono'; font-size: 8px; "
+        f"letter-spacing: 1px; color: {p.get('text_faint', '#57685e')};"
+    )
+    col.addWidget(k)
+    v = QLabel(val)
+    style = f"font-family: 'JetBrains Mono'; font-size: {val_size}px;"
+    if bold:
+        style += " font-weight: bold;"
+    if val_color:
+        style += f" color: {val_color};"
+    v.setStyleSheet(style)
+    if wrap:
+        v.setWordWrap(True)
+    col.addWidget(v)
+    return col
+
+
+class _DistBar(QFrame):
+    """Mini stacked distribution bar (safe/review/risk)."""
+
+    def __init__(self, safe_pct, review_pct, risk_pct, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(6)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(1)
+        p = get_palette()
+        defaults = {"safe": "#7aa88a", "review": "#c7a66c", "risk": "#c67a69"}
+        for pct, key in [(safe_pct, "safe"), (review_pct, "review"), (risk_pct, "risk")]:
+            color = p.get(key, defaults[key])
+            seg = QFrame()
+            seg.setFixedHeight(6)
+            seg.setStyleSheet(f"background: {color}; border: none;")
+            lay.addWidget(seg, stretch=max(int(pct), 1))
+
+
+class _ModeBadge(QLabel):
+    """Inline badge for cleanup mode — theme-aware."""
+
+    def __init__(self, mode: str, parent=None):
+        super().__init__(parent)
+        p = get_palette()
+        styles = {
+            "recycle_bin": (tr("Recycle Bin"), p.get("safe", "#7aa88a")),
+            "permanent":   (tr("Permanent"),   p.get("risk", "#c67a69")),
+        }
+        label, color = styles.get(
+            mode, (mode.replace("_", " ").title(), p.get("text_dim", "#8a9b8f"))
+        )
+        self.setText(label)
+        self.setFixedHeight(20)
+        self.setAlignment(Qt.AlignCenter)
+        self.setStyleSheet(
+            "font-family: 'Silkscreen', 'JetBrains Mono'; font-size: 7px; "
+            f"letter-spacing: 1px; color: {color}; "
+            f"border: 1px solid {color}66; padding: 0px 6px;"
+        )
+
+
+# ── Detail panels ─────────────────────────────────────────────────
+
+
+class CleanupRecordDetail(QFrame):
+    """Compact contextual detail for a single cleanup record."""
+
+    _MAX_GROUPS = 4
+
+    def __init__(self, record: dict, parent=None):
+        super().__init__(parent)
+        self.setObjectName("PanelAlt")
+        p = get_palette()
+        faint = p.get("text_faint", "#57685e")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 9, 12, 10)
+        layout.setSpacing(6)
+
+        items = record.get("items", [])
+        mode = record.get("mode", "recycle_bin")
+        succeeded = record.get("succeeded_count", 0)
+        in_use = record.get("in_use_count", 0)
+        failed = record.get("failed_count", 0)
+        skipped = record.get("skipped_protected_count", 0)
+        freed = int(record.get("total_bytes_freed", 0) or 0)
+        total_exceptions = in_use + failed + skipped
+        impact = _impact_label(freed, attention_count=total_exceptions)
+        assessment = assess_cleanup_counts(
+            succeeded_count=succeeded,
+            in_use_count=in_use,
+            failed_count=failed,
+            skipped_count=skipped,
+            category_label="Cleanup run",
+        )
+
+        # ── Outcome row ───────────────────────────────────────────
+        stats = QHBoxLayout()
+        stats.setSpacing(20)
+        for lbl, val, col in [
+            (tr("IMPACT"), impact, _impact_color(impact, p)),
+            (tr("CLEANED"), _format_size(freed), p.get("safe", "#7aa88a")),
+            (tr("ITEMS"), f"{succeeded:,}", ""),
+            (tr("ATTENTION"), f"{total_exceptions:,}" if total_exceptions else "None",
+             p.get("review", "#c7a66c") if total_exceptions else ""),
+        ]:
+            stats.addLayout(_kv(lbl, val, p, val_size=13, bold=True, val_color=col))
+        stats.addStretch()
+        layout.addLayout(stats)
+
+        # ── Status note ───────────────────────────────────────────
+        note = QLabel(assessment.explanation_text)
+        note.setWordWrap(True)
+        note.setStyleSheet(
+            f"font-size: 11px; color: {p.get('text_dim', '#8a9b8f')};"
+        )
+        layout.addWidget(note)
+
+        # ── Non-zero exceptions only ───────────────────────────────
+        exceptions = []
+        if in_use:
+            exceptions.append(f"{in_use:,} in use")
+        if failed:
+            exceptions.append(f"{failed:,} failed")
+        if skipped:
+            exceptions.append(f"{skipped:,} protected skipped")
+        if exceptions:
+            exc = QLabel("Still requires attention: " + " · ".join(exceptions))
+            exc.setWordWrap(True)
+            exc.setStyleSheet(
+                f"font-family: 'JetBrains Mono'; font-size: 10px; "
+                f"color: {p.get('review', '#c7a66c')};"
+            )
+            layout.addWidget(exc)
+
+        # ── Targets — grouped, structured preview ─────────────────
+        groups = _cleanup_top_categories(items, self._MAX_GROUPS)
+        thdr = QLabel(f"{tr('TOP CLEANED')} · {_cleanup_categories_outcome(items)}")
+        thdr.setStyleSheet(
+            "font-family: 'Silkscreen', 'JetBrains Mono'; font-size: 8px; "
+            f"letter-spacing: 1px; color: {faint};"
+        )
+        layout.addWidget(thdr)
+
+        for label, count, size in groups:
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(8)
+            dot = QLabel("▪")
+            dot.setFixedWidth(10)
+            dot.setStyleSheet(f"color: {faint}; font-size: 8px;")
+            row.addWidget(dot)
+            name = _Elided(label)
+            name.setStyleSheet(
+                f"font-family: 'JetBrains Mono'; font-size: 10px; "
+                f"color: {p.get('text', '#d6e2da')};"
+            )
+            row.addWidget(name, stretch=1)
+            detail = _format_size(size) if size else f"{count}"
+            cnt = QLabel(detail)
+            cnt.setFixedWidth(72)
+            cnt.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            cnt.setStyleSheet(
+                f"font-family: 'JetBrains Mono'; font-size: 10px; color: {faint};"
+            )
+            row.addWidget(cnt)
+            layout.addLayout(row)
+
+
+class SessionDetail(QFrame):
+    """Compact contextual detail for a scan session."""
+
+    def __init__(self, record: dict, on_open, on_rerun, on_delete, parent=None):
+        super().__init__(parent)
+        self.setObjectName("PanelAlt")
+        p = get_palette()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 9, 12, 10)
+        layout.setSpacing(6)
+
+        safe_pct, review_pct, risk_pct = _risk_pcts(record.get("risk_totals", {}))
+        duration = record.get("saved_at", 0) - record.get("start_time", 0)
+        mode_label = _scan_mode_label(record.get("scan_mode", "smart"))
+        status = record.get("status", "unknown")
+        status_label = {
+            "completed": tr("Completed"),
+            "stopped":   tr("Stopped (partial)"),
+            "running":   tr("In progress"),
+        }.get(status, status.title())
+        if record.get("scan_mode") == "smart":
+            items_val = f"{record.get('display_count', 0):,}"
+            found_count = int(record.get("display_count", 0) or 0)
+        else:
+            items_val = f"{record.get('scanned_count', 0):,}"
+            found_count = int(record.get("scanned_count", 0) or 0)
+        risk_totals = normalized_risk_totals(record.get("risk_totals", {}) or {})
+        attention = _attention_count(risk_totals)
+        reclaimable = _estimated_reclaimable(record)
+        has_reclaimable = (
+            "reclaimable_bytes" in record or "total_reclaimable_bytes" in record
+        )
+        impact = _impact_label(reclaimable, attention_count=attention, found_count=found_count)
+
+        # ── Target ────────────────────────────────────────────────
+        layout.addLayout(_kv(tr("TARGET"), record.get("target", "—") or "—",
+                             p, val_size=11, wrap=True))
+
+        # ── Outcome row ───────────────────────────────────────────
+        metrics = QHBoxLayout()
+        metrics.setSpacing(18)
+        reclaimable_text = _format_size(reclaimable) if has_reclaimable else tr("Not recorded")
+        for k, v, col in [
+            (tr("IMPACT"), impact, _impact_color(impact, p)),
+            (tr("RECLAIMABLE"), reclaimable_text,
+             p.get("safe", "#7aa88a") if reclaimable else ""),
+            (tr("FOUND"), items_val, ""),
+            (tr("REVIEW"), f"{attention:,}" if attention else "None",
+             p.get("review", "#c7a66c") if attention else ""),
+            (tr("DURATION"), _format_duration(duration), ""),
+        ]:
+            metrics.addLayout(_kv(k, v, p, val_size=11, bold=k in (tr("IMPACT"), tr("RECLAIMABLE")), val_color=col))
+        metrics.addStretch()
+        layout.addLayout(metrics)
+
+        outcome = QLabel(
+            f"{status_label} · {mode_label} · scanned {_format_size(record.get('total_size', 0))}"
+        )
+        outcome.setWordWrap(True)
+        outcome.setStyleSheet(
+            f"font-family: 'JetBrains Mono'; font-size: 10px; "
+            f"color: {p.get('text_dim', '#8a9b8f')};"
+        )
+        layout.addWidget(outcome)
+
+        # ── What was found ────────────────────────────────────────
+        dk = QLabel(f"{tr('TOP FINDINGS')} · {_category_totals_outcome(record.get('category_totals', {}))}")
+        dk.setStyleSheet(
+            "font-family: 'Silkscreen', 'JetBrains Mono'; font-size: 8px; "
+            f"letter-spacing: 1px; color: {p.get('text_faint', '#57685e')};"
+        )
+        layout.addWidget(dk)
+
+        bar = _DistBar(safe_pct, review_pct, risk_pct)
+        layout.addWidget(bar)
+        attention_parts = []
+        review_count = int(risk_totals.get("Review", 0) or 0)
+        protected_count = int(risk_totals.get("Protected", 0) or 0)
+        optional_count = int(risk_totals.get("Optional", 0) or 0)
+        if review_count:
+            attention_parts.append(f"{review_count:,} review")
+        if protected_count:
+            attention_parts.append(f"{protected_count:,} protected")
+        if optional_count:
+            attention_parts.append(f"{optional_count:,} optional")
+        attention_text = " · ".join(attention_parts) if attention_parts else "No review-required items recorded"
+        dtext = QLabel(attention_text)
+        dtext.setStyleSheet(
+            f"font-family: 'JetBrains Mono'; font-size: 10px; "
+            f"color: {p.get('text_dim', '#8a9b8f')};"
+        )
+        layout.addWidget(dtext)
+
+        # ── Actions ───────────────────────────────────────────────
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(6)
+        for text, cb in [
+            (tr("Open findings"),           on_open),
+            (tr("Re-run with same target"), on_rerun),
+            (tr("Delete from history"),     on_delete),
+        ]:
+            btn = QPushButton(text)
+            btn.setObjectName("Subtle")
+            btn.setStyleSheet("font-size: 10px; padding: 4px 10px;")
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(cb)
+            btn_row.addWidget(btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+
+# ── Main screen ───────────────────────────────────────────────────
+
+
+class HistoryScreen(QWidget):
+
+    open_session_requested = Signal(dict)   # full session data dict
+    rerun_requested = Signal(str)           # target path
+
+    _MAX_VISIBLE_ROWS = 5
+    _DETAIL_SLOT_HEIGHT = 178
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._sessions: list = []
+        self._cleanup_records: list = []
+
+        # Cleanup panel state
+        self._cleanup_expanded_row: int = -1
+        self._cleanup_table: QTableWidget | None = None
+        self._cleanup_detail_area: QVBoxLayout | None = None
+        self._cleanup_detail_widget: QWidget | None = None
+        self._cleanup_detail_spacer = None
+
+        # Session panel state
+        self._sess_expanded_row: int = -1
+        self._sess_table: QTableWidget | None = None
+        self._sess_detail_area: QVBoxLayout | None = None
+        self._sess_detail_widget: QWidget | None = None
+        self._sess_detail_spacer = None
+
+        self._outer = QVBoxLayout(self)
+        self._outer.setContentsMargins(0, 0, 0, 0)
+        self._outer.setSpacing(0)
+        self._build_content()
+
+        # History has many inline-styled labels (mode badges, _kv pairs,
+        # distribution bar) that don't auto-refresh from the global QSS;
+        # rebuild the whole screen when the theme changes.
+        from app.themes.theme_manager import theme_signaller
+        theme_signaller().theme_changed.connect(self._on_theme_changed)
+
+    def _on_theme_changed(self, _key: str = ""):
+        # refresh() reloads from disk and rebuilds the layout — slightly heavy
+        # but the screen is small and theme switches are rare.
+        self.refresh()
+
+    # ── Public API ────────────────────────────────────────────────
+
+    def refresh(self):
+        """Reload history + cleanup records from disk and rebuild the UI."""
+        from app.state.session_store import load_history, load_cleanup_records
+        self._sessions = load_history()
+        self._cleanup_records = load_cleanup_records()
+
+        self._cleanup_expanded_row = -1
+        self._cleanup_table = None
+        self._cleanup_detail_area = None
+        self._cleanup_detail_widget = None
+        self._cleanup_detail_spacer = None
+        self._sess_expanded_row = -1
+        self._sess_table = None
+        self._sess_detail_area = None
+        self._sess_detail_widget = None
+        self._sess_detail_spacer = None
+
+        self._build_content()
+
+    # ── Styling helpers ───────────────────────────────────────────
+
+    def _table_qss(self) -> str:
+        p = get_palette()
+        return (
+            f"QTableWidget#HistoryTable {{ "
+            f"background: {p.get('panel_alt', '#18241e')}; "
+            f"border: 1px solid {p.get('border', '#213028')}; "
+            f"selection-background-color: {p.get('accent_soft', '#1b2e22')}; "
+            f"selection-color: {p.get('text', '#d6e2da')}; }} "
+            f"QTableWidget#HistoryTable::item {{ padding: 6px 8px; border: none; }} "
+            f"QTableWidget#HistoryTable::item:selected {{ background: {p.get('accent_soft', '#1b2e22')}; }} "
+            f"QHeaderView::section {{ background: {p.get('panel', '#141d18')}; "
+            f"color: {p.get('text_faint', '#57685e')}; border: none; "
+            f"border-bottom: 1px solid {p.get('border', '#213028')}; padding: 8px 6px; "
+            f"font-family: 'Silkscreen', 'JetBrains Mono'; font-size: 8px; letter-spacing: 1px; }}"
+        )
+
+    def _section_header(self, title: str, subtitle: str) -> QHBoxLayout:
+        hdr = QHBoxLayout()
+        hdr.setSpacing(8)
+        t = QLabel(title)
+        apply_tactical_label(t, font_size=10, letter_spacing=2)
+        hdr.addWidget(t)
+        s = QLabel(subtitle)
+        s.setObjectName("Muted")
+        s.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 9px;")
+        hdr.addWidget(s)
+        hdr.addStretch()
+        return hdr
+
+    def _placeholder(self, eyebrow: str, hint: str) -> QWidget:
+        """Compact empty-state helper for panels with no history yet."""
+        p = get_palette()
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(16, 10, 16, 10)
+        v.setSpacing(4)
+        v.addStretch()
+        glyph = QLabel("◌")
+        glyph.setAlignment(Qt.AlignCenter)
+        glyph.setStyleSheet(
+            f"font-size: 18px; color: {p.get('text_faint', '#57685e')};"
+        )
+        v.addWidget(glyph)
+        eb = QLabel(eyebrow)
+        eb.setAlignment(Qt.AlignCenter)
+        eb.setStyleSheet(
+            "font-family: 'Silkscreen', 'JetBrains Mono'; font-size: 8px; "
+            f"letter-spacing: 2px; color: {p.get('text_faint', '#57685e')};"
+        )
+        v.addWidget(eb)
+        h = QLabel(hint)
+        h.setAlignment(Qt.AlignCenter)
+        h.setWordWrap(True)
+        h.setStyleSheet(
+            f"font-size: 10px; color: {p.get('text_faint', '#57685e')};"
+        )
+        v.addWidget(h)
+        v.addStretch()
+        return w
+
+    def _new_table(self, headers: list) -> QTableWidget:
+        t = QTableWidget()
+        # Mouse tracking is required so the viewport event filter receives
+        # MouseMove events while no button is pressed (and so any
+        # ::item:hover QSS rule would also fire, although hover is now
+        # handled at the row level by _RowHoverFilter below).
+        t.setMouseTracking(True)
+        t.viewport().setMouseTracking(True)
+        t.setObjectName("HistoryTable")
+        t.setColumnCount(len(headers))
+        t.setHorizontalHeaderLabels(headers)
+        t.setAlternatingRowColors(False)
+        t.setSelectionBehavior(QAbstractItemView.SelectRows)
+        t.setSelectionMode(QAbstractItemView.SingleSelection)
+        t.verticalHeader().setVisible(False)
+        t.setShowGrid(False)
+        t.verticalHeader().setDefaultSectionSize(36)
+        t.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        t.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        t.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        t.setStyleSheet(self._table_qss())
+        t.horizontalHeader().setMinimumSectionSize(26)
+        # Whole-row hover. Filter is parented to the table so it dies with it.
+        hover_color = QColor(get_palette().get("tint_bg", "#0f1914"))
+        t._row_hover_filter = _RowHoverFilter(t, hover_color)
+        return t
+
+    def _cap_table_height(self, table: QTableWidget):
+        """Size the table to exactly five visible rows with no scrollbar."""
+        visible = self._MAX_VISIBLE_ROWS
+        header_h = table.horizontalHeader().sizeHint().height()
+        row_h = table.verticalHeader().defaultSectionSize()
+        frame_h = table.frameWidth() * 2
+        table.setFixedHeight(header_h + visible * row_h + frame_h + 1)
+
+    def _limited_history_note(self, total: int, noun: str) -> QLabel | None:
+        hidden = total - self._MAX_VISIBLE_ROWS
+        if hidden <= 0:
+            return None
+        lbl = QLabel(f"Showing latest {self._MAX_VISIBLE_ROWS} {noun}; {hidden} older hidden.")
+        lbl.setObjectName("Muted")
+        lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 9px;")
+        return lbl
+
+    # ── Content builder ───────────────────────────────────────────
+
+    def _build_content(self):
+        while self._outer.count():
+            item = self._outer.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        content = QWidget()
+        root = QVBoxLayout(content)
+        root.setContentsMargins(18, 8, 18, 10)
+        root.setSpacing(8)
+
+        # ── Top bar: title + compact inline summary ───────────────
+        topbar = QHBoxLayout()
+        title = QLabel(tr("HISTORY"))
+        apply_tactical_label(title, font_size=15, letter_spacing=4)
+        topbar.addWidget(title)
+        topbar.addStretch()
+        topbar.addWidget(self._summary_label())
+        root.addLayout(topbar)
+
+        # ── Dual workspaces — equal weight, side by side ──────────
+        workspaces = QHBoxLayout()
+        workspaces.setSpacing(10)
+        workspaces.addWidget(self._build_cleanup_workspace(), stretch=1, alignment=Qt.AlignTop)
+        workspaces.addWidget(self._build_sessions_workspace(), stretch=1, alignment=Qt.AlignTop)
+        root.addLayout(workspaces, stretch=0)
+        root.addStretch(1)
+
+        # Wrap in a scroll area so expanded detail panels never crop content.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("border: none;")
+        scroll.setWidget(content)
+        self._outer.addWidget(scroll)
+
+    def _summary_label(self) -> QLabel:
+        from app.state.session_store import load_summary
+        s = load_summary()
+        lbl = QLabel(
+            f"{_format_size(s.get('total_recovered_bytes', 0))} freed"
+            f"  ·  {s.get('cleanup_sessions', 0)} cleanups"
+            f"  ·  {_format_size(s.get('total_scanned_bytes', 0))} scanned"
+            f"  ·  {s.get('analyze_sessions', 0)} scans"
+        )
+        lbl.setObjectName("Muted")
+        lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 10px;")
+        return lbl
+
+    # ── Cleanup workspace ─────────────────────────────────────────
+
+    def _build_cleanup_workspace(self) -> QFrame:
+        p = get_palette()
+        records = self._cleanup_records
+        frame = QFrame()
+        frame.setObjectName("Panel")
+        frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        v = QVBoxLayout(frame)
+        v.setContentsMargins(12, 10, 12, 10)
+        v.setSpacing(8)
+
+        total_freed = sum(r.get("total_bytes_freed", 0) for r in records)
+        if records:
+            subtitle = (
+                f"// {len(records)} operation{'s' if len(records) != 1 else ''}"
+                f" · {_format_size(total_freed)} freed"
+            )
+        else:
+            subtitle = tr("// no cleanup operations yet")
+        v.addLayout(self._section_header(tr("CLEANUP SESSIONS"), subtitle))
+
+        if not records:
+            v.addWidget(self._placeholder(
+                tr("NO CLEANUP HISTORY"),
+                tr("Use the Findings screen to move items to the Recycle Bin."),
+            ))
+            return frame
+
+        # Table — WHEN / MODE / FREED / ITEMS
+        table = self._new_table([tr("WHEN"), tr("MODE"), tr("FREED"), tr("ITEMS")])
+        hdr = table.horizontalHeader()
+        for col, w in ((1, 116), (2, 100), (3, 78)):
+            hdr.setSectionResizeMode(col, QHeaderView.Fixed)
+            table.setColumnWidth(col, w)
+        hdr.setSectionResizeMode(0, QHeaderView.Stretch)
+
+        visible_records = records[:self._MAX_VISIBLE_ROWS]
+        table.setRowCount(len(visible_records))
+        for i, rec in enumerate(visible_records):
+
+            when_item = QTableWidgetItem(_format_when(rec.get("timestamp", 0)))
+            when_item.setFlags(when_item.flags() & ~Qt.ItemIsEditable)
+            table.setItem(i, 0, when_item)
+
+            table.setCellWidget(i, 1, self._badge_cell(_ModeBadge(rec.get("mode", "recycle_bin"))))
+
+            freed_item = QTableWidgetItem(_format_size(rec.get("total_bytes_freed", 0)))
+            freed_item.setFlags(freed_item.flags() & ~Qt.ItemIsEditable)
+            freed_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            freed_item.setForeground(QBrush(QColor(p.get("safe", "#7aa88a"))))
+            table.setItem(i, 2, freed_item)
+
+            items = rec.get("items", [])
+            count_item = QTableWidgetItem(f"{len(items):,}")
+            count_item.setFlags(count_item.flags() & ~Qt.ItemIsEditable)
+            count_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            if rec.get("failed_count", 0):
+                count_item.setForeground(QBrush(QColor(p.get("risk", "#c67a69"))))
+            elif rec.get("in_use_count", 0):
+                count_item.setForeground(QBrush(QColor(p.get("review", "#c7a66c"))))
+            table.setItem(i, 3, count_item)
+
+        table.cellClicked.connect(self._on_cleanup_cell_clicked)
+        self._cleanup_table = table
+        self._cap_table_height(table)
+        v.addWidget(table)
+        note = self._limited_history_note(len(records), "cleanup records")
+        if note:
+            v.addWidget(note)
+        self._cleanup_detail_area = self._detail_slot()
+        self._cleanup_detail_widget = None
+        v.addWidget(self._cleanup_detail_area)
+        v.addStretch(1)
+        return frame
+
+    # ── Sessions workspace ────────────────────────────────────────
+
+    def _build_sessions_workspace(self) -> QFrame:
+        p = get_palette()
+        sessions = self._sessions
+        frame = QFrame()
+        frame.setObjectName("Panel")
+        frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        v = QVBoxLayout(frame)
+        v.setContentsMargins(12, 10, 12, 10)
+        v.setSpacing(8)
+
+        if sessions:
+            total_size = sum(s.get("total_size", 0) for s in sessions)
+            subtitle = (
+                f"// {len(sessions)} session{'s' if len(sessions) != 1 else ''}"
+                f" · {_format_size(total_size)} scanned"
+            )
+        else:
+            subtitle = tr("// no scan sessions yet")
+        v.addLayout(self._section_header(tr("ANALYZE SESSIONS"), subtitle))
+
+        if not sessions:
+            v.addWidget(self._placeholder(
+                tr("NO ANALYZE HISTORY"),
+                tr("Run a scan from the Analyze screen to build session history."),
+            ))
+            return frame
+
+        # Table — WHEN / TARGET / MODE / ITEMS
+        table = self._new_table([tr("WHEN"), tr("TARGET"), tr("MODE"), tr("ITEMS")])
+        hdr = table.horizontalHeader()
+        for col, w in ((0, 128), (2, 120), (3, 92)):
+            hdr.setSectionResizeMode(col, QHeaderView.Fixed)
+            table.setColumnWidth(col, w)
+        hdr.setSectionResizeMode(1, QHeaderView.Stretch)
+
+        visible_sessions = sessions[:self._MAX_VISIBLE_ROWS]
+        table.setRowCount(len(visible_sessions))
+        for i, s in enumerate(visible_sessions):
+
+            status = s.get("status", "")
+            items_str = str(s.get("display_count", s.get("scanned_count", 0)))
+            if status == "stopped":
+                items_str += " (partial)"
+
+            for col, val, align in [
+                (0, _format_when(s.get("start_time", 0)), Qt.AlignLeft | Qt.AlignVCenter),
+                (1, _short_target(s.get("target", "")),   Qt.AlignLeft | Qt.AlignVCenter),
+                (2, _scan_mode_label(s.get("scan_mode", "smart")), Qt.AlignLeft | Qt.AlignVCenter),
+                (3, items_str, Qt.AlignRight | Qt.AlignVCenter),
+            ]:
+                item = QTableWidgetItem(val)
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                item.setTextAlignment(align)
+                if col == 1:
+                    item.setToolTip(s.get("target", ""))
+                table.setItem(i, col, item)
+
+        table.cellClicked.connect(self._on_sess_cell_clicked)
+        self._sess_table = table
+        self._cap_table_height(table)
+        v.addWidget(table)
+        note = self._limited_history_note(len(sessions), "scan sessions")
+        if note:
+            v.addWidget(note)
+        self._sess_detail_area = self._detail_slot()
+        self._sess_detail_widget = None
+        v.addWidget(self._sess_detail_area)
+        v.addStretch(1)
+        return frame
+
+    def _detail_slot(self) -> QFrame:
+        p = get_palette()
+        host = QFrame()
+        host.setObjectName("PanelAlt")
+        host.setFixedHeight(self._DETAIL_SLOT_HEIGHT)
+        host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        host.setStyleSheet(
+            f"QFrame#PanelAlt {{ background: {p.get('panel_alt', '#18241e')}; "
+            f"border: 1px solid {p.get('border', '#213028')}; }}"
+        )
+        lay = QVBoxLayout(host)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        host.setVisible(False)
+        return host
+
+    def _set_detail_widget(self, host: QFrame | None, current_widget: QWidget | None, widget: QWidget) -> QWidget:
+        if host is None:
+            return current_widget
+        layout = host.layout()
+        if current_widget is not None:
+            layout.removeWidget(current_widget)
+            current_widget.deleteLater()
+        layout.addWidget(widget)
+        host.setVisible(True)
+        return widget
+
+    def _clear_detail_widget(self, host: QFrame | None, current_widget: QWidget | None) -> None:
+        if host is None:
+            return
+        layout = host.layout()
+        if current_widget is not None:
+            layout.removeWidget(current_widget)
+            current_widget.deleteLater()
+        host.setVisible(False)
+
+    def _badge_cell(self, badge: QWidget) -> QWidget:
+        """Center a badge widget within its table cell."""
+        holder = QWidget()
+        holder.setStyleSheet("background: transparent;")
+        lay = QHBoxLayout(holder)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        lay.addStretch()
+        lay.addWidget(badge, alignment=Qt.AlignCenter)
+        lay.addStretch()
+        return holder
+
+    # ── Cleanup row interactions ──────────────────────────────────
+
+    def _on_cleanup_cell_clicked(self, row: int, col: int):
+        self._toggle_cleanup_detail(row)
+
+    def _toggle_cleanup_detail(self, row: int):
+        if row == self._cleanup_expanded_row:
+            self._cleanup_expanded_row = -1
+            if self._cleanup_table:
+                self._cleanup_table.clearSelection()
+            self._clear_detail_widget(self._cleanup_detail_area, self._cleanup_detail_widget)
+            self._cleanup_detail_widget = None
+            return
+
+        self._cleanup_expanded_row = row
+        if self._cleanup_table:
+            self._cleanup_table.selectRow(row)
+        if row < len(self._cleanup_records) and self._cleanup_detail_area:
+            record = self._cleanup_records[row]
+            widget = CleanupRecordDetail(record)
+            widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+            self._cleanup_detail_widget = self._set_detail_widget(
+                self._cleanup_detail_area,
+                self._cleanup_detail_widget,
+                widget,
+            )
+
+    # ── Session row interactions ──────────────────────────────────
+
+    def _on_sess_cell_clicked(self, row: int, col: int):
+        self._toggle_sess_detail(row)
+
+    def _toggle_sess_detail(self, row: int):
+        if row == self._sess_expanded_row:
+            self._sess_expanded_row = -1
+            if self._sess_table:
+                self._sess_table.clearSelection()
+            self._clear_detail_widget(self._sess_detail_area, self._sess_detail_widget)
+            self._sess_detail_widget = None
+            return
+
+        self._sess_expanded_row = row
+        if self._sess_table:
+            self._sess_table.selectRow(row)
+        if row < len(self._sessions) and self._sess_detail_area:
+            record = self._sessions[row]
+            sid = record.get("session_id", "")
+            widget = SessionDetail(
+                record,
+                on_open=lambda: self._open_findings(sid),
+                on_rerun=lambda: self.rerun_requested.emit(record.get("target", "")),
+                on_delete=lambda: self._delete_session(sid),
+            )
+            widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+            self._sess_detail_widget = self._set_detail_widget(
+                self._sess_detail_area,
+                self._sess_detail_widget,
+                widget,
+            )
+
+    # ── Actions ───────────────────────────────────────────────────
+
+    def _open_findings(self, session_id: str):
+        from app.state.session_store import load_session_by_id
+        data = load_session_by_id(session_id)
+        if not data:
+            QMessageBox.warning(self, tr("Not found"), tr("Full session data is unavailable."))
+            return
+        self.open_session_requested.emit(data)
+
+    def _delete_session(self, session_id: str):
+        reply = QMessageBox.question(
+            self,
+            tr("Delete session"),
+            tr("Remove this session from history? This cannot be undone."),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        from app.state.session_store import delete_session_from_history
+        delete_session_from_history(session_id)
+        self.refresh()

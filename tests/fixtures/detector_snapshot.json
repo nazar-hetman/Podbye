@@ -1,0 +1,74 @@
+[
+  {
+    "entity_type": "application",
+    "name": "FFmpeg",
+    "category": "Applications",
+    "risk": "Review",
+    "file_count": 2,
+    "folder_count": 1,
+    "size_bytes": 8002000
+  },
+  {
+    "entity_type": "cache_folder",
+    "name": "Cache – Snap",
+    "category": "Cache & Temp",
+    "risk": "Safe",
+    "file_count": 2,
+    "folder_count": 0,
+    "size_bytes": 8000
+  },
+  {
+    "entity_type": "document_folder",
+    "name": "Reports",
+    "category": "Documents",
+    "risk": "Review",
+    "file_count": 2,
+    "folder_count": 0,
+    "size_bytes": 160000
+  },
+  {
+    "entity_type": "game",
+    "name": "CoolGame",
+    "category": "Games",
+    "risk": "Review",
+    "file_count": 2,
+    "folder_count": 0,
+    "size_bytes": 14000000
+  },
+  {
+    "entity_type": "log_folder",
+    "name": "Logs – Snap",
+    "category": "System Logs",
+    "risk": "Safe",
+    "file_count": 1,
+    "folder_count": 0,
+    "size_bytes": 12000
+  },
+  {
+    "entity_type": "node_modules",
+    "name": "npm Packages – snap",
+    "category": "Dev Artifacts",
+    "risk": "Safe",
+    "file_count": 2,
+    "folder_count": 0,
+    "size_bytes": 3000
+  },
+  {
+    "entity_type": "photo_collection",
+    "name": "Vacation2024",
+    "category": "Images",
+    "risk": "Review",
+    "file_count": 3,
+    "folder_count": 0,
+    "size_bytes": 900000
+  },
+  {
+    "entity_type": "venv",
+    "name": "Python Env – snap",
+    "category": "Dev Artifacts",
+    "risk": "Safe",
+    "file_count": 2,
+    "folder_count": 1,
+    "size_bytes": 50200
+  }
+]

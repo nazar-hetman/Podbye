@@ -1,0 +1,9 @@
+# Normalize line endings: LF in the repo, native in the working tree.
+* text=auto eol=lf
+
+# Binary assets — never touch line endings.
+*.ttf   binary
+*.png   binary
+*.pptx  binary
+*.tar   binary
+*.ico   binary

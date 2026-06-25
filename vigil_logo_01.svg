@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <!--
+    Vigil logo concept 01: Signal Node.
+    Abstract telemetry beacon on a pixel grid. Built from bold grid-aligned
+    geometry so the mark remains legible at 16x16 and 32x32 taskbar sizes.
+  -->
+  <title id="title">Vigil Signal Node logo concept</title>
+  <desc id="desc">A central telemetry node broadcasting blocky signal activity.</desc>
+  <g fill="none" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M48 128H16M240 128h-32M128 16v32M128 208v32" stroke="#8a9b8f" stroke-width="12"/>
+    <path d="M68 72h-20v40M188 72h20v40M68 184h-20v-40M188 184h20v-40" stroke="#8a9b8f" stroke-width="12"/>
+    <path d="M80 128h-20M196 128h-20M128 80V60M128 196v-20" stroke="#7cc596" stroke-width="16"/>
+    <rect x="96" y="96" width="64" height="64" fill="#141d18" stroke="#7cc596" stroke-width="12"/>
+    <rect x="116" y="116" width="24" height="24" fill="#d6e2da"/>
+    <rect x="32" y="32" width="16" height="16" fill="#7cc596"/>
+    <rect x="208" y="32" width="16" height="16" fill="#7cc596"/>
+    <rect x="32" y="208" width="16" height="16" fill="#7cc596"/>
+    <rect x="208" y="208" width="16" height="16" fill="#7cc596"/>
+  </g>
+</svg>

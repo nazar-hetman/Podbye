@@ -1,0 +1,26 @@
+<!--
+  Vigil Logo 01: Signal Node
+  Abstract telemetry beacon built from grid-aligned blocks.
+  Intended to feel like local monitoring activity, not protection or cleanup.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Vigil Signal Node logo concept</title>
+  <desc id="desc">A geometric monitoring node with blocky signal bars around a central core.</desc>
+  <g fill="none" stroke-linecap="square" stroke-linejoin="miter">
+    <rect x="112" y="112" width="32" height="32" fill="#d6e2da"/>
+    <rect x="120" y="120" width="16" height="16" fill="#141d18"/>
+
+    <path d="M128 44v36" stroke="#d6e2da" stroke-width="20"/>
+    <path d="M128 176v36" stroke="#d6e2da" stroke-width="20"/>
+    <path d="M44 128h36" stroke="#d6e2da" stroke-width="20"/>
+    <path d="M176 128h36" stroke="#d6e2da" stroke-width="20"/>
+
+    <path d="M88 88l-24-24" stroke="#8a9b8f" stroke-width="18"/>
+    <path d="M168 88l24-24" stroke="#8a9b8f" stroke-width="18"/>
+    <path d="M88 168l-24 24" stroke="#8a9b8f" stroke-width="18"/>
+    <path d="M168 168l24 24" stroke="#8a9b8f" stroke-width="18"/>
+
+    <rect x="100" y="100" width="56" height="56" stroke="#141d18" stroke-width="16"/>
+    <rect x="100" y="100" width="56" height="56" stroke="#7cc596" stroke-width="8"/>
+  </g>
+</svg>

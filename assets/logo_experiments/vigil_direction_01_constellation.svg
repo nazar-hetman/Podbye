@@ -1,0 +1,28 @@
+<!--
+  Vigil Direction 01: Constellation
+  Many small system points resolve into one readable semantic cluster.
+  Monochrome-first, no letterform, no shield, no eye.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Vigil Constellation logo direction</title>
+  <desc id="desc">Small square points connected into a compact recognizable cluster.</desc>
+  <g fill="none" stroke="currentColor" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M72 80h56l40 40v56" stroke-width="18"/>
+    <path d="M72 176h96" stroke-width="18"/>
+    <path d="M128 80v96" stroke-width="18"/>
+
+    <rect x="48" y="56" width="48" height="48" fill="currentColor" stroke="none"/>
+    <rect x="104" y="56" width="48" height="48" fill="currentColor" stroke="none"/>
+    <rect x="144" y="96" width="48" height="48" fill="currentColor" stroke="none"/>
+    <rect x="144" y="152" width="48" height="48" fill="currentColor" stroke="none"/>
+    <rect x="48" y="152" width="48" height="48" fill="currentColor" stroke="none"/>
+    <rect x="104" y="152" width="48" height="48" fill="currentColor" stroke="none"/>
+
+    <rect x="64" y="72" width="16" height="16" fill="#fff" stroke="none"/>
+    <rect x="120" y="72" width="16" height="16" fill="#fff" stroke="none"/>
+    <rect x="160" y="112" width="16" height="16" fill="#fff" stroke="none"/>
+    <rect x="160" y="168" width="16" height="16" fill="#fff" stroke="none"/>
+    <rect x="64" y="168" width="16" height="16" fill="#fff" stroke="none"/>
+    <rect x="120" y="168" width="16" height="16" fill="#fff" stroke="none"/>
+  </g>
+</svg>
