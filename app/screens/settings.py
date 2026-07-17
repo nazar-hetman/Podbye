@@ -950,17 +950,20 @@ class SettingsScreen(QWidget):
         br_lay.setContentsMargins(0, 0, 0, 0)
         br_lay.setSpacing(8)
 
+        # Use the theme's objectName button classes (#Ghost / #Danger) rather
+        # than an inline stylesheet. Inline styles are baked once at build time
+        # and were never refreshed on a theme switch, so in the paper theme the
+        # "Open logs folder" text stayed light-on-light and vanished. The
+        # objectName classes live in the app QSS and follow the theme.
         btn_logs = QPushButton(tr("Open logs folder"))
         btn_logs.setObjectName("Ghost")
         btn_logs.setCursor(Qt.PointingHandCursor)
-        btn_logs.setStyleSheet(self._about_button_qss())
         btn_logs.clicked.connect(self._open_logs_folder)
         br_lay.addWidget(btn_logs)
 
         btn_reset = QPushButton(tr("Reset all settings"))
-        btn_reset.setObjectName("Ghost")
+        btn_reset.setObjectName("Danger")
         btn_reset.setCursor(Qt.PointingHandCursor)
-        btn_reset.setStyleSheet(self._about_button_qss(warning=True))
         btn_reset.clicked.connect(self._reset_all_settings)
         br_lay.addWidget(btn_reset)
 

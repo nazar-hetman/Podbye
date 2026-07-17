@@ -1657,8 +1657,13 @@ class _PreallocDetailPanel(QWidget):
 
         utility_row.addStretch()
         action_stack.addLayout(utility_row)
-        root.addLayout(action_stack)
+        # Stretch BEFORE the action buttons so they always sit at the bottom of
+        # the inspection panel regardless of how much (or little) detail the
+        # selected entity has. Previously the stretch sat after them, so the
+        # buttons floated directly under the content and jumped around as the
+        # AI text / recommendation grew or shrank.
         root.addStretch(1)
+        root.addLayout(action_stack)
 
         self._tabs.addTab(self._info_page, tr("Information"))
         self._tabs.addTab(self._build_files_page(), tr("Files"))
@@ -1784,8 +1789,12 @@ class _PreallocDetailPanel(QWidget):
         reason = self._ask_ai_cb(self._current_entity)
         if reason:
             return  # couldn't queue (handled/announced by the callback)
-        # Optimistic in-progress state so the panel reacts instantly.
-        self._ai_ask_btn.setVisible(False)
+        # Optimistic in-progress state so the panel reacts instantly. Keep the
+        # button visible but disabled and relabelled, so the response is obvious
+        # right where the user clicked — not only in the AI block further down,
+        # which is often scrolled out of view.
+        self._ai_ask_btn.setEnabled(False)
+        self._ai_ask_btn.setText(tr("Asking AI…"))
         self._ai_section.setVisible(True)
         self._ai_state_badge.setText(tr("Analyzing"))
         self._ai_state_badge.setStyleSheet(
@@ -2240,6 +2249,7 @@ class _PreallocDetailPanel(QWidget):
             or can_ask_ai
         )
         self._ai_section.setVisible(show_ai)
+        self._ai_ask_btn.setText(tr("Ask AI"))
         self._ai_ask_btn.setVisible(can_ask_ai)
         self._ai_ask_btn.setEnabled(True)
         if show_ai:
