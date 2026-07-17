@@ -439,6 +439,46 @@ def _pretty_game(name: str) -> str:
     return " ".join(w[:1].upper() + w[1:] if w else w for w in name.split())
 
 
+def _clean_game_name(leaf: str) -> str:
+    """Strip a save-engine build-id suffix from a per-game folder name.
+
+    Ren'Py names each game's save folder ``<Game>-<buildid>`` (e.g.
+    ``MyOfficeAdventures-1602343789``); the trailing number is machine noise, not
+    part of the title. Also drops a trailing ``_<digits>``. The base name is kept
+    verbatim (camel-case preserved) so ``MyOfficeAdventures`` stays readable.
+    """
+    name = (leaf or "").strip()
+    name = re.sub(r"[-_]\d{6,}$", "", name)   # RenPy/build id: 6+ trailing digits
+    return name or leaf
+
+
+# Save engines that store one folder PER game directly under an engine folder
+# (the child folder name IS the game), unlike "Saved Games" which nests game
+# folders. Extend this set to cover more engines — the detection, name-cleaning
+# and installed/created enrichment below are all engine-agnostic.
+_PER_GAME_SAVE_ENGINES = {
+    "renpy",   # Ren'Py: %APPDATA%/RenPy/<Game>-<buildid>
+    "love",    # LÖVE (Love2D): %APPDATA%/LOVE/<Game>
+    "rpgmvcooking", "krkr", "kirikiri",  # common VN/2D engines
+}
+
+
+def _folder_created_date(path: str) -> str:
+    """Best-effort creation date (YYYY-MM-DD) for a folder, or "" if unknown.
+
+    On Windows st_ctime is the real creation time. The scan model only carries
+    mtime, so this stats the path fresh; guarded because a restored session may
+    reference a path that no longer exists.
+    """
+    try:
+        if path and os.path.exists(path):
+            import time as _t
+            return _t.strftime("%Y-%m-%d", _t.localtime(os.path.getctime(path)))
+    except OSError:
+        pass
+    return ""
+
+
 def _normalize_game_name(name: str) -> str:
     """Reduce a game/app name to a comparable token string.
 
@@ -481,6 +521,12 @@ def _extract_owning_game(norm_path: str) -> str:
                 and seg not in _QUALIFIER_SKIP_SEGS
                 and seg not in _GENERIC_FOLDER_NAMES
                 and seg not in usernames)
+
+    # Case 0 — per-game save engine (Ren'Py): the segment after the engine
+    # folder is the game itself, with a build-id suffix to strip.
+    for i in range(len(raw) - 1):
+        if raw[i] in _PER_GAME_SAVE_ENGINES:
+            return _clean_game_name(raw[i + 1]).lower()
 
     # Case 1 — segment right after a "saved games" / "my games" container.
     for i in range(len(raw) - 1):
@@ -1640,6 +1686,44 @@ def _pass_appdata_packages(ctx: "_DetectionContext"):
         ctx.log(f"[smart]   → mapped {pass_entities} sandboxed app-data entities")
 
 
+def _pass_game_save_engines(ctx: "_DetectionContext"):
+    """Per-game save engines (Ren'Py, LOVE, ...) -> one game_saves entity per game.
+
+    These engines drop one folder per game directly under an engine folder
+    (e.g. RenPy/<Game>-<buildid>). Without this each game's folder becomes a
+    "Misc files" blob, so a machine with years of played games reads as noise.
+    The owning-game name, install status and creation date are filled in later
+    by _enrich_game_saves. Engine-agnostic: driven by _PER_GAME_SAVE_ENGINES.
+    """
+    ctx.log("[smart] pass 0c: mapping per-game save engines...")
+    pass_entities = 0
+    for f in ctx.all_dirs:
+        norm = f.path.replace("\\", "/").lower().rstrip("/")
+        if norm in ctx.claimed_paths:
+            continue
+        if os.path.basename(norm) not in _PER_GAME_SAVE_ENGINES:
+            continue
+        for child in ctx.children_index.get(norm, []):
+            if not child.is_dir:
+                continue
+            c_norm = child.path.replace("\\", "/").lower().rstrip("/")
+            if c_norm in ctx.claimed_paths:
+                continue
+            game = _clean_game_name(child.name)
+            children = ctx.sample(c_norm)
+            ent = _build_entity(ctx,
+                child.path, game, "game_saves", children,
+                f"Save data for {game}",
+            )
+            fc = ctx.claim(c_norm)
+            ctx.emit_entity(ent, fc)
+            pass_entities += 1
+        ctx.claimed_paths.add(norm)  # engine container node, pass-through
+
+    if pass_entities:
+        ctx.log(f"[smart]   mapped {pass_entities} per-game save folder(s)")
+
+
 def _pass1_known_dirs(ctx: "_DetectionContext"):
     """Pass 1 - known directory names (node_modules, venv, cache, .git, ...).
 
@@ -2737,6 +2821,28 @@ def _enrich_game_saves(ctx: "_DetectionContext", entities: list):
         norm = e.path.replace("\\", "/").lower().rstrip("/")
         leaf = os.path.basename(norm)
 
+        # ── Per-game save engine (Ren'Py, LÖVE, …) ─────────────────────
+        # The parent is the engine folder, so the leaf IS the game (build-id
+        # stripped, original casing kept). Report install status and creation
+        # date so the user can spot saves for games they no longer have.
+        parent_leaf = os.path.basename(os.path.dirname(norm))
+        if parent_leaf in _PER_GAME_SAVE_ENGINES:
+            game = _clean_game_name(os.path.basename(e.path))
+            installed = _game_is_installed(_normalize_game_name(game), known_games)
+            created = _folder_created_date(e.path)
+            e.name = game
+            status = "installed" if installed else "not installed"
+            reason = [f"Save data for {game}", f"game {status}"]
+            if created:
+                reason.append(f"created {created}")
+            if not installed:
+                reason.append("likely leftover if you no longer play it")
+            e.risk_reason = " · ".join(reason)
+            e.summary = (f"Game Saves · {game} · game {status}"
+                         + (f" · created {created}" if created else ""))
+            enriched += 1
+            continue
+
         # ── Multi-game container (Saved Games / My Games) ──────────────
         if leaf in _SAVE_CONTAINER_MARKERS:
             child_games = [
@@ -3109,6 +3215,7 @@ def detect_entities(
 
     _pass0_update_caches(ctx)
     _pass_appdata_packages(ctx)
+    _pass_game_save_engines(ctx)
     # Explode diverse dump roots BEFORE pass 1, otherwise generic names like
     # "documents"/"downloads" in _DIR_ENTITY_MAP get claimed as one blob first.
     _pass_explode_user_roots(ctx)
