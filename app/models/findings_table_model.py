@@ -17,7 +17,7 @@ from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QStyledItemDelegate, QApplication, QStyle
 
 from app.models.finding import _format_size
-from app.models.risk import normalize_risk, risk_colors as _risk_colors
+from app.models.risk import normalize_risk, risk_sort_index, risk_colors as _risk_colors
 from app.themes.theme_manager import get_palette
 from app.i18n import tr, get_language
 
@@ -63,7 +63,8 @@ _AI_SYMBOL = {
     "none": "—", "disabled": "⊘",
 }
 
-_RISK_ORDER = {"Protected": 0, "Review": 1, "Optional": 2, "Safe": 3}
+# Risk ordering comes from the canonical app.models.risk.risk_sort_index —
+# this module used to keep its own reversed copy.
 
 # Risk badge colours come from the canonical app.models.risk.risk_colors
 # (imported above as _risk_colors) so every screen agrees.
@@ -381,8 +382,8 @@ class FindingsFilterProxy(QSortFilterProxyModel):
         if k == "smallest":
             return le.get("size_bytes", 0) < re.get("size_bytes", 0)
         if k == "risk":
-            lo = _RISK_ORDER.get(normalize_risk(le.get("risk")), 4)
-            ro = _RISK_ORDER.get(normalize_risk(re.get("risk")), 4)
+            lo = risk_sort_index(le.get("risk"))
+            ro = risk_sort_index(re.get("risk"))
             if lo != ro:
                 return lo < ro
             return le.get("size_bytes", 0) > re.get("size_bytes", 0)

@@ -1077,7 +1077,10 @@ class ScanState(QObject):
                     is_dir=fd.get("is_dir", False),
                     size_bytes=fd.get("size_bytes", 0),
                     extension=fd.get("name", "").rsplit(".", 1)[-1] if "." in fd.get("name", "") else "",
-                    modified=0.0,
+                    # Carry the real mtime across a resume. Hardcoding 0.0 here
+                    # made every restored finding look ~55 years old and broke
+                    # age-based sorting for the whole restored session.
+                    modified=fd.get("modified", 0.0) or 0.0,
                     accessed=0.0,
                     parent=fd.get("path", "").rsplit("/", 1)[0].rsplit("\\", 1)[0],
                     category=fd.get("category", ""),

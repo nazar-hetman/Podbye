@@ -21,6 +21,24 @@ def normalize_risk(value: str | None) -> str:
     return RISK_REVIEW
 
 
+_RISK_SORT_INDEX = {risk: i for i, risk in enumerate(RISK_ORDER)}
+
+
+def risk_sort_index(value: str | None) -> int:
+    """Rank of a risk level in the canonical order — Safe first, Protected last.
+
+    The single ordering every "sort by Status" control routes through. Sorting
+    by status asks "what can I act on right now?", so the actionable levels lead
+    and Protected — which needs a human decision — sinks to the bottom.
+
+    Screens used to each keep a private _RISK_ORDER dict, and all three
+    disagreed: the findings table ranked Protected first, startups ranked Review
+    first, and both contradicted RISK_ORDER here. Same control, same label,
+    three different results.
+    """
+    return _RISK_SORT_INDEX[normalize_risk(value)]
+
+
 def is_protected(value: str | None) -> bool:
     return normalize_risk(value) == RISK_PROTECTED
 

@@ -8,12 +8,22 @@ from datetime import datetime
 
 
 def _format_size(size_bytes: int) -> str:
+    # The unit is chosen by threshold but the value is rounded for display, and
+    # the two can disagree at a boundary: 1073741823 B is just under 1 GB, so it
+    # takes the MB branch, where .0f rounds 1023.999… up to a nonsensical
+    # "1024 MB". Promote to the next unit when rounding carries.
     if size_bytes >= 1024 ** 3:
         return f"{size_bytes / (1024 ** 3):.1f} GB"
     if size_bytes >= 1024 ** 2:
-        return f"{size_bytes / (1024 ** 2):.0f} MB"
+        mb = size_bytes / (1024 ** 2)
+        if round(mb) >= 1024:
+            return f"{size_bytes / (1024 ** 3):.1f} GB"
+        return f"{mb:.0f} MB"
     if size_bytes >= 1024:
-        return f"{size_bytes / 1024:.0f} KB"
+        kb = size_bytes / 1024
+        if round(kb) >= 1024:
+            return f"{size_bytes / (1024 ** 2):.0f} MB"
+        return f"{kb:.0f} KB"
     return f"{size_bytes} B"
 
 
@@ -643,6 +653,11 @@ class Finding:
             "cloud_only":      self.cloud_only,
             "reclaimable_bytes": reclaimable,
             "age":             self.age,
+            # Raw mtime, not just the formatted `age`/`first_seen` strings.
+            # The findings table sorts on this key; without it every row fell
+            # back to the same default and "Oldest first" silently did nothing.
+            # Session restore also needs it to rebuild ages after a resume.
+            "modified":        self.modified,
             "risk":            self.risk,
             "source_rule":     self.source_rule,
             "risk_reason":     self.risk_reason,

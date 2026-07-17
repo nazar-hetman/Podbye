@@ -764,8 +764,8 @@ def detect_startup_entries() -> list[StartupEntry]:
             seen_keys.add(entry.key)
             all_entries.append(entry)
 
-    # ── Sort: Review → Optional → Protected → Safe, enabled before disabled ─
-    _RISK_ORDER = {"Review": 0, "Optional": 1, "Protected": 2, "Safe": 3}
-    all_entries.sort(key=lambda e: (_RISK_ORDER.get(e.risk, 1), not e.enabled, e.name.lower()))
+    # ── Sort: canonical risk order (Safe → Protected), enabled before disabled ─
+    from app.models.risk import risk_sort_index
+    all_entries.sort(key=lambda e: (risk_sort_index(e.risk), not e.enabled, e.name.lower()))
 
     return all_entries
