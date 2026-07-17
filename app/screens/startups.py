@@ -605,9 +605,9 @@ class StartupInspectorPanel(QFrame):
         layout.addWidget(self._inspection_frame)
 
         self._explanation_host = QFrame()
-        self._explanation_host.setObjectName("StartupDetailSection")
+        self._explanation_host.setObjectName("StartupDetailReasoning")
         expl_layout = QVBoxLayout(self._explanation_host)
-        expl_layout.setContentsMargins(0, 4, 0, 0)
+        expl_layout.setContentsMargins(10, 9, 10, 9)
         expl_layout.setSpacing(6)
 
         expl_hdr_row = QHBoxLayout()
@@ -706,7 +706,13 @@ class StartupInspectorPanel(QFrame):
         section_qss = (
             "QFrame#StartupDetailSection { background: transparent; border: none; }"
         )
-        self._explanation_host.setStyleSheet(section_qss)
+        # Contextual reasoning sits in a bordered box, matching the Findings
+        # inspector's reasoning block so both item panels read the same way.
+        reasoning_qss = (
+            f"QFrame#StartupDetailReasoning {{ background: transparent; "
+            f"border: 1px solid {p.get('border', '#213028')}; border-radius: 2px; }}"
+        )
+        self._explanation_host.setStyleSheet(reasoning_qss)
         self._inspection_frame.setStyleSheet(section_qss)
         self._action_frame.setStyleSheet(section_qss)
         self._name_lbl.setStyleSheet(
