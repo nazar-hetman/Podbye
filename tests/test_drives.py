@@ -64,16 +64,16 @@ def test_list_drives_is_a_list():
 def test_worker_defaults_to_no_cross_volume():
     w = ScanWorker(_HERE)
     assert w._cross_volumes is False
-    assert w._root_dev is None  # set only when run() starts
+    assert w._root_devs is None  # set only when run() starts
 
 
 def test_crosses_volume_false_for_same_volume():
     w = ScanWorker(_HERE)
-    w._root_dev = os.stat(_HERE).st_dev
+    w._root_devs = {os.stat(_HERE).st_dev}
     assert w._crosses_volume(_HERE) is False
 
 
 def test_crosses_volume_fails_open_on_stat_error():
     w = ScanWorker(_HERE)
-    w._root_dev = os.stat(_HERE).st_dev
+    w._root_devs = {os.stat(_HERE).st_dev}
     assert w._crosses_volume("Z:/definitely/not/here") is False

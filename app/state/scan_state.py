@@ -136,6 +136,11 @@ class ScanState(QObject):
         self._resume_frontier: list = []
         self._last_full_checkpoint: float = 0.0  # time of last full-findings save
 
+        # Roots being scanned. One for a folder/drive scan; several for "Scan
+        # all drives". Entity detection partitions findings by these so each
+        # drive is grouped against its own root.
+        self._scan_roots: list = []
+
         # Lazy {normalized_path: SmartEntity|Finding} index, built on the first
         # find_by_path() call and dropped whenever findings/entities change.
         self._path_index: dict | None = None
@@ -366,6 +371,20 @@ class ScanState(QObject):
         """Set scan mode: 'smart' or 'all'."""
         self._scan_mode = mode
 
+    def set_scan_roots(self, roots: list):
+        """Record the root(s) for this scan (one folder/drive, or many drives)."""
+        self._scan_roots = [r for r in (roots or []) if r]
+
+    @property
+    def scan_roots(self) -> list:
+        return list(self._scan_roots)
+
+    def _findings_under(self, root: str) -> list:
+        """Findings whose path lives under *root* (drive-partition for detection)."""
+        rn = root.replace("\\", "/").lower().rstrip("/")
+        return [f for f in self._findings
+                if f.path.replace("\\", "/").lower().startswith(rn)]
+
     def clear(self):
         """Clear all findings and caches."""
         self.stop_ai_queue()
@@ -382,6 +401,7 @@ class ScanState(QObject):
         self._total_size = 0
         self._scan_frontier = []
         self._resume_frontier = []
+        self._scan_roots = []
         self._last_full_checkpoint = 0.0
         self._path_index = None
         self._halted = False
@@ -702,15 +722,41 @@ class ScanState(QObject):
                 _extra_monoliths = self._settings_store.get(
                     "scan.monolith_patterns", []
                 ) or []
-            entities = detect_entities(
-                self._findings,
-                self._target,
-                log_fn=lambda msg: self.log_line.emit(msg),
-                progress_fn=progress_fn,
-                entity_fn=entity_fn,
-                extra_monolith_patterns=_extra_monoliths,
-            )
-            
+
+            # The detector groups relative to a single root (depth is computed
+            # as path-minus-root). A multi-drive scan therefore can't be fed one
+            # root — D:/ paths wouldn't start with C:/ and would mis-group. Run
+            # detection once per drive over that drive's findings, then merge;
+            # drives are independent installs, so this is also the correct split.
+            roots = [r for r in self._scan_roots if r] or [self._target]
+            if len(roots) > 1:
+                entities = []
+                for root in roots:
+                    if self._entity_detection_cancelled:
+                        break
+                    subset = self._findings_under(root)
+                    if not subset:
+                        continue
+                    self.log_line.emit(
+                        f"[smart] grouping {len(subset):,} items under {root}"
+                    )
+                    entities.extend(detect_entities(
+                        subset, root,
+                        log_fn=lambda msg: self.log_line.emit(msg),
+                        progress_fn=progress_fn,
+                        entity_fn=entity_fn,
+                        extra_monolith_patterns=_extra_monoliths,
+                    ))
+            else:
+                entities = detect_entities(
+                    self._findings,
+                    roots[0],
+                    log_fn=lambda msg: self.log_line.emit(msg),
+                    progress_fn=progress_fn,
+                    entity_fn=entity_fn,
+                    extra_monolith_patterns=_extra_monoliths,
+                )
+
             elapsed = time.time() - t0
             if elapsed > 0.05:
                 self.log_line.emit(f"[perf] entity detection: {elapsed*1000:.1f}ms")

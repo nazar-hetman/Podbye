@@ -87,9 +87,13 @@ class ScanWorker(QThread):
 
     def __init__(self, target: str, skip_paths: set = None,
                  cross_volumes: bool = False, resume_stack: list = None,
-                 parent=None):
+                 roots: list = None, parent=None):
         super().__init__(parent)
         self._target = target
+        # Roots to walk. A single-folder scan has one; "Scan all drives" seeds
+        # the walk with every fixed-drive root. `target` stays the display label
+        # ("All drives"), so the rest of the pipeline is unchanged.
+        self._roots = [r for r in (roots or [target]) if r]
         self._halt = False
         self._scanned = 0
         self._skipped_perms = 0
@@ -97,7 +101,7 @@ class ScanWorker(QThread):
         self._skipped_known = 0
         self._skipped_volume = 0
         self._cross_volumes = cross_volumes  # follow into other drives/volumes?
-        self._root_dev = None                # st_dev of the scan root volume
+        self._root_devs = None               # st_dev set of the seeded roots
         self._skip_paths: set = skip_paths or set()  # normalized paths to skip (resume)
         # Directories left to walk from a previous (interrupted) run. When set,
         # the walk continues from this frontier instead of re-walking from root.
@@ -110,16 +114,26 @@ class ScanWorker(QThread):
         self._halt = True
 
     def run(self):
-        self.log.emit(f"[scan] starting recursive walk: {self._target}")
+        if len(self._roots) > 1:
+            self.log.emit(f"[scan] starting recursive walk: {len(self._roots)} "
+                          f"roots ({', '.join(self._roots)})")
+        else:
+            self.log.emit(f"[scan] starting recursive walk: {self._target}")
         self.log.emit("[scan] symlinks/junctions: skipped (not followed)")
         if not self._cross_volumes:
-            try:
-                self._root_dev = os.stat(self._target).st_dev
-                self.log.emit("[scan] cross-volume descent: off (staying on the "
-                              "target drive)")
-            except OSError:
-                self._root_dev = None
+            # Allow every seeded root's own volume, prune anything else (junction
+            # or mount into a volume the user did not choose). A set so a
+            # multi-drive scan keeps each drive without crossing into others.
+            self._root_devs = set()
+            for r in self._roots:
+                try:
+                    self._root_devs.add(os.stat(r).st_dev)
+                except OSError:
+                    pass
+            self.log.emit("[scan] cross-volume descent: off (staying on the "
+                          "selected drive(s))")
         else:
+            self._root_devs = None
             self.log.emit("[scan] cross-volume descent: on")
         t0 = time.time()
         batch: list = []
@@ -142,15 +156,16 @@ class ScanWorker(QThread):
                 f"{'y' if len(stack) == 1 else 'ies'} (skipping re-walk)"
             )
         else:
-            # Fresh run: record the scan-root directory itself, then descend.
-            stack = [self._target]
-            root_finding = self._stat_entry(self._target, is_dir=True)
-            if root_finding:
-                if self._should_skip(root_finding.path):
-                    self._skipped_known += 1
-                else:
-                    batch.append(root_finding)
-                    self._scanned += 1
+            # Fresh run: record each scan-root directory itself, then descend.
+            stack = list(self._roots)
+            for root in self._roots:
+                root_finding = self._stat_entry(root, is_dir=True)
+                if root_finding:
+                    if self._should_skip(root_finding.path):
+                        self._skipped_known += 1
+                    else:
+                        batch.append(root_finding)
+                        self._scanned += 1
 
         try:
             while stack:
@@ -190,7 +205,7 @@ class ScanWorker(QThread):
                                 continue
                             if entry.name.lower() in _SKIP_DIRS:
                                 continue
-                            if (self._root_dev is not None
+                            if (self._root_devs is not None
                                     and self._crosses_volume(entry.path)):
                                 # Different drive/volume (mounted disk, junction
                                 # to another volume) — don't descend unless the
@@ -367,14 +382,14 @@ class ScanWorker(QThread):
         return self._make_finding(entry.path, entry.name, st, is_dir)
 
     def _crosses_volume(self, path: str) -> bool:
-        """True if *path* sits on a different volume than the scan root.
+        """True if *path* sits on a volume that was not one of the scan roots.
 
         Uses st_dev (the volume identifier). Fail-open: a stat error returns
         False so a single unreadable entry is not silently pruned here — the
         normal stat path will record it as permission-denied instead.
         """
         try:
-            return os.stat(path).st_dev != self._root_dev
+            return os.stat(path).st_dev not in self._root_devs
         except OSError:
             return False
 

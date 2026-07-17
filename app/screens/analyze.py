@@ -181,6 +181,7 @@ class AnalyzeScreen(QWidget):
         self._dup_worker = None
         self._start_time = 0.0
         self._selected_folder = ""
+        self._scan_roots: list[str] = []   # >1 only for "Scan all drives"
         self._state_log_connected = False
         self._ai_connected = False
         self._hover_row = -1
@@ -310,6 +311,17 @@ class AnalyzeScreen(QWidget):
         self._btn_folder.setFixedHeight(32)
         self._btn_folder.clicked.connect(self._pick_folder)
         header.addWidget(self._btn_folder, alignment=Qt.AlignVCenter)
+
+        # One-click "scan every fixed drive" target.
+        self._btn_scan_all = QPushButton(tr("Scan all drives"))
+        self._btn_scan_all.setCursor(Qt.PointingHandCursor)
+        self._btn_scan_all.setFixedHeight(32)
+        self._btn_scan_all.setToolTip(
+            tr("Scan every internal (fixed) drive at once. "
+               "Removable and network drives are skipped.")
+        )
+        self._btn_scan_all.clicked.connect(self._pick_all_drives)
+        header.addWidget(self._btn_scan_all, alignment=Qt.AlignVCenter)
 
         # Scan mode selector
         self._mode_combo = TacticalComboBox()
@@ -639,6 +651,7 @@ class AnalyzeScreen(QWidget):
         if self._scan_state and not self._scan_state.is_running:
             self._scan_state.clear()
         self._selected_folder = ""
+        self._scan_roots = []
         self._resuming = False
         self._pipeline_state = "idle"
         self._filesystem_complete = False
@@ -717,12 +730,40 @@ class AnalyzeScreen(QWidget):
         )
         if folder:
             self._selected_folder = folder
+            self._scan_roots = []  # single-folder scan — clear any all-drives selection
             self._sub.setText(tr("Folder selected · choose mode and start"))
             self._btn_scan.setEnabled(True)
             self._refresh_folder_button()
             self._refresh_header_meta()
             self._update_drive_readout()
             self._feed.add_line(f"[scan] target selected: {folder}")
+
+    def _pick_all_drives(self):
+        """Select every fixed drive as the scan target."""
+        from app.services import drives
+        from app.models.finding import _format_size
+        fixed = [d for d in drives.list_drives() if d.kind == "Fixed"]
+        if not fixed:
+            # No psutil / no classifiable drives — fall back to the current drive.
+            self._feed.add_line("[scan] no fixed drives detected — pick a folder instead")
+            self._sub.setText(tr("Could not detect fixed drives · choose a folder"))
+            return
+        self._scan_roots = [d.mountpoint for d in fixed]
+        self._selected_folder = tr("All drives")
+        total = sum(d.total for d in fixed)
+        used = sum(d.used for d in fixed)
+        letters = ", ".join(d.mountpoint.rstrip("\\/") for d in fixed)
+        self._sub.setText(tr("All fixed drives selected · choose mode and start"))
+        self._btn_scan.setEnabled(True)
+        self._refresh_folder_button()
+        self._refresh_header_meta()
+        self._drive_lbl.setText(tr(
+            "{drives} · {count} fixed drives · {used} used of {total}",
+            drives=letters, count=len(fixed),
+            used=_format_size(used), total=_format_size(total),
+        ))
+        self._drive_lbl.setVisible(True)
+        self._feed.add_line(f"[scan] target: all fixed drives ({letters})")
 
     def _update_drive_readout(self):
         """Show the target drive's type and capacity (psutil-backed, optional)."""
@@ -781,6 +822,9 @@ class AnalyzeScreen(QWidget):
         self._scan_offset = self._scan_state.total_count if self._scan_state else 0
 
         self._resuming = False
+        # Tell ScanState the root(s) so entity detection partitions per drive.
+        # Set after clear() (which resets roots) so an all-drives scan keeps them.
+        self._scan_state.set_scan_roots(self._scan_roots or [self._selected_folder])
         self._scan_state.set_running(True, self._selected_folder)
         self._set_badge(tr("Scanning"), "running")
 
@@ -867,9 +911,13 @@ class AnalyzeScreen(QWidget):
         # unparented scan thread is invisible there and would still be running
         # when the process tears down — the exact "QThread: Destroyed while
         # thread is still running" abort that sweep exists to prevent.
+        # Multi-root only for "Scan all drives"; a single folder passes roots=None
+        # so the worker behaves exactly as before.
+        roots = self._scan_roots if len(self._scan_roots) > 1 else None
         self._worker = ScanWorker(self._selected_folder, skip_paths=skip,
                                   cross_volumes=cross_volumes,
                                   resume_stack=resume_stack,
+                                  roots=roots,
                                   parent=self)
         self._worker.batch_ready.connect(self._on_batch)
         self._worker.progress.connect(self._on_progress)
