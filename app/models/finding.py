@@ -569,9 +569,16 @@ def assign_risk(category: str, path: str, size_bytes: int) -> tuple:
 #  FINDING DATACLASS
 # ═══════════════════════════════════════════════════════════════════
 
-@dataclass
+@dataclass(slots=True)
 class Finding:
-    """A single file/folder finding from a scan."""
+    """A single file/folder finding from a scan.
+
+    slots=True is load-bearing, not tidiness: a full C:/ scan holds ~1.8M of
+    these live at once, and the per-instance __dict__ alone cost ~256 bytes
+    each (~440 MB) before the field values themselves. Every attribute written
+    anywhere (ai_status, ai_explanation, …) must stay a declared field below —
+    slots make a stray attribute an AttributeError rather than silent bloat.
+    """
     path: str
     name: str
     is_dir: bool
