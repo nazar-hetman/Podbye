@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor">
+  <!-- The Obelisk: a tapered monolith split into scanned segments.
+       Monochrome / currentColor — depth comes from opacity, so it adapts
+       to any theme accent (forest green, amber bronze, mono white, paper sage). -->
+  <path d="M128 28 L155 52 L101 52 Z" opacity="0.85"/>
+  <path d="M101 58 L155 58 L158 88 L98 88 Z"  opacity="0.40"/>
+  <path d="M97 94 L159 94 L162 124 L94 124 Z"  opacity="0.62"/>
+  <path d="M93 130 L163 130 L166 160 L90 160 Z" opacity="1"/>
+  <path d="M89 166 L167 166 L170 196 L86 196 Z" opacity="0.62"/>
+  <path d="M85 202 L171 202 L173 224 L83 224 Z" opacity="0.40"/>
+</svg>

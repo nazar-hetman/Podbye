@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff8ec"/>
+      <stop offset="1" stop-color="#f5e7c8"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="url(#bg3)"/>
+  <rect x="8.5" y="8.5" width="239" height="239" rx="53.5" fill="none" stroke="#e0cfa3" stroke-width="1"/>
+  <!-- Friendly sprout: a fresh, tended filesystem -->
+  <g>
+    <!-- pot / base disk -->
+    <rect x="78" y="170" width="100" height="42" rx="12" fill="#c98a5a"/>
+    <rect x="68" y="160" width="120" height="22" rx="10" fill="#e0a070"/>
+    <!-- stem -->
+    <path d="M128 160 C 128 130, 128 110, 128 80" stroke="#5a8a55" stroke-width="8" stroke-linecap="round" fill="none"/>
+    <!-- leaves -->
+    <path d="M128 120 C 96 116, 80 96, 78 70 C 110 72, 128 92, 128 120 Z" fill="#7cb275"/>
+    <path d="M128 100 C 160 96, 178 78, 182 54 C 150 56, 130 76, 128 100 Z" fill="#9bd194"/>
+    <!-- bud -->
+    <circle cx="128" cy="74" r="9" fill="#f0bf4a"/>
+  </g>
+</svg>

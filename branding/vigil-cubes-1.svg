@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor">
+  <!-- Big cube + one baby cube floating free. Simple and bold. -->
+  <path d="M128.0 73.3 L190.0 108.0 L128.0 142.7 L66.0 108.0 Z" opacity="0.82"/>
+  <path d="M66.0 108.0 L128.0 142.7 L128.0 214.6 L66.0 179.9 Z" opacity="0.42"/>
+  <path d="M190.0 108.0 L128.0 142.7 L128.0 214.6 L190.0 179.9 Z" opacity="0.64"/>
+  <path d="M170.0 45.7 L192.0 58.0 L170.0 70.3 L148.0 58.0 Z" opacity="1"/>
+  <path d="M148.0 58.0 L170.0 70.3 L170.0 95.8 L148.0 83.5 Z" opacity="0.58"/>
+  <path d="M192.0 58.0 L170.0 70.3 L170.0 95.8 L192.0 83.5 Z" opacity="0.8"/>
+</svg>

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg5" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f6f4ef"/>
+      <stop offset="1" stop-color="#ece7da"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="url(#bg5)"/>
+  <rect x="8.5" y="8.5" width="239" height="239" rx="53.5" fill="none" stroke="#d8d0bd" stroke-width="1"/>
+  <!-- Donut chart: storage breakdown, geometric and friendly -->
+  <g transform="translate(128 128)">
+    <!-- segments via stroke-dasharray on a circle, r=58, circumference ~364.4 -->
+    <circle r="58" fill="none" stroke="#f0a35a" stroke-width="36"
+            stroke-dasharray="120 245" transform="rotate(-90)"/>
+    <circle r="58" fill="none" stroke="#6ab0d6" stroke-width="36"
+            stroke-dasharray="95 270" stroke-dashoffset="-120" transform="rotate(-90)"/>
+    <circle r="58" fill="none" stroke="#7cc298" stroke-width="36"
+            stroke-dasharray="80 285" stroke-dashoffset="-215" transform="rotate(-90)"/>
+    <circle r="58" fill="none" stroke="#d9789a" stroke-width="36"
+            stroke-dasharray="69 296" stroke-dashoffset="-295" transform="rotate(-90)"/>
+    <!-- inner dot -->
+    <circle r="14" fill="#3a3d4a"/>
+  </g>
+</svg>

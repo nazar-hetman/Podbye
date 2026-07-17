@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#15251d"/>
+      <stop offset="1" stop-color="#0b1410"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="url(#tile)"/>
+  <rect x="8.5" y="8.5" width="239" height="239" rx="53.5" fill="none" stroke="#2b3d33" stroke-width="1"/>
+  <!-- Treemap blocks: the product's storage map, abstracted -->
+  <g>
+    <rect x="40"  y="40"  width="96" height="176" rx="10" fill="#7aa88a"/>
+    <rect x="144" y="40"  width="72" height="80"  rx="10" fill="#4f7a63"/>
+    <rect x="144" y="128" width="72" height="36"  rx="10" fill="#9cc3a8"/>
+    <rect x="144" y="172" width="72" height="44"  rx="10" fill="#3d6450"/>
+  </g>
+</svg>

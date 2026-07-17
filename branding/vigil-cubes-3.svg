@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor">
+  <!-- Big cube + a few baby cubes drifting off. -->
+  <path d="M128.0 84.4 L188.0 118.0 L128.0 151.6 L68.0 118.0 Z" opacity="0.82"/>
+  <path d="M68.0 118.0 L128.0 151.6 L128.0 221.2 L68.0 187.6 Z" opacity="0.42"/>
+  <path d="M188.0 118.0 L128.0 151.6 L128.0 221.2 L188.0 187.6 Z" opacity="0.64"/>
+  <path d="M176.0 59.9 L194.0 70.0 L176.0 80.1 L158.0 70.0 Z" opacity="1"/>
+  <path d="M158.0 70.0 L176.0 80.1 L176.0 101.0 L158.0 90.9 Z" opacity="0.58"/>
+  <path d="M194.0 70.0 L176.0 80.1 L176.0 101.0 L194.0 90.9 Z" opacity="0.8"/>
+  <path d="M86.0 56.2 L100.0 64.0 L86.0 71.8 L72.0 64.0 Z" opacity="0.9"/>
+  <path d="M72.0 64.0 L86.0 71.8 L86.0 88.1 L72.0 80.2 Z" opacity="0.5"/>
+  <path d="M100.0 64.0 L86.0 71.8 L86.0 88.1 L100.0 80.2 Z" opacity="0.72"/>
+  <path d="M138.0 37.8 L149.0 44.0 L138.0 50.2 L127.0 44.0 Z" opacity="1"/>
+  <path d="M127.0 44.0 L138.0 50.2 L138.0 62.9 L127.0 56.8 Z" opacity="0.6"/>
+  <path d="M149.0 44.0 L138.0 50.2 L138.0 62.9 L149.0 56.8 Z" opacity="0.82"/>
+</svg>

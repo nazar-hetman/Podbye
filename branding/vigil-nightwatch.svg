@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor">
+  <!-- The Nightwatch: a crescent (the night watch) cradling a single spark —
+       the kept point of light. Strong name tie, no eye. Theme-adaptive. -->
+  <path fill-rule="evenodd"
+        d="M44 128 a84 84 0 1 0 168 0 a84 84 0 1 0 -168 0 Z
+           M78 112 a72 72 0 1 0 144 0 a72 72 0 1 0 -144 0 Z" opacity="0.7"/>
+  <path d="M152 150 L156 162 L168 166 L156 170 L152 182 L148 170 L136 166 L148 162 Z" opacity="1"/>
+</svg>

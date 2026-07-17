@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor">
+  <!-- The Active Container: an isometric cube with one live cell on its face.
+       Faces shaded by opacity only — no fixed hues, so it reads on every theme. -->
+  <path d="M128 70 L188 104 L128 138 L68 104 Z"  opacity="0.85"/>  <!-- top -->
+  <path d="M68 104 L128 138 L128 206 L68 172 Z"  opacity="0.48"/>  <!-- left -->
+  <path d="M188 104 L128 138 L128 206 L188 172 Z" opacity="0.66"/> <!-- right -->
+  <path d="M128 88 L144 97 L128 106 L112 97 Z"   opacity="1"/>     <!-- active cell -->
+</svg>

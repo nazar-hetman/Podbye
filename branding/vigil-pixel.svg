@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor">
+  <!-- The Pixel Container: a 4×4 cell block, two cells reclaimed (empty),
+       one live. Echoes the Silkscreen pixel wordmark. currentColor throughout. -->
+  <!-- row 0 -->
+  <rect x="36"  y="36"  width="40" height="40" rx="2" opacity="0.78"/>
+  <rect x="84"  y="36"  width="40" height="40" rx="2" opacity="0.50"/>
+  <rect x="132" y="36"  width="40" height="40" rx="2" opacity="0.78"/>
+  <!-- (180,36) reclaimed -->
+  <!-- row 1 -->
+  <rect x="36"  y="84"  width="40" height="40" rx="2" opacity="0.50"/>
+  <rect x="84"  y="84"  width="40" height="40" rx="2" opacity="0.78"/>
+  <rect x="132" y="84"  width="40" height="40" rx="2" opacity="0.50"/>
+  <rect x="180" y="84"  width="40" height="40" rx="2" opacity="0.78"/>
+  <!-- row 2 -->
+  <rect x="36"  y="132" width="40" height="40" rx="2" opacity="0.78"/>
+  <rect x="84"  y="132" width="40" height="40" rx="2" opacity="0.50"/>
+  <rect x="132" y="132" width="40" height="40" rx="2" opacity="1"/>
+  <rect x="180" y="132" width="40" height="40" rx="2" opacity="0.50"/>
+  <!-- row 3 -->
+  <!-- (36,180) reclaimed -->
+  <rect x="84"  y="180" width="40" height="40" rx="2" opacity="0.78"/>
+  <rect x="132" y="180" width="40" height="40" rx="2" opacity="0.50"/>
+  <rect x="180" y="180" width="40" height="40" rx="2" opacity="0.78"/>
+</svg>

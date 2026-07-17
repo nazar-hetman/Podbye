@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor">
+  <!-- Ouroboros (geometric): a thick ring whose head bites its tail. The
+       most stripped-down cycle mark; bold enough to read when tiny. -->
+  <path d="M133.0 56.2 A72 72 0 1 1 96.4 63.3 L107.8 86.7 A46 46 0 1 0 131.2 82.1 Z" opacity="0.72"/>
+  <rect x="125.1" y="62.1" width="14" height="14" opacity="0.5"/>
+  <path d="M125.5 63.6 L94.2 58.8 L110.0 91.1 Z" opacity="1"/>
+</svg>

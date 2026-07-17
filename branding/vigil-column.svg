@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor">
+  <!-- The Segmented Column: a storage gauge — bright = used, dim = free.
+       Uniform segments, hard corners. Pure currentColor + opacity. -->
+  <rect x="96" y="40"  width="64" height="17" opacity="0.32"/>
+  <rect x="96" y="63"  width="64" height="17" opacity="0.32"/>
+  <rect x="96" y="86"  width="64" height="17" opacity="0.32"/>
+  <rect x="96" y="109" width="64" height="17" opacity="1"/>
+  <rect x="96" y="132" width="64" height="17" opacity="1"/>
+  <rect x="96" y="155" width="64" height="17" opacity="1"/>
+  <rect x="96" y="178" width="64" height="17" opacity="1"/>
+  <rect x="96" y="201" width="64" height="17" opacity="1"/>
+</svg>

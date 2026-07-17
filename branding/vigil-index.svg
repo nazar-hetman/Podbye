@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor">
+  <!-- The Index (my own): corner brackets framing a file manifest, one line
+       under scan. "Vigil" = watching the contents, not guarding with a shield.
+       Tactical, mono/pixel-friendly, fully theme-adaptive via currentColor. -->
+  <!-- corner brackets -->
+  <path d="M56 56 H92 V62 H62 V92 H56 Z"     opacity="0.85"/>
+  <path d="M200 56 H164 V62 H194 V92 H200 Z" opacity="0.85"/>
+  <path d="M56 200 H92 V194 H62 V164 H56 Z"  opacity="0.85"/>
+  <path d="M200 200 H164 V194 H194 V164 H200 Z" opacity="0.85"/>
+  <!-- manifest lines (varied lengths = a directory listing) -->
+  <rect x="84" y="92"  width="88" height="6" opacity="0.45"/>
+  <rect x="84" y="108" width="60" height="6" opacity="0.45"/>
+  <rect x="84" y="124" width="80" height="6" opacity="1"/>
+  <rect x="84" y="140" width="48" height="6" opacity="0.45"/>
+  <rect x="84" y="156" width="72" height="6" opacity="0.45"/>
+</svg>

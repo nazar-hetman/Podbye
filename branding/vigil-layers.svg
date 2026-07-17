@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor">
+  <!-- The Layers: three cube slabs, each offset — a turn implied with flat
+       shapes, no 3D shading. Reads as motion / things shifting into place. -->
+  <!-- bottom slab (cx 128, cy 180) -->
+  <path d="M128 156 L180 180 L128 204 L76 180 Z" opacity="0.5"/>
+  <path d="M76 180 L128 204 L128 220 L76 196 Z"  opacity="0.36"/>
+  <path d="M180 180 L128 204 L128 220 L180 196 Z" opacity="0.48"/>
+  <!-- middle slab, shifted right (cx 146, cy 138) -->
+  <path d="M146 114 L198 138 L146 162 L94 138 Z" opacity="0.68"/>
+  <path d="M94 138 L146 162 L146 178 L94 154 Z"  opacity="0.46"/>
+  <path d="M198 138 L146 162 L146 178 L198 154 Z" opacity="0.6"/>
+  <!-- top slab, shifted left (cx 112, cy 96) -->
+  <path d="M112 72 L164 96 L112 120 L60 96 Z"  opacity="1"/>
+  <path d="M60 96 L112 120 L112 136 L60 112 Z"  opacity="0.62"/>
+  <path d="M164 96 L112 120 L112 136 L164 112 Z" opacity="0.82"/>
+</svg>

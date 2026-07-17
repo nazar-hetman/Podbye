@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg6" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1f2b3a"/>
+      <stop offset="1" stop-color="#131b27"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="url(#bg6)"/>
+  <rect x="8.5" y="8.5" width="239" height="239" rx="53.5" fill="none" stroke="#2d3d52" stroke-width="1"/>
+  <!-- Three friendly fan-stacked folders (no shield language) -->
+  <g>
+    <!-- back folder, rotated left -->
+    <g transform="translate(128 140) rotate(-14) translate(-72 -50)">
+      <path d="M0 14 Q0 4 10 4 L36 4 L48 18 L134 18 Q144 18 144 28 L144 96 Q144 106 134 106 L10 106 Q0 106 0 96 Z" fill="#5d7fb0"/>
+      <rect x="0" y="30" width="144" height="6" fill="#7a99c4" opacity="0.6"/>
+    </g>
+    <!-- middle folder -->
+    <g transform="translate(128 144) translate(-72 -50)">
+      <path d="M0 14 Q0 4 10 4 L36 4 L48 18 L134 18 Q144 18 144 28 L144 96 Q144 106 134 106 L10 106 Q0 106 0 96 Z" fill="#f0c46a"/>
+      <rect x="0" y="30" width="144" height="6" fill="#f5d68c" opacity="0.7"/>
+    </g>
+    <!-- front folder, rotated right -->
+    <g transform="translate(128 152) rotate(12) translate(-72 -50)">
+      <path d="M0 14 Q0 4 10 4 L36 4 L48 18 L134 18 Q144 18 144 28 L144 96 Q144 106 134 106 L10 106 Q0 106 0 96 Z" fill="#e07a8c"/>
+      <rect x="0" y="30" width="144" height="6" fill="#ec9aaa" opacity="0.7"/>
+    </g>
+  </g>
+</svg>

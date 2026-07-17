@@ -1,0 +1,28 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Vigil cubes</title>
+<style>
+body{margin:0;font-family:ui-monospace,"JetBrains Mono",monospace;background:#1a1a1a;color:#ccc}
+h1{font-size:13px;letter-spacing:4px;text-transform:uppercase;padding:20px 24px 0;font-weight:400}
+p{padding:0 24px;color:#888;font-size:12px;max-width:780px;line-height:1.6}
+.grid{display:grid;grid-template-columns:150px repeat(4,1fr) 76px 60px;gap:1px;padding:16px 24px 28px}
+.head{font-size:10px;letter-spacing:2px;text-transform:uppercase;display:flex;align-items:center;justify-content:center;color:#888;padding:8px;text-align:center}
+.rowlabel{font-size:12px;display:flex;align-items:center;padding:0 8px;color:#ddd}
+.cell{aspect-ratio:1;display:flex;align-items:center;justify-content:center}
+.cell svg{width:70%;height:70%}
+.s32{background:#0c1511;color:#7aa88a}.s32 svg{width:32px;height:32px}
+.s18{background:#0c1511;color:#7aa88a}.s18 svg{width:18px;height:18px}
+</style></head><body>
+<h1>Vigil &mdash; cube + baby cubes</h1>
+<p>Keeping it simple: one bold cube, a few small ones. Last two columns = 32px and 18px (icon / taskbar) so you can see what stays clean. Monochrome <code>currentColor</code>.</p>
+<div class="grid" id="grid"></div>
+<script>
+const themes=[{name:"Forest",bg:"#0c1511",color:"#7aa88a"},{name:"Amber",bg:"#14100a",color:"#d79c54"},{name:"Mono",bg:"#080808",color:"#d9d9d9"},{name:"Paper",bg:"#ece5d8",color:"#6a7562"}];
+const logos={"Big + 1 baby": "<path d=\"M128.0 73.3 L190.0 108.0 L128.0 142.7 L66.0 108.0 Z\" opacity=\"0.82\"/>\n  <path d=\"M66.0 108.0 L128.0 142.7 L128.0 214.6 L66.0 179.9 Z\" opacity=\"0.42\"/>\n  <path d=\"M190.0 108.0 L128.0 142.7 L128.0 214.6 L190.0 179.9 Z\" opacity=\"0.64\"/>\n  <path d=\"M170.0 45.7 L192.0 58.0 L170.0 70.3 L148.0 58.0 Z\" opacity=\"1\"/>\n  <path d=\"M148.0 58.0 L170.0 70.3 L170.0 95.8 L148.0 83.5 Z\" opacity=\"0.58\"/>\n  <path d=\"M192.0 58.0 L170.0 70.3 L170.0 95.8 L192.0 83.5 Z\" opacity=\"0.8\"/>", "Big + popping cube": "<path d=\"M124.0 77.3 L186.0 112.0 L124.0 146.7 L62.0 112.0 Z\" opacity=\"0.82\"/>\n  <path d=\"M62.0 112.0 L124.0 146.7 L124.0 218.6 L62.0 183.9 Z\" opacity=\"0.42\"/>\n  <path d=\"M186.0 112.0 L124.0 146.7 L124.0 218.6 L186.0 183.9 Z\" opacity=\"0.64\"/>\n  <path d=\"M150.0 56.5 L167.0 66.0 L150.0 75.5 L133.0 66.0 Z\" opacity=\"1\"/>\n  <path d=\"M133.0 66.0 L150.0 75.5 L150.0 95.2 L133.0 85.7 Z\" opacity=\"0.58\"/>\n  <path d=\"M167.0 66.0 L150.0 75.5 L150.0 95.2 L167.0 85.7 Z\" opacity=\"0.8\"/>", "Big + 3 babies": "<path d=\"M128.0 84.4 L188.0 118.0 L128.0 151.6 L68.0 118.0 Z\" opacity=\"0.82\"/>\n  <path d=\"M68.0 118.0 L128.0 151.6 L128.0 221.2 L68.0 187.6 Z\" opacity=\"0.42\"/>\n  <path d=\"M188.0 118.0 L128.0 151.6 L128.0 221.2 L188.0 187.6 Z\" opacity=\"0.64\"/>\n  <path d=\"M176.0 59.9 L194.0 70.0 L176.0 80.1 L158.0 70.0 Z\" opacity=\"1\"/>\n  <path d=\"M158.0 70.0 L176.0 80.1 L176.0 101.0 L158.0 90.9 Z\" opacity=\"0.58\"/>\n  <path d=\"M194.0 70.0 L176.0 80.1 L176.0 101.0 L194.0 90.9 Z\" opacity=\"0.8\"/>\n  <path d=\"M86.0 56.2 L100.0 64.0 L86.0 71.8 L72.0 64.0 Z\" opacity=\"0.9\"/>\n  <path d=\"M72.0 64.0 L86.0 71.8 L86.0 88.1 L72.0 80.2 Z\" opacity=\"0.5\"/>\n  <path d=\"M100.0 64.0 L86.0 71.8 L86.0 88.1 L100.0 80.2 Z\" opacity=\"0.72\"/>\n  <path d=\"M138.0 37.8 L149.0 44.0 L138.0 50.2 L127.0 44.0 Z\" opacity=\"1\"/>\n  <path d=\"M127.0 44.0 L138.0 50.2 L138.0 62.9 L127.0 56.8 Z\" opacity=\"0.6\"/>\n  <path d=\"M149.0 44.0 L138.0 50.2 L138.0 62.9 L149.0 56.8 Z\" opacity=\"0.82\"/>", "Container (plain)": "<path d=\"M128 70 L188 104 L128 138 L68 104 Z\"  opacity=\"0.85\"/>  \n  <path d=\"M68 104 L128 138 L128 206 L68 172 Z\"  opacity=\"0.48\"/>  \n  <path d=\"M188 104 L128 138 L128 206 L188 172 Z\" opacity=\"0.66\"/> \n  <path d=\"M128 88 L144 97 L128 106 L112 97 Z\"   opacity=\"1\"/>"};const grid=document.getElementById("grid");
+grid.appendChild(Object.assign(document.createElement("div"),{className:"head"}));
+themes.forEach(t=>{const d=document.createElement("div");d.className="head";d.textContent=t.name;grid.appendChild(d);});
+grid.appendChild(Object.assign(document.createElement("div"),{className:"head",textContent:"32px"}));
+grid.appendChild(Object.assign(document.createElement("div"),{className:"head",textContent:"18px"}));
+for(const[name,inner]of Object.entries(logos)){const l=document.createElement("div");l.className="rowlabel";l.textContent=name;grid.appendChild(l);
+themes.forEach(t=>{const c=document.createElement("div");c.className="cell";c.style.background=t.bg;c.style.color=t.color;
+c.innerHTML='<svg viewBox="0 0 256 256" fill="currentColor">'+inner+'</svg>';grid.appendChild(c);});
+['s32','s18'].forEach(k=>{const sm=document.createElement("div");sm.className="cell "+k;sm.innerHTML='<svg viewBox="0 0 256 256" fill="currentColor">'+inner+'</svg>';grid.appendChild(sm);});}
+</script></body></html>

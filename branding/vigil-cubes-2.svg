@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor">
+  <!-- Big cube + a small cube lifting off the top corner. -->
+  <path d="M124.0 77.3 L186.0 112.0 L124.0 146.7 L62.0 112.0 Z" opacity="0.82"/>
+  <path d="M62.0 112.0 L124.0 146.7 L124.0 218.6 L62.0 183.9 Z" opacity="0.42"/>
+  <path d="M186.0 112.0 L124.0 146.7 L124.0 218.6 L186.0 183.9 Z" opacity="0.64"/>
+  <path d="M150.0 56.5 L167.0 66.0 L150.0 75.5 L133.0 66.0 Z" opacity="1"/>
+  <path d="M133.0 66.0 L150.0 75.5 L150.0 95.2 L133.0 85.7 Z" opacity="0.58"/>
+  <path d="M167.0 66.0 L150.0 75.5 L150.0 95.2 L167.0 85.7 Z" opacity="0.8"/>
+</svg>

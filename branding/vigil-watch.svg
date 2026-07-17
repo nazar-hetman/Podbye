@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor">
+  <!-- The Watch: a crenellated keep with the light still on — standing vigil
+       over the system. Architectural, not a shield. currentColor + opacity. -->
+  <path d="M96 220 L96 52 L112 52 L112 62 L120 62 L120 52 L136 52 L136 62
+           L144 62 L144 52 L160 52 L160 220 Z" opacity="0.55"/>
+  <rect x="118" y="92" width="20" height="48" opacity="1"/>
+</svg>

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor">
+  <!-- The Core: an open container with a bright cube nested inside — Vigil
+       watches what's in your storage. Name + function in one flat mark. -->
+  <!-- container walls -->
+  <path d="M72 116 L128 148 L128 204 L72 172 Z"  opacity="0.46"/>
+  <path d="M184 116 L128 148 L128 204 L184 172 Z" opacity="0.64"/>
+  <!-- open-top rim (frame, even-odd ring) -->
+  <path fill-rule="evenodd"
+        d="M128 84 L184 116 L128 148 L72 116 Z
+           M128 100 L160 116 L128 132 L96 116 Z" opacity="0.82"/>
+  <!-- glowing core cube inside -->
+  <path d="M128 110 L150 123 L128 136 L106 123 Z" opacity="1"/>
+  <path d="M106 123 L128 136 L128 158 L106 145 Z" opacity="0.6"/>
+  <path d="M150 123 L128 136 L128 158 L150 145 Z" opacity="0.82"/>
+</svg>
