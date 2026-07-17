@@ -223,29 +223,51 @@ class AnalyzeScreen(QWidget):
     def _apply_target_field_style(self):
         from app.themes.theme_manager import get_palette
         p = get_palette()
-        text_color = p.get("text_dim", "#8a9b8f") if not self._selected_folder else p.get("text", "#d6e2da")
+        all_active = len(getattr(self, "_scan_roots", []) or []) > 1
+        # Folder half dims its text when no folder is chosen — unless "ALL" is
+        # the active target, in which case the folder half is the inactive one.
+        folder_selected = bool(self._selected_folder) and not all_active
+        text_color = p.get("text", "#d6e2da") if folder_selected else p.get("text_dim", "#8a9b8f")
+        panel_alt = p.get("panel_alt", "#18241e")
+        panel_hover = p.get("panel_hover", "#1d2c25")
+        border_alt = p.get("border_alt", "#2b3d33")
+        border_hover = p.get("border_hover", "#3a5648")
+        accent = p.get("accent", "#7cc596")
+        # Folder half: left-rounded, no right border (joins the ALL chip).
         self._btn_folder.setStyleSheet(
             f"QPushButton {{"
-            f"background-color: {p.get('panel_alt', '#18241e')};"
-            f"border: 1px solid {p.get('border_alt', '#2b3d33')};"
+            f"background-color: {panel_alt};"
+            f"border: 1px solid {border_alt}; border-right: none;"
             f"color: {text_color};"
-            f"padding: 5px 12px;"
-            f"font-size: 11px;"
-            f"font-family: 'JetBrains Mono';"
+            f"padding: 5px 12px; font-size: 11px; font-family: 'JetBrains Mono';"
             f"text-align: left;"
-            f"border-radius: 2px;"
+            f"border-top-left-radius: 2px; border-bottom-left-radius: 2px;"
+            f"border-top-right-radius: 0; border-bottom-right-radius: 0;"
             f"}}"
-            f"QPushButton:hover {{"
-            f"background-color: {p.get('panel_hover', '#1d2c25')};"
-            f"border-color: {p.get('border_hover', '#3a5648')};"
-            f"color: {p.get('text', '#d6e2da')};"
-            f"}}"
-            f"QPushButton:focus {{ border-color: {p.get('accent', '#7cc596')}; }}"
+            f"QPushButton:hover {{ background-color: {panel_hover}; color: {p.get('text', '#d6e2da')}; }}"
             f"QPushButton:disabled {{"
             f"background-color: {p.get('bg_deep', '#080d0a')};"
             f"border-color: {p.get('border', '#213028')};"
             f"color: {p.get('text_faint', '#57685e')};"
             f"}}"
+        )
+        # ALL chip: right-rounded. Filled with the accent when it is the active
+        # target so the user can see all-drives is selected.
+        if all_active:
+            chip_bg, chip_fg, chip_border = accent, p.get("on_accent", "#070c09"), accent
+        else:
+            chip_bg, chip_fg, chip_border = panel_alt, p.get("text_dim", "#8a9b8f"), border_alt
+        self._btn_scan_all.setStyleSheet(
+            f"QPushButton {{"
+            f"background-color: {chip_bg};"
+            f"border: 1px solid {chip_border};"
+            f"color: {chip_fg};"
+            f"font-size: 10px; font-weight: 600; font-family: 'JetBrains Mono';"
+            f"letter-spacing: 1px;"
+            f"border-top-right-radius: 2px; border-bottom-right-radius: 2px;"
+            f"border-top-left-radius: 0; border-bottom-left-radius: 0;"
+            f"}}"
+            f"QPushButton:hover {{ border-color: {border_hover}; color: {p.get('text', '#d6e2da') if not all_active else chip_fg}; }}"
         )
 
     def _rebuild_styles(self, theme_key: str = ""):
@@ -305,23 +327,33 @@ class AnalyzeScreen(QWidget):
         title_col.addWidget(self._drive_lbl)
         header.addLayout(title_col, stretch=1)
 
+        # Target control: one field-like unit — a wide folder picker plus an
+        # inline "ALL" chip at the right edge that selects every fixed drive.
+        target_field = QWidget()
+        target_field.setFixedHeight(32)
+        tf_lay = QHBoxLayout(target_field)
+        tf_lay.setContentsMargins(0, 0, 0, 0)
+        tf_lay.setSpacing(0)
+
         self._btn_folder = QPushButton()
         self._btn_folder.setCursor(Qt.PointingHandCursor)
-        self._btn_folder.setFixedWidth(248)
+        self._btn_folder.setFixedWidth(204)
         self._btn_folder.setFixedHeight(32)
         self._btn_folder.clicked.connect(self._pick_folder)
-        header.addWidget(self._btn_folder, alignment=Qt.AlignVCenter)
+        tf_lay.addWidget(self._btn_folder)
 
-        # One-click "scan every fixed drive" target.
-        self._btn_scan_all = QPushButton(tr("Scan all drives"))
+        self._btn_scan_all = QPushButton(tr("ALL"))
         self._btn_scan_all.setCursor(Qt.PointingHandCursor)
+        self._btn_scan_all.setFixedWidth(52)
         self._btn_scan_all.setFixedHeight(32)
         self._btn_scan_all.setToolTip(
             tr("Scan every internal (fixed) drive at once. "
                "Removable and network drives are skipped.")
         )
         self._btn_scan_all.clicked.connect(self._pick_all_drives)
-        header.addWidget(self._btn_scan_all, alignment=Qt.AlignVCenter)
+        tf_lay.addWidget(self._btn_scan_all)
+
+        header.addWidget(target_field, alignment=Qt.AlignVCenter)
 
         # Scan mode selector
         self._mode_combo = TacticalComboBox()

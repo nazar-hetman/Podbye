@@ -744,5 +744,6 @@
   "Newer, larger models give better explanations and recognise more recent apps.": "Новіші та більші моделі дають кращі пояснення й розпізнають сучасніші застосунки.",
   "A model trained before an app existed may not identify it correctly.": "Модель, навчена до появи застосунку, може не розпізнати його правильно.",
   "Don't ask again for review/uncertain items": "Більше не запитувати про елементи для перегляду",
-  "  ·  includes {n} review/uncertain item(s)": "  ·  включно з {n} елемент(ами) для перегляду"
+  "  ·  includes {n} review/uncertain item(s)": "  ·  включно з {n} елемент(ами) для перегляду",
+  "ALL": "Все"
 }
