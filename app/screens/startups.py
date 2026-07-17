@@ -39,6 +39,26 @@ _IMPACT_COLOR = {
 }
 
 
+def _ask_ai_button_qss() -> str:
+    """Accent-tinted style so an 'Ask AI' button reads clearly as an action.
+    Mirrors the Findings inspector button so the two feel identical."""
+    p = get_palette()
+    accent = p.get("accent", "#7cc596")
+    soft = p.get("accent_soft", "#1b2e22")
+    bg = p.get("panel", "#141d18")
+    faint = p.get("text_faint", "#57685e")
+    border = p.get("border", "#213028")
+    return (
+        f"QPushButton {{ background: {soft}; color: {accent}; "
+        f"border: 1px solid {accent}; border-radius: 3px; "
+        f"padding: 3px 12px; font-size: 11px; font-weight: 600; }}"
+        f"QPushButton:hover {{ background: {accent}; color: {bg}; }}"
+        f"QPushButton:pressed {{ background: {accent}; color: {bg}; }}"
+        f"QPushButton:disabled {{ background: transparent; color: {faint}; "
+        f"border-color: {border}; }}"
+    )
+
+
 def _separator() -> QFrame:
     line = QFrame()
     line.setFixedHeight(1)
@@ -391,12 +411,16 @@ class StartupListRow(QFrame):
         self._risk_badge.set_badge(entry.risk, _RISK_VARIANT.get(entry.risk, "info"))
         parts = [entry.publisher_display, entry.source_label, entry.impact]
         self._meta_lbl.setText("  ·  ".join(p for p in parts if p))
-        self._ai_lbl.setText({
+        # Only surface AI status in the row when it's actually doing something.
+        # "AI disabled"/no-AI on every row is just noise — the inspector shows
+        # per-entry AI state and offers the Ask AI action there.
+        ai_text = {
             "pending": tr("Queued"),
             "analyzing": tr("Analyzing"),
             "failed": tr("Fallback"),
-            "disabled": tr("AI disabled"),
-        }.get(entry.ai_status, ""))
+        }.get(entry.ai_status, "")
+        self._ai_lbl.setText(ai_text)
+        self._ai_lbl.setVisible(bool(ai_text))
         self._apply_style()
 
     def set_selected(self, selected: bool):
@@ -482,9 +506,11 @@ class StartupListRow(QFrame):
 
 
 class StartupInspectorPanel(QFrame):
-    def __init__(self, parent=None, compact: bool = False):
+    def __init__(self, parent=None, compact: bool = False, ask_ai_cb=None):
         super().__init__(parent)
         self._compact = compact
+        self._ask_ai_cb = ask_ai_cb
+        self._current_entry = None
         self.setObjectName("Panel")
         self.setStyleSheet("background: transparent; border: none;")
 
@@ -584,9 +610,21 @@ class StartupInspectorPanel(QFrame):
         expl_layout.setContentsMargins(0, 4, 0, 0)
         expl_layout.setSpacing(6)
 
+        expl_hdr_row = QHBoxLayout()
+        expl_hdr_row.setSpacing(8)
         expl_hdr = QLabel(tr("CONTEXTUAL REASONING"))
         apply_tactical_label(expl_hdr, font_size=8, letter_spacing=1)
-        expl_layout.addWidget(expl_hdr)
+        expl_hdr_row.addWidget(expl_hdr)
+        expl_hdr_row.addStretch()
+        # On-demand "Ask AI" — explain this one entry even when startup AI is
+        # off. Shown only when there is no AI answer yet (set in set_entry()).
+        self._ask_ai_btn = QPushButton(tr("Ask AI"))
+        self._ask_ai_btn.setCursor(Qt.PointingHandCursor)
+        self._ask_ai_btn.setStyleSheet(_ask_ai_button_qss())
+        self._ask_ai_btn.setVisible(False)
+        self._ask_ai_btn.clicked.connect(self._on_ask_ai_clicked)
+        expl_hdr_row.addWidget(self._ask_ai_btn)
+        expl_layout.addLayout(expl_hdr_row)
 
         self._ai_status_lbl = QLabel()
         self._ai_status_lbl.setObjectName("Muted")
@@ -700,7 +738,26 @@ class StartupInspectorPanel(QFrame):
             f"color: {p.get('text_dim', '#8a9b8f')};"
         )
 
+    def _ask_ai_visible_for(self, entry: StartupEntry | None) -> bool:
+        return (
+            self._ask_ai_cb is not None
+            and entry is not None
+            and entry.ai_status not in ("ready", "done", "analyzing", "pending")
+        )
+
+    def _on_ask_ai_clicked(self):
+        """Explain just the selected startup entry on demand."""
+        if not (self._current_entry and self._ask_ai_cb):
+            return
+        reason = self._ask_ai_cb(self._current_entry)
+        if reason:
+            return  # couldn't start (e.g. no model) — handled by the callback
+        self._ask_ai_btn.setVisible(False)
+        self._ai_status_lbl.setText(tr("Analyzing startup behavior…"))
+
     def set_entry(self, entry: StartupEntry | None):
+        self._current_entry = entry
+        self._ask_ai_btn.setVisible(self._ask_ai_visible_for(entry))
         if entry is None:
             self._selection_lbl.setText(tr("// inspection"))
             self._name_lbl.setText(tr("Select a startup entry"))
@@ -770,8 +827,9 @@ class StartupInspectorPanel(QFrame):
 class StartupRightSidebar(QFrame):
     """Persistent right-side inspector for selected startup metadata."""
 
-    def __init__(self, task_manager_cb, parent=None):
+    def __init__(self, task_manager_cb, parent=None, ask_ai_cb=None):
         super().__init__(parent)
+        self._ask_ai_cb = ask_ai_cb
         self.setObjectName("StartupRightSidebar")
         self.setMinimumWidth(280)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -802,7 +860,7 @@ class StartupRightSidebar(QFrame):
         self._scroll.setFrameShape(QFrame.NoFrame)
         self._scroll.setStyleSheet("border: none; background: transparent;")
 
-        self.detail_widget = StartupInspectorPanel(compact=True)
+        self.detail_widget = StartupInspectorPanel(compact=True, ask_ai_cb=ask_ai_cb)
         self.detail_widget.setStyleSheet("background: transparent; border: none;")
         self.detail_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         self.detail_widget.set_embedded_header_visible(False)
@@ -850,6 +908,7 @@ class StartupsScreen(QWidget):
         self._row_widgets: dict[str, StartupListRow] = {}
         self._detail_widget: StartupInspectorPanel | None = None
         self._ai_worker: StartupAIWorker | None = None
+        self._ask_workers: list = []  # single-entry on-demand "Ask AI" workers
         self._btn_retry_ai: QPushButton | None = None
         self._risk_filter = "All"
         self._status_filter = "All"
@@ -1056,7 +1115,8 @@ class StartupsScreen(QWidget):
         self._build_left_panel(left_layout)
         body_layout.addWidget(left_panel, stretch=7)
 
-        self._right_sidebar = StartupRightSidebar(self._open_task_manager)
+        self._right_sidebar = StartupRightSidebar(
+            self._open_task_manager, ask_ai_cb=self._on_ask_ai_startup)
         self._detail_widget = self._right_sidebar.detail_widget
         body_layout.addWidget(self._right_sidebar, stretch=3)
         self._apply_detail_widget_style()
@@ -1303,6 +1363,32 @@ class StartupsScreen(QWidget):
         self._ai_worker.entry_updated.connect(self._on_ai_entry_updated)
         self._ai_worker.queue_status.connect(self._on_queue_status)
         self._ai_worker.start()
+
+    def _on_ask_ai_startup(self, entry: StartupEntry) -> str:
+        """On-demand AI for a single startup entry — runs even when startup AI
+        is switched off. Returns "" when queued, or a reason code otherwise."""
+        if not self._settings_store:
+            return "unavailable"
+        if not self._settings_store.get("ai_model", ""):
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self, tr("AI model needed"),
+                tr("Select an AI model in Settings to use Ask AI."),
+            )
+            return "no-model"
+        entry.ai_status = "analyzing"
+        entry.ai_explanation = ""
+        entry.ai_error = ""
+        worker = StartupAIWorker([entry], self._settings_store, parent=self)
+        worker.entry_updated.connect(self._on_ai_entry_updated)
+        worker.queue_status.connect(self._on_queue_status)
+        # Keep a reference so the QThread isn't collected mid-run, and drop it
+        # (and its signals) once finished.
+        self._ask_workers.append(worker)
+        worker.finished.connect(lambda w=worker: self._ask_workers.remove(w)
+                                if w in self._ask_workers else None)
+        worker.start()
+        return ""
 
     def _on_ai_entry_updated(self, entry: StartupEntry):
         row = self._row_widgets.get(entry.key)

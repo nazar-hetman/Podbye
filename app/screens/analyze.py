@@ -2,11 +2,12 @@ from __future__ import annotations
 
 """Analyze screen — folder scanning with real progress and AI explanations."""
 
+import os
 import time
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QProgressBar, QScrollArea, QFileDialog, QComboBox,
+    QFrame, QProgressBar, QScrollArea, QFileDialog,
     QAbstractItemView,
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QEvent
@@ -50,7 +51,6 @@ def _chip_styles() -> dict:
     review  = p.get("review",      "#d8b46a")
     safe    = p.get("safe",        "#7cc596")
     risk    = p.get("risk",        "#d68a78")
-    panel_alt = p.get("panel_alt", "#18241e")
     review_soft = p.get("review_soft", "#2c2516")
     safe_soft = p.get("safe_soft", "#1c2e22")
     risk_soft = p.get("risk_soft", "#2e1f1c")
@@ -61,9 +61,6 @@ def _chip_styles() -> dict:
         "done":    f"background: {safe_soft}; border: 1px solid {safe}70;        padding: 4px 12px; color: {safe};",
         "failed":  f"background: {risk_soft}; border: 1px solid {risk}80;        padding: 4px 12px; color: {risk};",
     }
-
-
-_CHIP_STYLES = None  # legacy reference kept for safety; use _chip_styles()
 
 
 class _PipelineChip(QFrame):
@@ -299,6 +296,12 @@ class AnalyzeScreen(QWidget):
         self._sub.setObjectName("Dim")
         self._sub.setStyleSheet("font-size: 12px;")
         title_col.addWidget(self._sub)
+        # Drive capacity / type readout for the selected target (psutil-backed).
+        self._drive_lbl = QLabel("")
+        self._drive_lbl.setObjectName("Muted")
+        self._drive_lbl.setStyleSheet("font-size: 11px;")
+        self._drive_lbl.setVisible(False)
+        title_col.addWidget(self._drive_lbl)
         header.addLayout(title_col, stretch=1)
 
         self._btn_folder = QPushButton()
@@ -646,6 +649,7 @@ class AnalyzeScreen(QWidget):
         self._btn_scan.setEnabled(False)
         self._btn_scan.setText(tr("Start scan"))
         self._refresh_folder_button()
+        self._update_drive_readout()
         self._refresh_header_meta()
         self._refresh_idle_telemetry()
         self.focus_target_picker()
@@ -656,7 +660,11 @@ class AnalyzeScreen(QWidget):
                 self._hover_row = -1
                 self._refresh_partial_table_row_styles()
             elif event.type() == QEvent.MouseMove:
-                index = self._pf_table.indexAt(event.pos())
+                try:
+                    pos = event.position().toPoint()
+                except AttributeError:
+                    pos = event.pos()
+                index = self._pf_table.indexAt(pos)
                 row = index.row() if index.isValid() else -1
                 if row != self._hover_row:
                     self._hover_row = row
@@ -673,7 +681,9 @@ class AnalyzeScreen(QWidget):
             return
         from app.themes.theme_manager import get_palette
         p = get_palette()
-        hover_brush = QBrush(QColor(p.get("tint_bg", "#0f1914")))
+        # panel_hover is a visibly distinct surface; tint_bg was so close to the
+        # panel background that the hover highlight was imperceptible.
+        hover_brush = QBrush(QColor(p.get("panel_hover", "#1d2c25")))
         selected_brush = QBrush(QColor(p.get("accent_soft", "#1b2e22")))
         transparent = QBrush(Qt.transparent)
 
@@ -711,7 +721,28 @@ class AnalyzeScreen(QWidget):
             self._btn_scan.setEnabled(True)
             self._refresh_folder_button()
             self._refresh_header_meta()
+            self._update_drive_readout()
             self._feed.add_line(f"[scan] target selected: {folder}")
+
+    def _update_drive_readout(self):
+        """Show the target drive's type and capacity (psutil-backed, optional)."""
+        if not self._selected_folder:
+            self._drive_lbl.clear()
+            self._drive_lbl.setVisible(False)
+            return
+        from app.services import drives
+        from app.models.finding import _format_size
+        info = drives.summarize(self._selected_folder)
+        if not info:
+            self._drive_lbl.setVisible(False)
+            return
+        drive = info.mountpoint.rstrip("\\/") or info.mountpoint
+        self._drive_lbl.setText(tr(
+            "{drive} · {kind} · {free} free of {total}",
+            drive=drive, kind=tr(info.kind),
+            free=_format_size(info.free), total=_format_size(info.total),
+        ))
+        self._drive_lbl.setVisible(True)
 
     def _on_scan_btn(self):
         """Toggle between Start and Stop."""
@@ -737,6 +768,11 @@ class AnalyzeScreen(QWidget):
             self._scan_state.clear()
             # Fresh scan: set run_mode to "new" for clean AI state
             self._scan_state._run_mode = "new"
+            # Drop the previous scan's category rows right away so they don't
+            # linger on screen until the new scan produces entities.
+            self._pf_table.setRowCount(0)
+            self._selected_pf_row = -1
+            self._pf_count.setText("")
         else:
             # Resume: set run_mode to "resume" to allow cache reuse
             self._scan_state._run_mode = "resume"
@@ -768,8 +804,16 @@ class AnalyzeScreen(QWidget):
         self._refresh_idle_telemetry()
         self._btn_folder.setEnabled(False)
         self._mode_combo.setEnabled(False)
-        _set_indeterminate(self._scan_bar, "#7cc596")
-        self._scan_prog_lbl.setText("...")
+        # When scanning a whole drive we know the denominator up front (on-disk
+        # used space), so the scan bar can show a real % by size. For sub-folder
+        # targets the volume's used space is meaningless → stay indeterminate.
+        self._scan_byte_budget = self._compute_byte_budget(self._selected_folder)
+        if self._scan_byte_budget > 0:
+            _set_determinate(self._scan_bar, 0, "#7cc596")
+            self._scan_prog_lbl.setText("0%")
+        else:
+            _set_indeterminate(self._scan_bar, "#7cc596")
+            self._scan_prog_lbl.setText("...")
         self._ai_bar.setValue(0)
         self._ai_prog_lbl.setText("0%")
         self._ai_queue_lbl.setText("")
@@ -806,14 +850,33 @@ class AnalyzeScreen(QWidget):
             self._scan_state.log_line.connect(self._on_state_log)
             self._state_log_connected = True
 
-        # Create and start worker (pass known paths for resume dedup)
+        # Create and start worker (pass known paths for resume dedup).
         skip = set(self._scan_state.known_paths) if self._scan_state else set()
-        self._worker = ScanWorker(self._selected_folder, skip_paths=skip)
+        store = getattr(self._scan_state, "_settings_store", None)
+        cross_volumes = bool(store.get("scan_cross_volumes", False)) if store else False
+        # On resume, hand the worker the frontier from the interrupted run so it
+        # continues from there instead of re-walking the whole tree. The frontier
+        # is only populated by restore_from_session (cleared on a fresh clear()),
+        # so it's a reliable resume signal even after self._resuming was reset.
+        # Consume it so a later fresh scan can't inherit a stale frontier.
+        resume_stack = list(self._scan_state.resume_frontier) if self._scan_state else []
+        if self._scan_state:
+            self._scan_state._resume_frontier = []
+        # Parented to this screen so the app-close shutdown sweep (which finds
+        # live workers via findChildren(QThread)) can halt and wait for it. An
+        # unparented scan thread is invisible there and would still be running
+        # when the process tears down — the exact "QThread: Destroyed while
+        # thread is still running" abort that sweep exists to prevent.
+        self._worker = ScanWorker(self._selected_folder, skip_paths=skip,
+                                  cross_volumes=cross_volumes,
+                                  resume_stack=resume_stack,
+                                  parent=self)
         self._worker.batch_ready.connect(self._on_batch)
         self._worker.progress.connect(self._on_progress)
         self._worker.log.connect(self._on_worker_log)
         self._worker.skipped.connect(self._on_skipped_batch)
         self._worker.finished_scan.connect(self._on_scan_finished)
+        self._worker.frontier_update.connect(self._scan_state.on_frontier_update)
         self._worker.start()
 
     def _stop_scan(self):
@@ -938,6 +1001,37 @@ class AnalyzeScreen(QWidget):
         if self._scan_state:
             self._scan_state.add_findings(findings)
 
+    def _compute_byte_budget(self, target: str) -> int:
+        """On-disk used bytes of the target volume — but only for a drive root.
+
+        Returns total-minus-free for the volume when *target* is a drive root
+        (e.g. C:\\), which is the natural denominator for a "% of the disk
+        scanned" bar. For sub-folder targets the whole-volume usage is not a
+        meaningful denominator, so return 0 and the bar stays indeterminate.
+        """
+        try:
+            tail = os.path.splitdrive(os.path.normpath(target))[1]
+            if tail not in ("", "\\", "/", os.sep):
+                return 0  # sub-folder target — no meaningful total
+            import shutil
+            return shutil.disk_usage(target).used
+        except (OSError, ValueError):
+            return 0
+
+    def _update_scan_size_progress(self):
+        """Drive the scan bar by on-disk bytes scanned vs. the volume's used
+        space. Clamped to 99% (we legitimately skip protected/system space, so
+        it never naturally reaches 100); the final snap to 100 happens when the
+        filesystem phase completes.
+        """
+        budget = getattr(self, "_scan_byte_budget", 0)
+        if budget <= 0 or not self._scan_state:
+            return
+        scanned = self._scan_state.total_size
+        pct = min(99, int(100 * scanned / budget))
+        _set_determinate(self._scan_bar, pct, "#7cc596")
+        self._scan_prog_lbl.setText(f"{pct}%")
+
     def _on_ui_refresh(self):
         """Called by ScanState throttle timer (~400ms) — safe to update UI."""
         self._update_partial_table()
@@ -947,6 +1041,9 @@ class AnalyzeScreen(QWidget):
             size = self._scan_state.total_size_str
             self._count_lbl.setText(f"{count:,}")
             self._size_lbl.setText(f"· {size}")
+        # Move the scan bar by size while the filesystem walk is running.
+        if self._scan_active and not self._grouping_complete:
+            self._update_scan_size_progress()
 
     def _on_progress(self, count, current_path):
         """Filesystem discovery progress — total is unknown, so bar stays indeterminate.
@@ -959,9 +1056,12 @@ class AnalyzeScreen(QWidget):
         short = current_path[-55:] if len(current_path) > 55 else current_path
         self._current_path_lbl.setText(short)
 
-        # Bar stays indeterminate — we don't know the total yet.
-        # Just keep the pulsing animation running (already set in _start_scan).
-        self._scan_prog_lbl.setText(f"{total:,}")
+        # Drive-root scans show a real % by size; sub-folder scans have no
+        # known total, so the bar stays indeterminate and we show the count.
+        if getattr(self, "_scan_byte_budget", 0) > 0:
+            self._update_scan_size_progress()
+        else:
+            self._scan_prog_lbl.setText(f"{total:,}")
 
         # Chip transitions
         if count > 0 and self._chips[0]._state == "active":
@@ -1087,24 +1187,37 @@ class AnalyzeScreen(QWidget):
             self._update_partial_table()
             self._wire_ai_signals()
 
-            # For all-files mode, AI starts immediately via set_running(False).
             # For smart mode, AI starts after entity detection completes
             # (handled in _on_entities_ready via start_ai_queue).
             ai = self._scan_state.ai_explainer
             if ai and ai.is_running:
                 self._activate_ai_ui(mode)
             elif mode != "smart":
-                self._chips[3].set_state("done")
+                # All-files mode: no entity detection and no AI queue, so
+                # neither _on_entities_ready nor _on_ai_queue_finished will ever
+                # fire. Finish the pipeline here or the elapsed timer ticks
+                # forever and the state stays stuck in "ai_classifying".
+                self._chips[3].set_state("done", tr("skipped"))
+                self._ai_complete = True
+                self._pipeline_state = "complete"
+                self._elapsed_timer.stop()
+                self._ai_poll.stop()
                 if not was_stopped and not halted:
                     self._set_badge(tr("Complete"), "completed")
-                    self._scan_state.save_session_final("completed")
+                    self._scan_state.save_session_final("completed", background_large=True)
 
         # Re-enable folder/mode controls only after set_running(False) completes
         # so the user can't open the folder dialog while cleanup is still in flight.
         self._btn_folder.setEnabled(True)
         self._mode_combo.setEnabled(True)
 
-        self._worker = None
+        # Hand the finished worker back to Qt. It is parented to this screen, so
+        # dropping our reference alone would leave the C++ object (and the
+        # findings it still holds) alive for the life of the screen, piling up
+        # one dead QThread per scan.
+        if self._worker is not None:
+            self._worker.deleteLater()
+            self._worker = None
 
     def _wire_ai_signals(self):
         """Connect AI explainer signals (idempotent)."""
@@ -1159,12 +1272,12 @@ class AnalyzeScreen(QWidget):
         elif ai and not ai.is_running:
             self._ai_complete = True
             self._pipeline_state = "complete"
-            self._chips[3].set_state("done", "disabled")
+            self._chips[3].set_state("done", tr("skipped"))
             self._set_badge(tr("Complete"), "completed")
             self._elapsed_timer.stop()
             self._feed.add_line(f"[smart] analysis complete · {entity_count} entities")
             self._reset_scan_button()
-            self._scan_state.save_session_final("completed")
+            self._scan_state.save_session_final("completed", background_large=True)
 
         self._start_duplicate_detection()
 
@@ -1197,11 +1310,21 @@ class AnalyzeScreen(QWidget):
                 f"[dedup] {groups} duplicate group{'s' if groups != 1 else ''} · "
                 f"{_format_size(reclaimable)} reclaimable"
             )
-        self._dup_worker = None
+        # Parented to this screen — release it explicitly so a dead detector
+        # (and its findings snapshot) isn't retained until the screen dies.
+        if self._dup_worker is not None:
+            self._dup_worker.deleteLater()
+            self._dup_worker = None
 
     def _on_ai_queue_finished(self):
         """Called when the AI explanation queue finishes."""
         self._ai_poll.stop()
+        if not self._scan_active:
+            # An out-of-band queue — e.g. a manual per-item "Ask AI" raised from
+            # Findings after the run already completed. Don't re-finalize the
+            # pipeline, re-badge it, or re-serialize the whole session.
+            self._refresh_header_meta()
+            return
         self._tick_ai_progress()  # final update
         self._chips[3].set_state("done")
         self._ai_bar.setValue(100)
@@ -1221,7 +1344,7 @@ class AnalyzeScreen(QWidget):
             self._feed.add_line("[smart] pipeline complete")
             self._reset_scan_button()  # All phases complete - reset button
             if self._scan_state:
-                self._scan_state.save_session_final("completed")
+                self._scan_state.save_session_final("completed", background_large=True)
         else:
             # Grouping still in progress - don't show COMPLETE yet
             self._feed.add_line("[ai] AI classification finished · waiting for entity grouping...")
@@ -1284,7 +1407,6 @@ class AnalyzeScreen(QWidget):
 
     def _update_ai_display(self, done: int, total: int, active: int, failed: int):
         """Update AI progress bar and telemetry labels."""
-        mode = self._current_scan_mode()
         self._last_ai_snapshot = (done, total, active, failed)
         if total > 0:
             pct = int(100 * done / total)
@@ -1311,9 +1433,13 @@ class AnalyzeScreen(QWidget):
         mode = self._current_scan_mode()
         entity_count = self._scan_state.entity_count
 
-        # During active smart scan, only show counts — don't rebuild category table
+        # During active smart scan, only show counts — don't rebuild category
+        # table. Clear any rows left from a previous scan so stale categories
+        # don't linger until the new scan's entities are detected.
         if self._scan_active and mode == "smart" and entity_count == 0:
             total_items = self._scan_state.total_count
+            self._pf_table.setRowCount(0)
+            self._selected_pf_row = -1
             self._pf_count.setText(f"{total_items:,} items · {self._scan_state.total_size_str}")
             self._pf_sub.setText(tr("// Scanning — categories after entity detection"))
             return
@@ -1375,6 +1501,7 @@ class AnalyzeScreen(QWidget):
         self._sub.setText(tr("Folder selected · ready to analyze"))
         self._btn_scan.setEnabled(True)
         self._refresh_folder_button()
+        self._update_drive_readout()
         self._refresh_header_meta()
 
         # Set mode in combo
@@ -1404,6 +1531,7 @@ class AnalyzeScreen(QWidget):
         self._sub.setText(tr("Folder selected · ready to analyze"))
         self._btn_scan.setEnabled(True)
         self._refresh_folder_button()
+        self._update_drive_readout()
         self._refresh_header_meta()
         self._feed.add_line(f"[history] re-run target: {target}")
         if self._scan_state:

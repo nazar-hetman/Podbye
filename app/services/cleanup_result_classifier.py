@@ -38,7 +38,7 @@ _EXPECTED_RULES = {
         "actions": [
             "close open File Explorer windows",
             "or restart Windows",
-            "then run Quick Cleanup again",
+            "then run {retry} again",
         ],
     },
     "browser_cache": {
@@ -49,7 +49,7 @@ _EXPECTED_RULES = {
         "actions": [
             "close the browser completely",
             "make sure no background browser processes remain",
-            "then run Quick Cleanup again",
+            "then run {retry} again",
         ],
     },
     "windows_update": {
@@ -61,7 +61,7 @@ _EXPECTED_RULES = {
         "actions": [
             "retry later",
             "or restart Windows",
-            "then run Quick Cleanup again",
+            "then run {retry} again",
         ],
     },
     "windows_temp": {
@@ -73,7 +73,7 @@ _EXPECTED_RULES = {
         "actions": [
             "let Windows finish background tasks",
             "or restart Windows",
-            "then run Quick Cleanup again",
+            "then run {retry} again",
         ],
     },
     "user_temp": {
@@ -84,7 +84,7 @@ _EXPECTED_RULES = {
         "actions": [
             "close the app that may still be using the files",
             "or restart Windows",
-            "then run Quick Cleanup again",
+            "then run {retry} again",
         ],
     },
 }
@@ -97,7 +97,7 @@ def _fallback_expected_rule() -> dict:
         "actions": [
             "close the app using the files, if known",
             "or restart Windows",
-            "then run Quick Cleanup again",
+            "then run {retry} again",
         ],
     }
 
@@ -110,8 +110,14 @@ def assess_cleanup_counts(
     skipped_count: int = 0,
     category_key: str | None = None,
     category_label: str | None = None,
+    retry_label: str = "Quick Cleanup",
 ) -> CleanupAssessment:
-    """Convert cleanup counters into calm, user-facing result language."""
+    """Convert cleanup counters into calm, user-facing result language.
+
+    ``retry_label`` names the action the user should repeat to finish the
+    cleanup (e.g. "Quick Cleanup" or "the cleanup"). It keeps the guidance
+    accurate regardless of which flow triggered the cleanup.
+    """
     label = category_label or "This category"
 
     if succeeded_count == 0 and in_use_count == 0 and failed_count == 0 and skipped_count == 0:
@@ -129,7 +135,7 @@ def assess_cleanup_counts(
             explanation_text=(
                 f"There was nothing removable left in {label}.\n\n"
                 "This usually means the category was already cleaned or there was "
-                "nothing left for Quick Cleanup to remove."
+                f"nothing left for {retry_label} to remove."
             ),
         )
 
@@ -158,7 +164,7 @@ def assess_cleanup_counts(
                 "items alone instead of forcing the cleanup.\n\n"
                 "You can:\n"
                 "• restart Windows\n"
-                "• run Quick Cleanup again\n"
+                f"• run {retry_label} again\n"
                 "• if this keeps happening, review the affected folder manually"
             ),
         )
@@ -178,7 +184,7 @@ def assess_cleanup_counts(
             item_label = f"{in_use_count:,} files currently in use"
             breakdown_label = "in use by system"
 
-        actions = rule["actions"]
+        actions = [action.format(retry=retry_label) for action in rule["actions"]]
         explanation = (
             f"{intro}\n\n"
             f"{rule['context']}\n\n"

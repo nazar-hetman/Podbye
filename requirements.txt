@@ -1,1 +1,2 @@
 PySide6>=6.4.3
+psutil>=5.9

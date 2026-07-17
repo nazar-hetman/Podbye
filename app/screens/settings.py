@@ -129,6 +129,8 @@ class SettingsScreen(QWidget):
         self._styled_panels: list[QFrame] = []
         self._styled_inputs: list[QLineEdit] = []
         self._styled_combos: list[TacticalComboBox] = []
+        self._styled_checkboxes: list[QCheckBox] = []
+        self._styled_radios: list[QRadioButton] = []
         self._conn_result = _ConnectionResult(self)
         self._conn_result.result.connect(self._on_connection_result)
         self._lang_dirty = False
@@ -141,6 +143,19 @@ class SettingsScreen(QWidget):
         self._load_from_store()
 
     # ─── Persistence ────────────────────────────────────────
+
+    def reload_close_behavior(self):
+        """Sync the close-while-busy dropdown with the stored value.
+
+        Called on load and when the screen is shown, so a change made through
+        the close dialog's 'Don't ask again' is reflected here too.
+        """
+        close_behavior = self._store.get("close_behavior", "ask") if self._store else "ask"
+        idx = self._close_behavior_combo.findData(close_behavior)
+        if idx >= 0:
+            self._close_behavior_combo.blockSignals(True)
+            self._close_behavior_combo.setCurrentIndex(idx)
+            self._close_behavior_combo.blockSignals(False)
 
     def _load_from_store(self):
         """Load persisted settings into UI widgets."""
@@ -186,6 +201,10 @@ class SettingsScreen(QWidget):
         self._rb_permanent.setChecked(False)
         self._rb_permanent.setEnabled(False)
         self._cb_confirm_risky.setChecked(self._store.get("confirm_risky_cleanup", True))
+        self._cb_cross_volumes.setChecked(self._store.get("scan_cross_volumes", False))
+
+        # Close-while-busy behavior
+        self.reload_close_behavior()
 
         # UI language
         ui_lang = self._store.get("ui_language", "English")
@@ -204,9 +223,15 @@ class SettingsScreen(QWidget):
         # Saved model — show immediately without waiting for connection
         saved_model = self._store.get("ai_model", "")
         if saved_model:
-            self._model_combo.clear()
-            self._model_combo.addItem(saved_model, 0)
-            self._model_combo.setCurrentIndex(0)
+            # Block signals: programmatic repopulation must not fire
+            # currentTextChanged → _save_model and clobber the stored model.
+            self._model_combo.blockSignals(True)
+            try:
+                self._model_combo.clear()
+                self._model_combo.addItem(saved_model, 0)
+                self._model_combo.setCurrentIndex(0)
+            finally:
+                self._model_combo.blockSignals(False)
             self._conn_status_lbl.setText("saved · not verified")
             self._conn_status_lbl.setStyleSheet(
                 f"font-family: 'JetBrains Mono'; font-size: 11px; color: {get_palette().get('review', '#d8b46a')};"
@@ -265,9 +290,13 @@ class SettingsScreen(QWidget):
 
     def _style_checkbox(self, checkbox: QCheckBox):
         checkbox.setStyleSheet(self._toggle_indicator_qss(radio=False))
+        if checkbox not in self._styled_checkboxes:
+            self._styled_checkboxes.append(checkbox)
 
     def _style_radio(self, radio: QRadioButton):
         radio.setStyleSheet(self._toggle_indicator_qss(radio=True))
+        if radio not in self._styled_radios:
+            self._styled_radios.append(radio)
 
     def _helper_style(self) -> str:
         p = get_palette()
@@ -766,6 +795,35 @@ class SettingsScreen(QWidget):
             self._cb_confirm_risky,
         ))
 
+        self._cb_cross_volumes = QCheckBox(tr("Enable"))
+        self._style_checkbox(self._cb_cross_volumes)
+        self._cb_cross_volumes.toggled.connect(
+            lambda checked: self._save_value("scan_cross_volumes", checked))
+        s_lay.addLayout(_setting_row(
+            tr("Scan across drives"),
+            tr("Follow into other drives and volumes (mounted disks, junctions). "
+               "Off keeps each scan on the drive you picked."),
+            self._cb_cross_volumes,
+        ))
+
+        # Close behavior — what the window's close button does while a scan,
+        # cleanup or AI job is still running.
+        self._close_behavior_combo = TacticalComboBox()
+        self._close_behavior_combo.addItem(tr("Ask me each time"), "ask")
+        self._close_behavior_combo.addItem(tr("Keep running in background"), "background")
+        self._close_behavior_combo.addItem(tr("Quit and stop the work"), "quit")
+        self._close_behavior_combo.setFixedWidth(220)
+        self._apply_combo_style(self._close_behavior_combo)
+        self._close_behavior_combo.currentIndexChanged.connect(
+            lambda _: self._save_value(
+                "close_behavior", self._close_behavior_combo.currentData()))
+        s_lay.addLayout(_setting_row(
+            tr("When closing while busy"),
+            tr("If a task is still running when you close the window, Vigil can "
+               "ask, keep working in the system tray, or stop and quit."),
+            self._close_behavior_combo,
+        ))
+
         lay.addWidget(safe_panel)
 
         # File Handling
@@ -841,8 +899,8 @@ class SettingsScreen(QWidget):
         self._register_styled_panel(build_panel)
 
         for k, v in [
-            (tr("Version"), "1.0"),
-            (tr("Build"), "2026.05"),
+            (tr("Version"), "1.0.0-beta.1"),
+            (tr("Build"), "2026.06"),
         ]:
             val_lbl = QLabel(v)
             val_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 12px;")
@@ -945,17 +1003,23 @@ class SettingsScreen(QWidget):
         if ok:
             self._conn_status_lbl.setText(msg)
             self._conn_status_lbl.setStyleSheet(f"font-family: 'JetBrains Mono'; font-size: 11px; color: {get_palette().get('safe', '#7cc596')};")
-            # Populate model dropdown with real models
-            self._model_combo.clear()
-            for m in models:
-                self._model_combo.addItem(m['name'], m.get("size", 0))
-            # Select stored model if available
-            if self._store:
-                saved_model = self._store.get("ai_model", "")
-                for i in range(self._model_combo.count()):
-                    if saved_model == self._model_combo.itemText(i):
-                        self._model_combo.setCurrentIndex(i)
-                        break
+            # Populate model dropdown with real models. Block signals so the
+            # repopulation does not fire _save_model and overwrite the stored
+            # model with a transient selection (the cause of "model switching").
+            self._model_combo.blockSignals(True)
+            try:
+                self._model_combo.clear()
+                for m in models:
+                    self._model_combo.addItem(m['name'], m.get("size", 0))
+                # Select stored model if available
+                if self._store:
+                    saved_model = self._store.get("ai_model", "")
+                    for i in range(self._model_combo.count()):
+                        if saved_model == self._model_combo.itemText(i):
+                            self._model_combo.setCurrentIndex(i)
+                            break
+            finally:
+                self._model_combo.blockSignals(False)
         else:
             self._conn_status_lbl.setText(msg)
             self._conn_status_lbl.setStyleSheet(f"font-family: 'JetBrains Mono'; font-size: 11px; color: {get_palette().get('risk', '#d68a78')};")
@@ -1038,6 +1102,12 @@ class SettingsScreen(QWidget):
             line_edit.setStyleSheet(self._input_qss())
         for combo in self._styled_combos:
             self._apply_combo_style(combo)
+        # Checkboxes and radios bake the accent/border into their stylesheet at
+        # build time, so they must be re-styled or they keep the old palette.
+        for checkbox in self._styled_checkboxes:
+            checkbox.setStyleSheet(self._toggle_indicator_qss(radio=False))
+        for radio in self._styled_radios:
+            radio.setStyleSheet(self._toggle_indicator_qss(radio=True))
         # The section tabs (General / AI / Scan / About) cache their inline
         # palette colours when made active in _switch_section, so without a
         # refresh the previously-active tab keeps the old theme's accent.
@@ -1054,21 +1124,27 @@ class SettingsScreen(QWidget):
     def _populate_fallback_models(self):
         """Fill model combo with fallback options, including saved model."""
         from app.services.ollama_client import fallback_models
-        self._model_combo.clear()
         saved_model = self._store.get("ai_model", "") if self._store else ""
-        added = set()
-        if saved_model:
-            self._model_combo.addItem(saved_model, 0)
-            added.add(saved_model)
-        for name in fallback_models():
-            if name not in added:
-                self._model_combo.addItem(name, 0)
-                added.add(name)
-        # Re-select saved model
-        if saved_model:
-            for i in range(self._model_combo.count()):
-                if self._model_combo.itemText(i) == saved_model:
-                    self._model_combo.setCurrentIndex(i)
-                    break
+        # Block signals: filling the fallback list must not fire _save_model and
+        # overwrite the stored model with a fallback entry.
+        self._model_combo.blockSignals(True)
+        try:
+            self._model_combo.clear()
+            added = set()
+            if saved_model:
+                self._model_combo.addItem(saved_model, 0)
+                added.add(saved_model)
+            for name in fallback_models():
+                if name not in added:
+                    self._model_combo.addItem(name, 0)
+                    added.add(name)
+            # Re-select saved model
+            if saved_model:
+                for i in range(self._model_combo.count()):
+                    if self._model_combo.itemText(i) == saved_model:
+                        self._model_combo.setCurrentIndex(i)
+                        break
+        finally:
+            self._model_combo.blockSignals(False)
         self._update_library_summary()
         self._update_model_meta()

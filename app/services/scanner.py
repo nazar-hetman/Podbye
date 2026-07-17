@@ -9,8 +9,25 @@ from PySide6.QtCore import QThread, Signal
 from app.models.finding import Finding
 
 
-# Batch size: emit findings every N items to avoid overwhelming the UI
-_BATCH_SIZE = 500
+# Batch size: emit findings every N items to avoid overwhelming the UI. Larger
+# batches mean fewer cross-thread signal deliveries — important now that the
+# scandir walk produces items far faster than the old os.walk did.
+_BATCH_SIZE = 2000
+
+# Windows file-attribute bits that mean "the data is not stored on this disk".
+# Cloud sync providers (OneDrive "files on-demand", etc.) leave a placeholder
+# whose logical st_size is the full file but whose on-disk footprint is ~0.
+# Counting st_size for these is exactly why a scan can report more bytes than
+# the volume physically holds. We read st_file_attributes (already returned by
+# the os.stat call below — no extra syscall) and treat such files as 0 bytes.
+_FILE_ATTRIBUTE_OFFLINE               = 0x00001000
+_FILE_ATTRIBUTE_RECALL_ON_OPEN        = 0x00040000
+_FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS = 0x00400000
+_CLOUD_PLACEHOLDER_MASK = (
+    _FILE_ATTRIBUTE_OFFLINE
+    | _FILE_ATTRIBUTE_RECALL_ON_OPEN
+    | _FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+)
 
 # Directories to never descend into (always skipped silently)
 _SKIP_DIRS = {
@@ -22,6 +39,7 @@ SKIP_REASON_PERMISSION  = "Permission denied"
 SKIP_REASON_LOCKED      = "Locked by system"
 SKIP_REASON_ENCRYPTED   = "Encrypted or unavailable"
 SKIP_REASON_LOOP        = "Symbolic link / junction (skipped to prevent loops)"
+SKIP_REASON_VOLUME      = "Different drive / volume (not followed)"
 
 # Known root-level protected folders → human description for AI / UI
 _KNOWN_PROTECTED: dict[str, str] = {
@@ -52,6 +70,8 @@ class ScanWorker(QThread):
         skipped(list)           — batch of skipped-entry dicts
                                   keys: path, name, reason, description
         finished_scan()         — scan completed (normal or halted)
+        frontier_update(list)   — snapshot of directories discovered but not yet
+                                  walked (the resume frontier); [] at completion
     """
 
     batch_ready = Signal(list)
@@ -59,8 +79,14 @@ class ScanWorker(QThread):
     log = Signal(str)
     skipped = Signal(list)  # list of dicts: {path, name, reason, description}
     finished_scan = Signal()
+    frontier_update = Signal(list)  # pending-directory stack for resume
 
-    def __init__(self, target: str, skip_paths: set = None, parent=None):
+    # Minimum seconds between frontier snapshots (emitted at dir boundaries).
+    _FRONTIER_INTERVAL_S = 3.0
+
+    def __init__(self, target: str, skip_paths: set = None,
+                 cross_volumes: bool = False, resume_stack: list = None,
+                 parent=None):
         super().__init__(parent)
         self._target = target
         self._halt = False
@@ -68,8 +94,13 @@ class ScanWorker(QThread):
         self._skipped_perms = 0
         self._skipped_symlinks = 0
         self._skipped_known = 0
-        self._seen_realpaths: set = set()
+        self._skipped_volume = 0
+        self._cross_volumes = cross_volumes  # follow into other drives/volumes?
+        self._root_dev = None                # st_dev of the scan root volume
         self._skip_paths: set = skip_paths or set()  # normalized paths to skip (resume)
+        # Directories left to walk from a previous (interrupted) run. When set,
+        # the walk continues from this frontier instead of re-walking from root.
+        self._resume_stack: list = resume_stack or []
         self._skipped_batch: list = []               # pending structured skipped entries
         self._skipped_total: int = 0                 # total protected/skipped items
 
@@ -80,99 +111,151 @@ class ScanWorker(QThread):
     def run(self):
         self.log.emit(f"[scan] starting recursive walk: {self._target}")
         self.log.emit("[scan] symlinks/junctions: skipped (not followed)")
+        if not self._cross_volumes:
+            try:
+                self._root_dev = os.stat(self._target).st_dev
+                self.log.emit("[scan] cross-volume descent: off (staying on the "
+                              "target drive)")
+            except OSError:
+                self._root_dev = None
+        else:
+            self.log.emit("[scan] cross-volume descent: on")
         t0 = time.time()
         batch: list = []
-        self._root_depth = self._target.replace("\\", "/").count("/")
+        self._last_log = 0  # _scanned value at the last periodic progress log
+        last_frontier = 0.0  # time of the last frontier snapshot emit
+
+        # Iterative depth-first walk via os.scandir. Each DirEntry already
+        # carries type, size, mtime and (on Windows) file attributes from the
+        # single directory read the OS performed — so files cost no extra
+        # syscalls. We pay one os.stat per *directory* only for the cross-volume
+        # guard (st_dev isn't populated by scandir on Windows), and only when
+        # that guard is active — i.e. default, non cross-volume scans.
+        if self._resume_stack:
+            # Continuation run: pick up exactly where we stopped. Findings for
+            # everything already walked were restored into ScanState, and
+            # _should_skip() dedups any overlap, so we never re-record them.
+            stack: list[str] = list(self._resume_stack)
+            self.log.emit(
+                f"[scan] resuming from {len(stack):,} pending director"
+                f"{'y' if len(stack) == 1 else 'ies'} (skipping re-walk)"
+            )
+        else:
+            # Fresh run: record the scan-root directory itself, then descend.
+            stack = [self._target]
+            root_finding = self._stat_entry(self._target, is_dir=True)
+            if root_finding:
+                if self._should_skip(root_finding.path):
+                    self._skipped_known += 1
+                else:
+                    batch.append(root_finding)
+                    self._scanned += 1
 
         try:
-            for dirpath, dirnames, filenames in os.walk(
-                self._target, topdown=True, followlinks=False
-            ):
+            while stack:
                 if self._halt:
                     self.log.emit("[scan] halted by user — partial results preserved")
                     break
+                dirpath = stack.pop()
 
-                # ── Symlink / junction / realpath safety ──
                 try:
-                    # Check if this directory itself is a symlink/junction
-                    if os.path.islink(dirpath):
-                        self._skipped_symlinks += 1
-                        self._record_skipped(dirpath, SKIP_REASON_LOOP)
-                        dirnames.clear()
-                        continue
-
-                    real = os.path.realpath(dirpath)
-                    norm = os.path.normcase(os.path.normpath(real))
-                    if norm in self._seen_realpaths:
-                        dirnames.clear()
-                        continue
-                    self._seen_realpaths.add(norm)
+                    scan_it = os.scandir(dirpath)
                 except OSError:
-                    dirnames.clear()
+                    self._skipped_perms += 1
+                    self._record_skipped(dirpath, SKIP_REASON_PERMISSION)
                     continue
 
-                # ── Prune dirs we should never enter ──
-                pruned = []
-                for d in dirnames:
-                    full = os.path.join(dirpath, d)
-                    if d.lower() in _SKIP_DIRS:
-                        pruned.append(d)
-                    elif os.path.islink(full):
-                        self._skipped_symlinks += 1
-                        self._record_skipped(full, SKIP_REASON_LOOP)
-                        pruned.append(d)
-                dirnames[:] = [d for d in dirnames if d not in pruned]
+                with scan_it:
+                    for entry in scan_it:
+                        if self._halt:
+                            break
 
-                # ── Process directory itself ──
-                # Record ALL directories so the entity detector can build a
-                # complete children_index hierarchy and correctly claim nested paths.
-                # Without this, any directory deeper than depth 1 is absent from
-                # children_index, _claim() cannot reach its files, and every file
-                # inside ends up as a loose "Misc files in X" Unknown entity.
-                finding = self._stat_entry(dirpath, is_dir=True)
-                if finding:
-                    if self._should_skip(finding.path):
-                        self._skipped_known += 1
-                    else:
-                        batch.append(finding)
-                        self._scanned += 1
+                        try:
+                            is_dir = entry.is_dir(follow_symlinks=False)
+                        except OSError:
+                            is_dir = False
+                        # Symlinks / junctions / mount points are never followed
+                        # (loop safety). is_symlink() is True for all Windows
+                        # name-surrogate reparse points (junctions included).
+                        try:
+                            is_link = entry.is_symlink()
+                        except OSError:
+                            is_link = False
 
-                # ── Process files ──
-                for fname in filenames:
-                    if self._halt:
-                        break
-                    fpath = os.path.join(dirpath, fname)
+                        if is_dir:
+                            if is_link:
+                                self._skipped_symlinks += 1
+                                self._record_skipped(entry.path, SKIP_REASON_LOOP)
+                                continue
+                            if entry.name.lower() in _SKIP_DIRS:
+                                continue
+                            if (self._root_dev is not None
+                                    and self._crosses_volume(entry.path)):
+                                # Different drive/volume (mounted disk, junction
+                                # to another volume) — don't descend unless the
+                                # user opted into cross-volume scans.
+                                self._skipped_volume += 1
+                                self._record_skipped(entry.path, SKIP_REASON_VOLUME)
+                                continue
+                            # Record the directory so the entity detector can
+                            # build a complete children_index, then queue it for
+                            # descent.
+                            finding = self._finding_from_entry(entry, is_dir=True)
+                            if finding:
+                                if self._should_skip(finding.path):
+                                    self._skipped_known += 1
+                                else:
+                                    batch.append(finding)
+                                    self._scanned += 1
+                            stack.append(entry.path)
+                        else:
+                            if is_link:
+                                self._skipped_symlinks += 1
+                                continue
+                            finding = self._finding_from_entry(entry, is_dir=False)
+                            if finding:
+                                if self._should_skip(finding.path):
+                                    self._skipped_known += 1
+                                else:
+                                    batch.append(finding)
+                                    self._scanned += 1
 
-                    # Skip file symlinks
-                    if os.path.islink(fpath):
-                        self._skipped_symlinks += 1
-                        continue
+                        # Emit progress periodically (reduce signal spam).
+                        if self._scanned % 2000 == 0:
+                            self.progress.emit(self._scanned, self._shorten(dirpath))
 
-                    finding = self._stat_entry(fpath, is_dir=False)
-                    if finding:
-                        if self._should_skip(finding.path):
-                            self._skipped_known += 1
-                            continue
-                        batch.append(finding)
-                        self._scanned += 1
+                        # Flush batch.
+                        if len(batch) >= _BATCH_SIZE:
+                            self.batch_ready.emit(batch[:])
+                            batch.clear()
 
-                    # Emit progress periodically (every 2000 items to reduce signal spam)
-                    if self._scanned % 2000 == 0:
-                        self.progress.emit(self._scanned, self._shorten(dirpath))
+                # If halted mid-directory, this dir wasn't fully enumerated —
+                # re-queue it so a resume re-walks it (already-recorded entries
+                # are deduped by _should_skip), then stop.
+                if self._halt:
+                    stack.append(dirpath)
+                    break
 
-                    # Flush batch
-                    if len(batch) >= _BATCH_SIZE:
-                        self.batch_ready.emit(batch[:])
-                        batch.clear()
-
-                # Log directory progress periodically (every 25k items)
-                if self._scanned % 25_000 == 0 and self._scanned > 0:
+                # Log progress periodically (~every 25k items).
+                if self._scanned - self._last_log >= 25_000:
+                    self._last_log = self._scanned
                     elapsed = time.time() - t0
                     rate = self._scanned / max(elapsed, 0.01)
                     self.log.emit(
                         f"[scan] {self._scanned:,} items · {elapsed:.1f}s · "
                         f"{rate:.0f}/s"
                     )
+
+                # Publish the resume frontier at clean directory boundaries,
+                # throttled. Flush pending findings first so persisted findings
+                # always cover everything up to the frontier (never behind it).
+                now = time.time()
+                if now - last_frontier >= self._FRONTIER_INTERVAL_S:
+                    last_frontier = now
+                    if batch:
+                        self.batch_ready.emit(batch[:])
+                        batch.clear()
+                    self.frontier_update.emit(list(stack))
 
         except Exception as exc:
             self.log.emit(f"[warning] scan failed: {exc}")
@@ -185,6 +268,10 @@ class ScanWorker(QThread):
         # Flush any remaining skipped entries
         self._flush_skipped(force=True)
 
+        # Final frontier: the directories still pending. Empty on a completed
+        # scan (not resumable); non-empty when halted (resume continues here).
+        self.frontier_update.emit(list(stack))
+
         elapsed = time.time() - t0
         rate = self._scanned / max(elapsed, 0.01)
         status = "halted" if self._halt else "complete"
@@ -195,6 +282,8 @@ class ScanWorker(QThread):
             parts.append(f"{self._skipped_total:,} protected/skipped")
         if self._skipped_symlinks > 0:
             parts.append(f"{self._skipped_symlinks} symlinks")
+        if self._skipped_volume > 0:
+            parts.append(f"{self._skipped_volume} on other volumes")
         if self._skipped_known > 0:
             parts.append(f"{self._skipped_known:,} already known (resume)")
         self.log.emit(" · ".join(parts))
@@ -222,20 +311,21 @@ class ScanWorker(QThread):
             self.skipped.emit(self._skipped_batch[:])
             self._skipped_batch.clear()
 
-    def _stat_entry(self, path: str, is_dir: bool):
-        """Stat a single file/dir, return Finding or None on error."""
-        try:
-            st = os.stat(path, follow_symlinks=False)
-        except (OSError, PermissionError):
-            self._skipped_perms += 1
-            self._record_skipped(path, SKIP_REASON_PERMISSION)
-            return None
+    def _make_finding(self, path: str, name: str, st, is_dir: bool) -> Finding:
+        """Build a Finding from an already-obtained stat result.
 
-        name = os.path.basename(path)
+        Shared by the root path-stat and the per-entry scandir path so the
+        size/cloud-placeholder logic stays identical for both.
+        """
         ext = os.path.splitext(name)[1] if not is_dir else ""
-        # Directories get size 0 at scan time — entity detector aggregates sizes.
-        # This avoids expensive re-scanning of directory children during the walk.
-        size = st.st_size if not is_dir else 0
+        # Directories get size 0 at scan time — the entity detector aggregates
+        # sizes, so we avoid re-summing children during the walk. Cloud
+        # placeholders (OneDrive files-on-demand) report a full logical size but
+        # occupy ~0 bytes on disk — count them as 0 so the on-disk total stays
+        # honest. st_file_attributes comes free with the stat we already have.
+        attrs = getattr(st, "st_file_attributes", 0)
+        cloud_only = bool(attrs & _CLOUD_PLACEHOLDER_MASK)
+        size = 0 if (is_dir or cloud_only) else st.st_size
 
         return Finding(
             path=path,
@@ -246,7 +336,41 @@ class ScanWorker(QThread):
             modified=st.st_mtime,
             accessed=getattr(st, 'st_atime', st.st_mtime),
             parent=os.path.dirname(path),
+            cloud_only=cloud_only,
         )
+
+    def _stat_entry(self, path: str, is_dir: bool):
+        """Stat a single file/dir by path (used for the scan root)."""
+        try:
+            st = os.stat(path, follow_symlinks=False)
+        except (OSError, PermissionError):
+            self._skipped_perms += 1
+            self._record_skipped(path, SKIP_REASON_PERMISSION)
+            return None
+        return self._make_finding(path, os.path.basename(path), st, is_dir)
+
+    def _finding_from_entry(self, entry: "os.DirEntry", is_dir: bool):
+        """Build a Finding from a scandir DirEntry using its cached stat —
+        no extra syscall on the common path."""
+        try:
+            st = entry.stat(follow_symlinks=False)
+        except OSError:
+            self._skipped_perms += 1
+            self._record_skipped(entry.path, SKIP_REASON_PERMISSION)
+            return None
+        return self._make_finding(entry.path, entry.name, st, is_dir)
+
+    def _crosses_volume(self, path: str) -> bool:
+        """True if *path* sits on a different volume than the scan root.
+
+        Uses st_dev (the volume identifier). Fail-open: a stat error returns
+        False so a single unreadable entry is not silently pruned here — the
+        normal stat path will record it as permission-denied instead.
+        """
+        try:
+            return os.stat(path).st_dev != self._root_dev
+        except OSError:
+            return False
 
     def _should_skip(self, path: str) -> bool:
         """Check if a path was already known (resume dedup)."""

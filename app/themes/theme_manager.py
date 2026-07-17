@@ -46,6 +46,7 @@ PALETTES = {
         "accent":       "#7aa88a",
         "accent_hover": "#96bd9f",
         "accent_soft":  "#1c2d23",
+        "on_accent":    "#070c09",
         "safe":         "#7aa88a",
         "review":       "#c7a66c",
         "risk":         "#c67a69",
@@ -74,6 +75,7 @@ PALETTES = {
         "accent":       "#d79c54",
         "accent_hover": "#e4b572",
         "accent_soft":  "#2b2114",
+        "on_accent":    "#0b0805",
         "safe":         "#b0bc6a",
         "review":       "#d79c54",
         "risk":         "#cb785d",
@@ -102,6 +104,7 @@ PALETTES = {
         "accent":       "#d9d9d9",
         "accent_hover": "#f2f2f2",
         "accent_soft":  "#1a1a1a",
+        "on_accent":    "#050505",
         "safe":         "#86a89f",
         "review":       "#bea26f",
         "risk":         "#bb786c",
@@ -130,6 +133,7 @@ PALETTES = {
         "accent":       "#6a7562",
         "accent_hover": "#525b4d",
         "accent_soft":  "#d8cfbe",
+        "on_accent":    "#f3ede1",
         "safe":         "#5c7358",
         "review":       "#92714a",
         "risk":         "#8f5d52",
@@ -173,6 +177,11 @@ _CATEGORY_COLORS = {
         "Unknown":              "#1e2832",   # dark neutral blue-gray
         "Other":                "#252d2a",   # very dark neutral
         "Protected / Restricted": "#5a0f0f", # dark crimson
+        "Games":                "#143a26",   # deep emerald
+        "Application Data":     "#16304a",   # muted navy
+        "User Profile":         "#2e2a14",   # warm olive
+        "Virtual Machines":     "#20304a",   # steel blue
+        "Duplicates":           "#3a2a0a",   # dark amber
     },
     "amber": {
         # Warm tactical — bronze/olive/ochre tints
@@ -190,6 +199,11 @@ _CATEGORY_COLORS = {
         "Unknown":              "#2a2418",   # warm dark neutral
         "Other":                "#262018",   # warm near-black
         "Protected / Restricted": "#501008", # deep burnt red
+        "Games":                "#2a3a1a",   # warm olive-green
+        "Application Data":     "#1a2838",   # warm dark blue
+        "User Profile":         "#34280f",   # dark ochre
+        "Virtual Machines":     "#1e2a40",   # warm steel
+        "Duplicates":           "#3a2a0c",   # dark amber
     },
     "mono": {
         # Grayscale — subtle lightness differences only
@@ -207,6 +221,11 @@ _CATEGORY_COLORS = {
         "Unknown":              "#1a1a1a",   # darkest
         "Other":                "#1c1c1c",   # darkest
         "Protected / Restricted": "#404040", # lighter gray for contrast
+        "Games":                "#2c2c2c",   # mid-dark gray
+        "Application Data":     "#242424",   # dark gray
+        "User Profile":         "#2e2e2e",   # mid gray
+        "Virtual Machines":     "#282828",   # dark gray
+        "Duplicates":           "#383838",   # lighter gray
     },
     "paper": {
         # Paper / dusty — soft muted tones on warm light bg
@@ -225,6 +244,11 @@ _CATEGORY_COLORS = {
         "Unknown":              "#5a5e58",   # muted warm gray
         "Other":                "#52564e",   # slightly darker
         "Protected / Restricted": "#922020", # deep muted red
+        "Games":                "#3a7a4a",   # muted emerald
+        "Application Data":     "#3a5a7a",   # dusty navy
+        "User Profile":         "#6a5a3a",   # warm tan
+        "Virtual Machines":     "#4a5a7a",   # dusty steel
+        "Duplicates":           "#9a6a2a",   # warm amber
     },
 }
 
@@ -424,7 +448,7 @@ QPushButton:disabled {{
 }}
 QPushButton#Primary {{
     background-color: {accent};
-    color: {bg_deep};
+    color: {on_accent};
     border: 1px solid {accent};
     font-weight: 600;
     border-radius: 2px;
@@ -447,7 +471,7 @@ QPushButton#Primary:disabled {{
 }}
 QPushButton#Danger {{
     background-color: {risk};
-    color: {bg_deep};
+    color: {on_accent};
     border: 1px solid {risk};
     font-weight: 600;
     border-radius: 2px;
@@ -572,8 +596,8 @@ QPushButton#SidebarBtnActive {{
 
 /* ─── Topbar ─── */
 QFrame#Topbar {{
-    background-color: {panel};
-    border-bottom: 1px solid {border_alt};
+    background-color: {bg_deep};
+    border-bottom: 1px solid {border};
 }}
 QFrame#SidebarDivider {{
     background-color: {border_alt};
@@ -817,7 +841,7 @@ QPushButton#Subtle:checked {{
 }}
 QPushButton#Subtle:checked:hover {{
     background-color: {accent};
-    color: {bg_deep};
+    color: {on_accent};
 }}
 
 /* ─── Focus indicators (subtle) ─── */

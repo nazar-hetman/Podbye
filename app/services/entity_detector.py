@@ -34,12 +34,12 @@ import json
 import os
 import re
 import time as _time
-from collections import defaultdict
+from collections import defaultdict, Counter
 from pathlib import Path
 from typing import Optional
 
 from app.models.finding import Finding, _format_size
-from app.models.smart_entity import SmartEntity
+from app.models.smart_entity import SmartEntity, ENTITY_TYPES
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -75,13 +75,23 @@ _RULES = _load_classification_rules()
 # WINDOWS REGISTRY INTEGRATION (for installed app detection)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _get_installed_programs() -> dict[str, dict]:
+_INSTALLED_PROGRAMS_CACHE: dict | None = None
+
+
+def _get_installed_programs(force_refresh: bool = False) -> dict[str, dict]:
     """Query Windows registry for installed programs.
-    
-    Returns dict mapping normalized install path → program info.
+
+    Returns dict mapping normalized install path → program info. Cached for the
+    process lifetime — the installed-software set rarely changes mid-session, so
+    every scan re-reading the registry was wasted work. Pass force_refresh=True
+    to rebuild (e.g. after an uninstall).
     """
+    global _INSTALLED_PROGRAMS_CACHE
+    if _INSTALLED_PROGRAMS_CACHE is not None and not force_refresh:
+        return _INSTALLED_PROGRAMS_CACHE
+
     installed: dict[str, dict] = {}
-    
+
     try:
         import winreg
         
@@ -112,13 +122,26 @@ def _get_installed_programs() -> dict[str, dict]:
                                         publisher, _ = winreg.QueryValueEx(subkey, "Publisher")
                                     except OSError:
                                         pass
-                                    
+
+                                    # Uninstaller command — prefer the quiet
+                                    # variant so Deep Uninstall can run the app's
+                                    # own uninstaller instead of recycling files.
+                                    uninstall = ""
+                                    for _val in ("QuietUninstallString", "UninstallString"):
+                                        try:
+                                            uninstall, _ = winreg.QueryValueEx(subkey, _val)
+                                            if uninstall:
+                                                break
+                                        except OSError:
+                                            pass
+
                                     if install_loc:
                                         norm_path = install_loc.replace("\\", "/").lower().rstrip("/")
                                         installed[norm_path] = {
                                             "name": name,
                                             "publisher": publisher,
                                             "path": install_loc,
+                                            "uninstall_string": uninstall,
                                         }
                                 except OSError:
                                     pass
@@ -129,8 +152,15 @@ def _get_installed_programs() -> dict[str, dict]:
                 
     except ImportError:
         pass  # Not on Windows
-    
+
+    _INSTALLED_PROGRAMS_CACHE = installed
     return installed
+
+
+def invalidate_installed_programs_cache():
+    """Drop the cached registry snapshot (e.g. after an uninstall)."""
+    global _INSTALLED_PROGRAMS_CACHE
+    _INSTALLED_PROGRAMS_CACHE = None
 
 
 def _is_installed_app(path: str, installed_apps: dict[str, dict]) -> Optional[dict]:
@@ -254,12 +284,16 @@ _CACHE_SOURCE_HINTS: dict = dict(_RULES["cache_source_hints"])
 
 # ── Protected path detection ─────────────────────────────────────
 
-# True system-critical paths that are always protected
-_PROTECTED_DIR_NAMES = {
-    "windows", "system32", "syswow64", "winsxs",
-    "programdata", "recovery", "boot",
+# System-critical roots — protected ONLY when they sit at the drive root
+# (e.g. C:/Windows), never when the same word appears deeper in a path. A
+# game's ".../Saved/Config/Windows" folder is not the operating system.
+# ProgramData is intentionally NOT here: it holds plenty of reclaimable vendor
+# data and should be scanned and classified, not blanket-protected.
+_PROTECTED_ROOT_DIR_NAMES = {
+    "windows", "recovery", "boot",
     "$windows.~bt", "$windows.~ws",
-    "msocache", "perfmon", "perflogs",
+    "msocache", "perflogs", "config.msi",
+    "system volume information",
 }
 
 # Container paths that should NOT become System entities if they contain
@@ -269,8 +303,16 @@ _CONTAINER_DIR_NAMES = {
     "program files", "program files (x86)",
 }
 
+# Sensitive folders under AppData that stay protected wherever they appear.
+# NOTE: a blanket "microsoft" entry used to live here, which swept the ENTIRE
+# AppData/Local/Microsoft tree (Edge cache, Teams, Office caches, WER, INetCache
+# — almost all regenerable) into the "System" category. That was misleading:
+# only the credential/crypto stores below are genuinely system-protected, and
+# they match by their own names regardless of the "Microsoft" parent. Everything
+# else under Microsoft is now left to classify normally (cache, app data, ...).
 _PROTECTED_APPDATA_DIRS = {
-    "microsoft", "local settings", "credential",
+    "local settings",
+    "credential", "credentials", "vault",
     "identities", "crypto", "protect", "systemcertificates",
     "packages",  # UWP store app data
 }
@@ -325,8 +367,12 @@ _QUALIFIER_SKIP_SEGS = {
 def _qualify_folder_name(folder_name: str, folder_path: str) -> str:
     """Return a display name with a context qualifier when the folder name is generic.
 
+    The qualifier names the *data*, not the person — the account name is
+    deliberately skipped, so a profile-level "Documents" stays "Documents"
+    rather than "Documents – Nazar".
+
     Examples:
-      "documents"  at c:/users/nazar/documents           → "Documents – Nazar"
+      "documents"  at c:/users/nazar/documents           → "Documents"
       "cache"      at c:/users/nazar/appdata/local/discord/cache → "Cache – Discord"
       "videos"     at c:/steamapps/common/portal2/videos  → "Videos – Portal2"
       "node_modules" (not generic)                        → "node_modules"  (unchanged)
@@ -338,17 +384,139 @@ def _qualify_folder_name(folder_name: str, folder_path: str) -> str:
     norm = folder_path.replace("\\", "/").lower()
     parts = norm.split("/")
 
+    # The segment right after C:/Users (or /home) is the account name — it
+    # identifies the user, not the content, so it is never a useful qualifier.
+    usernames = {
+        parts[i + 1] for i, seg in enumerate(parts[:-1])
+        if seg in _USER_CONTAINER_NAMES and i + 1 < len(parts)
+    }
+
     # Walk path segments from right-to-left, skipping the folder itself
     for part in reversed(parts[:-1]):
         if not part or part.endswith(":"):          # skip drive letters
             continue
-        if part in _QUALIFIER_SKIP_SEGS or part in _GENERIC_FOLDER_NAMES:
+        if (part in _QUALIFIER_SKIP_SEGS or part in _GENERIC_FOLDER_NAMES
+                or part in usernames):
             continue
         # Found a meaningful qualifier — title-case it nicely
         qualifier = part.replace("-", " ").replace("_", " ").title()
         return f"{folder_name.title()} – {qualifier}"
 
     return folder_name.title()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# GAME-SAVE CONTEXT RESOLUTION
+# ═══════════════════════════════════════════════════════════════════════════
+# A bare "Game Saves" entity is not actionable: the user cannot tell *whose*
+# saves they are or whether the owning game is still installed. These helpers
+# resolve the owning game from the save path and cross-reference it against the
+# games/apps detected in the same scan + the Windows registry, so the entity
+# can be named "Skyrim Saves — game still installed" instead of just "Saves".
+
+# Folder names that hold one sub-folder PER GAME (game name is the segment
+# immediately AFTER the marker).
+_SAVE_CONTAINER_MARKERS = {"saved games", "savedgames", "my games", "mygames"}
+
+# Folder names that ARE a single game's save dir (game name is the nearest
+# meaningful ANCESTOR segment).
+_SAVE_LEAF_MARKERS = {
+    "saves", "save", "sav", "savegame", "savegames", "savedata", "save data",
+    "userdata", "playerprofiles", "player profiles", "profiles", "storage",
+}
+
+# Tokens stripped when normalising a game name for matching, so
+# "The Witcher 3: Wild Hunt - GOTY Edition" and a registry "Witcher 3" align.
+_GAME_NAME_NOISE = {
+    "the", "a", "of", "game", "edition", "remastered", "remaster", "definitive",
+    "goty", "year", "deluxe", "complete", "hd", "ultimate", "enhanced",
+    "deluxe", "standard", "collection", "anniversary", "directors", "cut",
+}
+
+
+def _pretty_game(name: str) -> str:
+    """Title-case a game name without mangling apostrophes (Baldur's, not Baldur'S)."""
+    return " ".join(w[:1].upper() + w[1:] if w else w for w in name.split())
+
+
+def _normalize_game_name(name: str) -> str:
+    """Reduce a game/app name to a comparable token string.
+
+    Lowercases, drops punctuation and edition/version noise words, so two
+    differently-decorated names for the same game compare equal-ish.
+    """
+    s = (name or "").lower().replace("_", " ").replace("-", " ")
+    s = re.sub(r"[^a-z0-9 ]+", " ", s)
+    toks = [t for t in s.split() if t and t not in _GAME_NAME_NOISE]
+    return " ".join(toks)
+
+
+def _extract_owning_game(norm_path: str) -> str:
+    """Best-effort owning-game folder name from a save path (lowercased, raw).
+
+    Returns '' when the path gives no usable game name (e.g. the entity is a
+    multi-game container like '.../Saved Games').
+
+    Examples:
+      .../documents/my games/skyrim/saves        → "skyrim"
+      .../saved games/cyberpunk 2077             → "cyberpunk 2077"
+      .../appdata/local/larian studios/baldur's gate 3/playerprofiles → "baldur's gate 3"
+      .../steamapps/common/stardew valley/saves  → "stardew valley"
+    """
+    raw = [p for p in norm_path.rstrip("/").split("/") if p and not p.endswith(":")]
+    if not raw:
+        return ""
+
+    # The segment immediately after C:/Users (or /home) is a username, never a
+    # game — mark it so the ancestor walk skips it.
+    full = [p for p in norm_path.rstrip("/").split("/") if p]
+    usernames = {
+        full[i + 1] for i, seg in enumerate(full[:-1])
+        if seg in _USER_CONTAINER_NAMES
+    }
+
+    def _is_game_segment(seg: str) -> bool:
+        return (seg not in _SAVE_LEAF_MARKERS
+                and seg not in _SAVE_CONTAINER_MARKERS
+                and seg not in _QUALIFIER_SKIP_SEGS
+                and seg not in _GENERIC_FOLDER_NAMES
+                and seg not in usernames)
+
+    # Case 1 — segment right after a "saved games" / "my games" container.
+    for i in range(len(raw) - 1):
+        if raw[i] in _SAVE_CONTAINER_MARKERS and _is_game_segment(raw[i + 1]):
+            return raw[i + 1]
+
+    # Case 2 — the leaf itself is a save marker → nearest meaningful ancestor.
+    if raw[-1] in _SAVE_LEAF_MARKERS:
+        for seg in reversed(raw[:-1]):
+            if _is_game_segment(seg):
+                return seg
+    return ""
+
+
+def _game_is_installed(game_norm: str, known_games: set) -> bool:
+    """Return True if a normalised game name plausibly matches a known game/app.
+
+    Matching is deliberately fuzzy (substring + token overlap) because save
+    folder names and registry/library names rarely agree character-for-character.
+    """
+    if not game_norm or len(game_norm) < 2:
+        return False
+    g_tokens = set(game_norm.split())
+    for known in known_games:
+        if not known:
+            continue
+        if game_norm == known:
+            return True
+        # Substring match only when the shorter side is distinctive (>=4 chars),
+        # so "ark" doesn't match "darksiders".
+        if len(game_norm) >= 4 and (game_norm in known or known in game_norm):
+            return True
+        # Two or more shared significant tokens is a strong signal.
+        if len(g_tokens & set(known.split())) >= 2:
+            return True
+    return False
 
 
 def _infer_cache_source(norm_path: str) -> str:
@@ -368,13 +536,175 @@ def _infer_cache_source(norm_path: str) -> str:
     return ""
 
 
+# Content-collection entity types and the extensions that justify them. Used to
+# CONFIRM a name-based guess against the folder's actual files, so a folder
+# called "Videos" with no videos (or "Windows Photo Viewer", which only has
+# executables) is not trusted on its name alone.
+_CONTENT_TYPE_EXTS = {
+    "photo_collection": _IMAGE_EXTS,
+    "video_collection": _VIDEO_EXTS,
+    "audio_collection": _AUDIO_EXTS,
+    "document_folder":  _DOC_EXTS,
+    "media_collection": _IMAGE_EXTS | _VIDEO_EXTS | _AUDIO_EXTS,
+}
+
+
+def _content_confirms_type(children: list, etype: str, min_ratio: float = 0.3) -> bool:
+    """True if a folder's actual files back up a name-based content guess.
+
+    Only gates the content-collection types in _CONTENT_TYPE_EXTS; every other
+    type passes through unchanged. An empty folder never confirms a media type.
+    """
+    exts = _CONTENT_TYPE_EXTS.get(etype)
+    if exts is None:
+        return True
+    files = [c for c in children if not c.is_dir]
+    if not files:
+        return False
+    matched = sum(1 for f in files if (f.extension or "").lower() in exts)
+    return (matched / len(files)) >= min_ratio
+
+
+# ── App / UI asset folders vs. genuine user media ─────────────────
+# An "images"/"assets" folder full of icons, sprites and web graphics is an
+# application's internal content — NOT the user's photo collection. Surfacing it
+# under the "Images" category mixes app UI art in with personal photos, so the
+# user can no longer tell what is actually theirs. These folders are redirected
+# to "application_data" (review-only app support content) instead.
+
+# Folder names that denote an asset/UI bundle rather than a media library.
+_ASSET_DIR_NAMES = {
+    "assets", "asset", "static", "public", "resources", "resource", "res",
+    "img", "imgs", "icons", "icon", "sprites", "sprite", "textures", "texture",
+    "drawable", "mipmap", "skin", "skins", "theme", "themes", "ui",
+    "graphics", "gfx", "art",
+}
+# Image formats typical of UI / web assets (vector, icon, lossless web).
+_ASSET_IMAGE_EXTS = {".svg", ".ico", ".png", ".gif", ".webp"}
+# Photographic formats — their presence signals a genuine user photo library.
+_PHOTO_IMAGE_EXTS = {".jpg", ".jpeg", ".heic", ".heif", ".tif", ".tiff",
+                     ".cr2", ".nef", ".arw", ".dng", ".raw", ".rw2",
+                     ".orf", ".pef"}
+
+
+def _looks_like_app_assets(norm_path: str, folder_name: str, files: list) -> bool:
+    """True when an image-dominant folder is app/UI asset content, not user media.
+
+    Conservative on purpose — it must never reclassify a real photo library:
+      1. there is at least one image and NO photographic-format image, and
+      2. the folder is structurally an app asset bundle (an app-internal
+         ancestor such as resources/static/src, or its own name is an
+         asset-bundle name), and
+      3. every image present is a web/UI format (svg/ico/png/gif/webp).
+    """
+    img_files = [f for f in files if (f.extension or "").lower() in _IMAGE_EXTS]
+    if not img_files:
+        return False
+    # Any genuine photograph → treat as user media, never as app assets.
+    if any((f.extension or "").lower() in _PHOTO_IMAGE_EXTS for f in img_files):
+        return False
+    structural = (folder_name.lower() in _ASSET_DIR_NAMES
+                  or _is_internal_path(norm_path)[0])
+    if not structural:
+        return False
+    return all((f.extension or "").lower() in _ASSET_IMAGE_EXTS for f in img_files)
+
+
+# Media entity types that should be re-checked for being app/UI assets.
+_USER_IMAGE_MEDIA_TYPES = frozenset({"photo_collection", "media_collection"})
+
+
+# ── Human-readable naming helpers ─────────────────────────────────
+# Used to give understanding to otherwise-opaque entities (unrecognised or
+# mixed folders, cryptic GUID/hash names) WITHOUT dumping raw filenames — we
+# describe the *kind* of content instead.
+
+_CODE_EXTS = {
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".c", ".cpp", ".h", ".hpp", ".cs",
+    ".java", ".go", ".rs", ".rb", ".php", ".lua", ".sh", ".ps1", ".bat",
+    ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".xml", ".html", ".css",
+}
+
+_GUID_RE = re.compile(
+    r"^\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}?$", re.I
+)
+_HEX_BLOB_RE = re.compile(r"^[0-9a-f]{16,}$", re.I)
+
+
+def _ext_group(ext: str) -> str:
+    """Map a file extension to a friendly content-group word, or '' if unknown."""
+    e = (ext or "").lower()
+    if e in _IMAGE_EXTS:     return "images"
+    if e in _VIDEO_EXTS:     return "videos"
+    if e in _AUDIO_EXTS:     return "audio"
+    if e in _DOC_EXTS:       return "documents"
+    if e in _ARCHIVE_EXTS:   return "archives"
+    if e in _INSTALLER_EXTS: return "installers"
+    if e in _MODEL_EXTS:     return "AI models"
+    if e in _DATABASE_EXTS:  return "databases"
+    if e in _LOG_EXTS or e in _BACKUP_EXTS: return "logs & backups"
+    if e in _CODE_EXTS:      return "code & config"
+    return ""
+
+
+def _content_descriptor(children: list) -> str:
+    """A short phrase describing what a folder holds, e.g. 'mostly images'.
+
+    Returns '' when nothing recognisable dominates. Never lists filenames.
+    """
+    files = [c for c in children if not c.is_dir]
+    if not files:
+        return ""
+    counts = Counter(g for g in (_ext_group(f.extension) for f in files) if g)
+    if not counts:
+        return ""
+    total = len(files)
+    top = counts.most_common(2)
+    g0, n0 = top[0]
+    if n0 / total >= 0.6:
+        return f"mostly {g0}"
+    if len(top) >= 2:
+        return f"{top[0][0]} and {top[1][0]}"
+    return g0
+
+
+def _looks_cryptic(name: str) -> bool:
+    """True for opaque folder names (GUIDs, long hashes) that tell a user nothing."""
+    n = name.strip().strip("{}")
+    if _GUID_RE.match(name) or _HEX_BLOB_RE.match(n):
+        return True
+    # Long, vowel-less, no separators → likely a random/hashed token.
+    if len(n) >= 12 and n.isalnum() and not any(v in n.lower() for v in "aeiou"):
+        return True
+    return False
+
+
+def _descriptive_folder_name(folder_name: str, folder_path: str, children: list) -> str:
+    """Best-effort understandable name for an unrecognised / mixed folder.
+
+    Cryptic names become 'Unrecognized folder'; a content descriptor is appended
+    when available, so the user learns what is inside without raw filenames.
+    """
+    base = "Unrecognized folder" if _looks_cryptic(folder_name) \
+        else _qualify_folder_name(folder_name, folder_path)
+    desc = _content_descriptor(children)
+    return f"{base} · {desc}" if desc else base
+
+
 def _is_protected_path(norm_path: str) -> bool:
-    """Check if a path is system-critical or protected."""
-    parts = norm_path.split("/")
-    for part in parts:
-        if part in _PROTECTED_DIR_NAMES:
-            return True
-    if "appdata" in norm_path:
+    """Check if a path is system-critical or protected.
+
+    Depth-aware: a system root (Windows/Recovery/Boot/…) is only protected when
+    it is the FIRST segment under the drive (C:/Windows/…), so nested folders
+    that merely share the name (e.g. a game's Saved/Config/Windows) are not
+    swept into "System". Credential/crypto stores under AppData stay protected
+    wherever they appear.
+    """
+    parts = norm_path.rstrip("/").split("/")
+    # parts[0] = drive (c:), parts[1] = top-level dir.
+    if len(parts) >= 2 and parts[1] in _PROTECTED_ROOT_DIR_NAMES:
+        return True
+    if "appdata" in parts:
         for part in parts:
             if part in _PROTECTED_APPDATA_DIRS:
                 return True
@@ -467,9 +797,79 @@ def _is_user_container_dir(norm_path: str) -> bool:
 
 
 def _is_appdata_packages_path(norm_path: str) -> bool:
-    """Detect UWP/sandboxed app package data roots."""
+    """Detect the UWP/sandboxed app package container (AppData/Local/Packages)."""
     parts = norm_path.rstrip("/").split("/")
     return len(parts) >= 5 and parts[-3:] == ["appdata", "local", "packages"]
+
+
+# ── UWP package-family-name → friendly app name ──────────────────
+# A UWP per-app folder is named "<PackageName>_<PublisherId>", e.g.
+# "SpotifyAB.SpotifyMusic_zpdnekdrzrea0". The publisher hash carries no
+# meaning; the package name (before the final "_") identifies the app.
+# Curated entries cover the popular apps; everything else is parsed.
+_KNOWN_UWP_PACKAGES: dict = {
+    "spotifyab.spotifymusic":            "Spotify",
+    "microsoft.windowscalculator":       "Windows Calculator",
+    "microsoft.windows.photos":          "Microsoft Photos",
+    "microsoft.zunemusic":               "Groove Music",
+    "microsoft.zunevideo":               "Films & TV",
+    "microsoft.windowsstore":            "Microsoft Store",
+    "microsoft.xboxapp":                 "Xbox",
+    "microsoft.gamingapp":               "Xbox (Gaming App)",
+    "microsoft.windowsterminal":         "Windows Terminal",
+    "microsoft.screensketch":            "Snipping Tool",
+    "microsoft.windowsnotepad":          "Notepad",
+    "microsoft.paint":                   "Paint",
+    "microsoft.windowssoundrecorder":    "Sound Recorder",
+    "microsoft.windowscamera":           "Camera",
+    "microsoft.windowsmaps":             "Maps",
+    "microsoft.microsoftstickynotes":    "Sticky Notes",
+    "microsoft.todos":                   "Microsoft To Do",
+    "microsoft.outlookforwindows":       "Outlook (new)",
+    "microsoft.windowsalarms":           "Clock",
+    "microsoft.bing":                    "Bing",
+    "microsoft.microsoftedge.stable":    "Microsoft Edge",
+    "microsoft.yourphone":               "Phone Link",
+    "9e2f88e3.twitter":                  "Twitter / X",
+    "5319275a.whatsappdesktop":          "WhatsApp",
+    "telegrammessengerllp.telegramdesktop": "Telegram",
+    "discordinc.discord":                "Discord",
+}
+
+
+def _split_camel(text: str) -> str:
+    """Insert spaces at camelCase and letter→digit boundaries.
+
+    "WindowsCalculator" → "Windows Calculator"; "Photos" → "Photos".
+    """
+    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", text)
+    text = re.sub(r"(?<=[A-Za-z])(?=[0-9])", " ", text)
+    return " ".join(text.split())
+
+
+def _humanize_package_name(folder_name: str) -> str:
+    """Map a UWP package folder name to a readable app name.
+
+    "SpotifyAB.SpotifyMusic_zpdnekdrzrea0"        → "Spotify"
+    "Microsoft.WindowsCalculator_8wekyb3d8bbwe"   → "Windows Calculator"
+    "Microsoft.549981C3F5F10_8wekyb3d8bbwe"       → "Microsoft.549981C3F5F10"
+    """
+    base = folder_name.rsplit("_", 1)[0] if "_" in folder_name else folder_name
+    known = _KNOWN_UWP_PACKAGES.get(base.lower())
+    if known:
+        return known
+
+    segments = base.split(".")
+    app_part = segments[-1] if segments else base
+    pretty = _split_camel(app_part)
+    # A segment that is mostly an ID (e.g. "549981C3F5F10") is useless as a
+    # name — fall back to the publisher-qualified raw base so it stays
+    # identifiable rather than rendering as garbage digits.
+    letters = sum(c.isalpha() for c in app_part)
+    digits = sum(c.isdigit() for c in app_part)
+    if letters < 3 or len(pretty) < 3 or (digits >= 4 and digits >= letters):
+        return base
+    return pretty
 
 
 def _is_vm_storage_path(norm_path: str) -> bool:
@@ -515,6 +915,39 @@ def _safety_correct_entity_type(path: str, entity_type: str) -> tuple[str, str]:
     if _nvidia_update_cache_root(norm_path):
         return "installer_cache", "NVIDIA update/cache staging — review only"
     return entity_type, ""
+
+
+# ── Heterogeneous user-root explosion ─────────────────────────────
+# Multi-purpose dump folders that should be broken into per-subfolder
+# entities rather than shown as one opaque blob.
+_MULTIPURPOSE_ROOT_NAMES = {
+    "documents", "document", "my documents", "downloads", "download",
+    "desktop", "personal",
+}
+# A root must have at least this many subfolders before exploding is worthwhile.
+_EXPLODE_MIN_SUBDIRS = 4
+# ...and span at least this many distinct content types to count as diverse.
+_EXPLODE_MIN_DISTINCT_TYPES = 2
+
+
+def _root_is_heterogeneous(
+    subdir_types: list,
+    name_is_multipurpose: bool,
+    subdir_count: int,
+) -> bool:
+    """Decide whether a folder is a diverse multi-purpose root worth exploding.
+
+    subdir_types: per-subfolder content classifications (str or None).
+    A folder qualifies when its subfolders span >= 2 distinct content types,
+    or it is a known dump folder (Documents/Downloads/...) with enough
+    subfolders that one blended entity would just be noise.
+    """
+    meaningful = {t for t in subdir_types if t}
+    if len(meaningful) >= _EXPLODE_MIN_DISTINCT_TYPES:
+        return True
+    if name_is_multipurpose and subdir_count >= _EXPLODE_MIN_SUBDIRS:
+        return True
+    return False
 
 
 # Internal folder names that should be attached to parent app
@@ -922,6 +1355,16 @@ class _DetectionContext:
             if f.is_dir:
                 self.all_dirs.append(f)
 
+        # Exact per-directory aggregates, computed once. sample() is capped and
+        # must NEVER be used for sizing — these stats are the only source of
+        # truth for entity size / file_count / folder_count.
+        self.subtree_stats: dict[str, tuple] = self._build_subtree_stats()
+
+        # Paths of entities whose size represents a whole subtree. Only these
+        # take part in the disjointness correction; loose-file buckets and
+        # installer groups stand for a filtered file set, not a subtree.
+        self.subtree_entity_paths: set[str] = set()
+
         self.entities: list[SmartEntity] = []
         self.claimed_paths: set[str] = set()  # normalized paths already consumed
 
@@ -980,9 +1423,65 @@ class _DetectionContext:
         if self.entities_created % 10 == 0:  # throttle UI updates
             self.coverage_progress("grouping")
 
+    # ── exact aggregates ───────────────────────────────────────────
+    def _build_subtree_stats(self) -> dict[str, tuple]:
+        """(size, files, folders, max_mtime, max_atime) for every directory.
+
+        Processed deepest-first so a parent always reads finished child totals.
+        One O(n) pass, replacing the old per-entity partial walks that silently
+        truncated at sample()'s item limit and under-reported every folder with
+        more than `limit` descendants.
+        """
+        dir_norms = set(self.children_index.keys())
+        for children in self.children_index.values():
+            for c in children:
+                if c.is_dir:
+                    dir_norms.add(c.path.replace("\\", "/").lower())
+
+        stats: dict[str, tuple] = {}
+        for d in sorted(dir_norms, key=lambda p: p.count("/"), reverse=True):
+            size = files = folders = 0
+            mtime = atime = 0.0
+            for c in self.children_index.get(d, []):
+                if c.is_dir:
+                    folders += 1
+                    cs = stats.get(c.path.replace("\\", "/").lower())
+                    if cs:
+                        size += cs[0]
+                        files += cs[1]
+                        folders += cs[2]
+                        mtime = max(mtime, cs[3])
+                        atime = max(atime, cs[4])
+                else:
+                    files += 1
+                    size += c.size_bytes
+                mtime = max(mtime, c.modified)
+                atime = max(atime, c.accessed)
+            stats[d] = (size, files, folders, mtime, atime)
+        return stats
+
+    def subtree(self, dir_norm: str) -> tuple:
+        """Exact (size, files, folders, mtime, atime) for a directory subtree."""
+        return self.subtree_stats.get(dir_norm, (0, 0, 0, 0.0, 0.0))
+
+    def subtree_files(self, dir_norm: str):
+        """Yield every file Finding under dir_norm — uncapped."""
+        stack = [dir_norm]
+        while stack:
+            d = stack.pop()
+            for c in self.children_index.get(d, []):
+                if c.is_dir:
+                    stack.append(c.path.replace("\\", "/").lower())
+                else:
+                    yield c
+
     # ── tree traversal over the prefix index ───────────────────────
-    def gather(self, dir_norm: str, limit: int = 1000) -> list[Finding]:
-        """Gather up to `limit` descendants under dir_norm."""
+    def sample(self, dir_norm: str, limit: int = 1000) -> list[Finding]:
+        """Up to `limit` descendants under dir_norm.
+
+        A truncated SAMPLE, for content classification and preview lists only.
+        Never use it to compute a size or a count — use subtree() for that.
+        """
         result: list[Finding] = []
         stack = [dir_norm]
         while stack and len(result) < limit:
@@ -1055,8 +1554,8 @@ def _phase1_discovery(ctx: "_DetectionContext", extra_pats: tuple):
 
         _display = _monolith_display(_lower, _f.name)
         _etype = _monolith_type(_lower)
-        _children = ctx.gather(_norm)
-        _ent = _build_entity(
+        _children = ctx.sample(_norm)
+        _ent = _build_entity(ctx,
             _f.path, _display, _etype, _children,
             f"Known monolith distribution: {_f.name}",
         )
@@ -1084,10 +1583,10 @@ def _pass0_update_caches(ctx: "_DetectionContext"):
         if not cache_root or cache_root != norm_path:
             continue
 
-        children = ctx.gather(norm_path)
+        children = ctx.sample(norm_path)
         if not children:
             continue
-        ent = _build_entity(
+        ent = _build_entity(ctx, 
             f.path, "NVIDIA Update Cache", "installer_cache", children,
             "NVIDIA update/cache staging folder",
         )
@@ -1096,6 +1595,49 @@ def _pass0_update_caches(ctx: "_DetectionContext"):
         pass_entities += 1
     if pass_entities:
         ctx.log(f"[smart]   → merged {pass_entities} update cache entities")
+
+
+def _pass_appdata_packages(ctx: "_DetectionContext"):
+    """Split AppData/Local/Packages into named per-app data entities.
+
+    Without this, the whole Packages tree collapses into one opaque
+    "Application Packages" blob. Here each direct child package folder becomes
+    its own application_data entity with a human-readable name
+    ("Spotify (app data)", "Microsoft Photos (app data)"), and the Packages
+    container itself is claimed as a pass-through node (no blob entity).
+    """
+    ctx.log("[smart] pass 0b: mapping AppData/Local/Packages to named apps...")
+    ctx.confidence = 0.8  # package-family-name parse
+    pass_entities = 0
+    for f in ctx.all_dirs:
+        norm_path = f.path.replace("\\", "/").lower().rstrip("/")
+        if norm_path in ctx.claimed_paths:
+            continue
+        if not _is_appdata_packages_path(norm_path):
+            continue
+
+        for child in ctx.children_index.get(norm_path, []):
+            if not child.is_dir:
+                continue
+            c_norm = child.path.replace("\\", "/").lower().rstrip("/")
+            if c_norm in ctx.claimed_paths:
+                continue
+            display = _humanize_package_name(child.name)
+            children = ctx.sample(c_norm)
+            ent = _build_entity(ctx, 
+                child.path, f"{display} (app data)", "application_data", children,
+                f"Sandboxed app data for {display}",
+            )
+            fc = ctx.claim(c_norm)
+            ctx.emit_entity(ent, fc)
+            pass_entities += 1
+
+        # Claim the container node itself (no entity) so pass 1 doesn't rebuild
+        # the single Packages blob over the now-claimed children.
+        ctx.claimed_paths.add(norm_path)
+
+    if pass_entities:
+        ctx.log(f"[smart]   → mapped {pass_entities} sandboxed app-data entities")
 
 
 def _pass1_known_dirs(ctx: "_DetectionContext"):
@@ -1158,8 +1700,8 @@ def _pass1_known_dirs(ctx: "_DetectionContext"):
             parent_norm = parent.replace("\\", "/").lower()
             if parent_norm in ctx.claimed_paths:
                 continue
-            children = ctx.gather(parent_norm)
-            ent = _build_entity(parent, os.path.basename(parent),
+            children = ctx.sample(parent_norm)
+            ent = _build_entity(ctx, parent, os.path.basename(parent),
                                 "dev_project", children,
                                 f"Contains {lower_name} directory")
             ctx.claim(parent_norm)
@@ -1167,7 +1709,19 @@ def _pass1_known_dirs(ctx: "_DetectionContext"):
             pass_entities += 1
             continue
 
-        children = ctx.gather(norm_path)
+        children = ctx.sample(norm_path)
+
+        # ── Content gate: don't trust a content-folder NAME unless the
+        # folder's actual files back it up. A "Videos" folder with no videos
+        # is left for the content/sweep passes instead of being mislabelled.
+        if etype in _CONTENT_TYPE_EXTS and not _content_confirms_type(children, etype):
+            continue
+
+        # ── Asset gate: an image folder that is really app/UI content
+        # (icons, sprites, web graphics) is app data, not a photo library.
+        if etype in _USER_IMAGE_MEDIA_TYPES and _looks_like_app_assets(
+                norm_path, f.name, [c for c in children if not c.is_dir]):
+            etype = "application_data"
 
         # ── Size filter: suppress tiny build outputs and pycaches ──────
         if etype == "build_folder":
@@ -1189,16 +1743,20 @@ def _pass1_known_dirs(ctx: "_DetectionContext"):
             label = _DEV_ARTIFACT_LABELS.get(lower_name, f.name)
             parent_name = os.path.basename(f.parent)
             parent_lower = parent_name.lower()
+            # Don't qualify with the account name (parent is the user home dir).
+            parent_is_username = _is_user_home_dir(f.parent.replace("\\", "/").lower())
             if etype == "development_environment":
                 display = label
             elif (parent_name
                     and parent_lower not in _QUALIFIER_SKIP_SEGS
-                    and parent_lower not in _GENERIC_FOLDER_NAMES):
+                    and parent_lower not in _GENERIC_FOLDER_NAMES
+                    and not parent_is_username):
                 display = f"{label} – {parent_name}"
             else:
                 display = label
         elif etype == "application_data":
-            display = "Application Packages"
+            display = ("Application Packages" if _is_appdata_packages_path(norm_path)
+                       else _qualify_folder_name(f.name, f.path))
         elif etype == "vm_storage":
             display = _qualify_folder_name(f.name, f.path)
         elif etype == "installer_cache":
@@ -1217,7 +1775,7 @@ def _pass1_known_dirs(ctx: "_DetectionContext"):
         else:
             display = _qualify_folder_name(f.name, f.path)
 
-        ent = _build_entity(
+        ent = _build_entity(ctx, 
             f.path, display, etype, children,
             corrected_reason or f"Known directory: {f.name}",
         )
@@ -1281,14 +1839,15 @@ def _pass2_installed_apps(ctx: "_DetectionContext"):
             if entity_norm in ctx.claimed_paths:
                 continue
 
-            children = ctx.gather(entity_norm)
-            ent = _build_entity(
+            children = ctx.sample(entity_norm)
+            ent = _build_entity(ctx, 
                 entity_path, entity_name, "application", children,
                 f"Installed application from registry: "
                 f"{app_info.get('publisher', 'Unknown')}",
                 app_version=app_info.get("version", ""),
                 app_publisher=app_info.get("publisher", ""),
                 install_date=app_info.get("install_date", ""),
+                uninstall_string=app_info.get("uninstall_string", ""),
             )
             ctx.claim(entity_norm)
             ctx.emit_entity(ent)
@@ -1371,7 +1930,7 @@ def _pass2b_app_markers(ctx: "_DetectionContext"):
             if _is_installed_app(parent, ctx.installed_apps):
                 continue
 
-            children = ctx.gather(parent_norm)
+            children = ctx.sample(parent_norm)
             if nvidia_cache_norm:
                 entity_type = "installer_cache"
                 marker_reason = "NVIDIA update/cache staging folder"
@@ -1382,7 +1941,7 @@ def _pass2b_app_markers(ctx: "_DetectionContext"):
                 entity_type = marker_type
                 marker_reason = f"Project/application marker: {f.name}"
 
-            ent = _build_entity(parent, display_name, entity_type, children,
+            ent = _build_entity(ctx, parent, display_name, entity_type, children,
                                 marker_reason)
             fc = ctx.claim(parent_norm)
             ctx.emit_entity(ent, fc)
@@ -1418,8 +1977,8 @@ def _pass2b_app_markers(ctx: "_DetectionContext"):
             elif display_name is None:
                 display_name = f"{f.name} ({os.path.basename(parent)})"
 
-            children = ctx.gather(parent_norm)
-            ent = _build_entity(parent, display_name, etype, children,
+            children = ctx.sample(parent_norm)
+            ent = _build_entity(ctx, parent, display_name, etype, children,
                                 f"Database file: {f.name}")
             ctx.claim(parent_norm)
             ctx.emit_entity(ent)
@@ -1452,13 +2011,13 @@ def _pass3_browser_profiles(ctx: "_DetectionContext"):
             lower_name in _BROWSER_KEYWORDS
             or any(bk in norm_path for bk in _BROWSER_KEYWORDS)
         ):
-            children = ctx.gather(norm_path)
+            children = ctx.sample(norm_path)
             if children:
                 browser_label = lower_name.title() if lower_name in _BROWSER_KEYWORDS else next(
                     (k.title() for k in _BROWSER_KEYWORDS if k in norm_path),
                     lower_name.title(),
                 )
-                ent = _build_entity(f.path, f"{browser_label} Data",
+                ent = _build_entity(ctx, f.path, f"{browser_label} Data",
                                     "browser_profile", children,
                                     f"Browser profile path: {lower_name}")
                 ctx.claim(norm_path)
@@ -1512,9 +2071,9 @@ def _pass3b_games(ctx: "_DetectionContext"):
             _game_lib_containers.add(parent_norm)
 
         if platform_label:
-            children = ctx.gather(norm_path)
+            children = ctx.sample(norm_path)
             if children:
-                ent = _build_entity(f.path, f.name, "game", children,
+                ent = _build_entity(ctx, f.path, f.name, "game", children,
                                     f"{platform_label} game installation")
                 fc = ctx.claim(norm_path)
                 ctx.emit_entity(ent, fc)
@@ -1543,10 +2102,10 @@ def _pass4_cache_folders(ctx: "_DetectionContext"):
         lower_name = f.name.lower()
         if (lower_name in _CACHE_KEYWORDS or lower_name.endswith("cache")
                 or lower_name.endswith("tmp")):
-            children = ctx.gather(norm_path)
+            children = ctx.sample(norm_path)
             source_app = _infer_cache_source(norm_path)
             display_name = f"Cache for {source_app}" if source_app else f.name
-            ent = _build_entity(
+            ent = _build_entity(ctx, 
                 f.path, display_name, "cache_folder", children,
                 "Cache folder" + (f" for {source_app}" if source_app else ""),
             )
@@ -1572,8 +2131,8 @@ def _pass5_protected(ctx: "_DetectionContext"):
             continue
 
         if _is_protected_path(norm_path):
-            children = ctx.gather(norm_path)
-            ent = _build_entity(f.path, f.name, "protected_system", children,
+            children = ctx.sample(norm_path)
+            ent = _build_entity(ctx, f.path, f.name, "protected_system", children,
                                 "System or protected path detected")
             fc = ctx.claim(norm_path)
             ctx.emit_entity(ent, fc)
@@ -1581,7 +2140,7 @@ def _pass5_protected(ctx: "_DetectionContext"):
         elif _is_container_path(norm_path):
             # Container paths (Program Files) should NOT become System
             # entities if they contain meaningful child entities.
-            children = ctx.gather(norm_path)
+            children = ctx.sample(norm_path)
             claimed_children = [
                 c for c in children
                 if c.path.replace("\\", "/").lower() in ctx.claimed_paths
@@ -1598,7 +2157,7 @@ def _pass5_protected(ctx: "_DetectionContext"):
                 # No meaningful children -- items inside Program Files are
                 # installed applications, not generic unknown content.
                 if children:
-                    ent = _build_entity(f.path, f.name, "portable_app", children,
+                    ent = _build_entity(ctx, f.path, f.name, "portable_app", children,
                                         "Installed application (Program Files)")
                     fc = ctx.claim(norm_path)
                     ctx.emit_entity(ent, fc)
@@ -1608,6 +2167,72 @@ def _pass5_protected(ctx: "_DetectionContext"):
     ctx.log(f"[smart]   → created {pass_entities} protected/system "
             f"entities · skipped {skipped_containers} containers "
             f"· total: {ctx.entities_created}")
+
+
+def _pass_explode_user_roots(ctx: "_DetectionContext"):
+    """Pre-pass - break diverse multi-purpose roots into per-subfolder entities.
+
+    A folder like Documents or Downloads full of unrelated subfolders would
+    otherwise be swept into one giant blended entity (a "wall of noise"). When
+    such a root is heterogeneous, claim ONLY the root node (no entity) so its
+    subfolders become individual candidates for the later classification passes
+    and its loose files fall through to the loose-file bucketer (the
+    "stragglers"). Runs before pass 1 so generic names such as
+    "documents"/"downloads" are not claimed as a single blob first.
+    """
+    ctx.log("[smart] pre-pass: exploding heterogeneous user roots...")
+    exploded = 0
+    candidates = [
+        f for f in ctx.all_dirs
+        if f.path.replace("\\", "/").lower().rstrip("/") not in ctx.claimed_paths
+        and (
+            f.parent.replace("\\", "/").lower().rstrip("/") in ctx.claimed_paths
+            or f.parent.replace("\\", "/").lower().rstrip("/") == ctx.root_norm
+            or f.name.lower() in _MULTIPURPOSE_ROOT_NAMES
+        )
+    ]
+    candidates.sort(key=lambda d: d.path.replace("\\", "/").count("/"))
+
+    for d in candidates:
+        norm = d.path.replace("\\", "/").lower().rstrip("/")
+        if norm in ctx.claimed_paths:
+            continue
+        # The user home dir (C:/Users/Nazar) is the ultimate diverse root and
+        # must never be shown as one deletable "User Profile" blob — explode it.
+        is_home = _is_user_home_dir(norm)
+        if (norm == ctx.root_norm or _is_drive_root(norm)
+                or _is_user_container_dir(norm)):
+            continue
+        # Never explode protected, sandboxed, or app-owned trees.
+        if _is_protected_path(norm) or _is_appdata_packages_path(norm):
+            continue
+
+        subdirs = [
+            c for c in ctx.gather_direct(norm)
+            if c.is_dir
+            and c.path.replace("\\", "/").lower().rstrip("/") not in ctx.claimed_paths
+        ]
+        if len(subdirs) < _EXPLODE_MIN_SUBDIRS:
+            continue
+
+        # A user home dir counts as multi-purpose by definition, so it explodes
+        # whenever it has enough subfolders.
+        name_mp = is_home or d.name.lower() in _MULTIPURPOSE_ROOT_NAMES
+        subdir_types = [
+            _classify_by_content(ctx.sample(sd.path.replace("\\", "/").lower()))
+            for sd in subdirs
+        ]
+        if not _root_is_heterogeneous(subdir_types, name_mp, len(subdirs)):
+            continue
+
+        # Pass-through claim: only the node, never its descendants.
+        ctx.claimed_paths.add(norm)
+        exploded += 1
+        ctx.log(f"[smart]   → exploded '{d.name}' into {len(subdirs)} subfolders")
+
+    if exploded:
+        ctx.log(f"[smart]   → exploded {exploded} heterogeneous user root(s) "
+                f"into per-subfolder entities")
 
 
 def _pass6_content_folders(ctx: "_DetectionContext"):
@@ -1643,8 +2268,14 @@ def _pass6_content_folders(ctx: "_DetectionContext"):
 
         etype = _classify_by_content(direct_files)
         if etype:
+            reason = "Content analysis"
+            # App/UI asset folders look image-dominant but are not user media.
+            if etype in _USER_IMAGE_MEDIA_TYPES and _looks_like_app_assets(
+                    norm_path, d.name, direct_files):
+                etype = "application_data"
+                reason = "Application/UI assets, not a personal media library"
             display = _qualify_folder_name(d.name, d.path)
-            ent = _build_entity(d.path, display, etype, direct, "Content analysis")
+            ent = _build_entity(ctx, d.path, display, etype, direct, reason)
             fc = ctx.claim(norm_path)
             ctx.emit_entity(ent, fc)
             pass_entities += 1
@@ -1685,7 +2316,7 @@ def _pass7_sweep(ctx: "_DetectionContext"):
 
         direct = ctx.gather_direct(norm_path)
         direct_files = [c for c in direct if not c.is_dir]
-        descendants = ctx.gather(norm_path)
+        descendants = ctx.sample(norm_path)
         claimed_descendants = [
             c for c in descendants
             if c.path.replace("\\", "/").lower() in ctx.claimed_paths
@@ -1753,6 +2384,20 @@ def _pass7_sweep(ctx: "_DetectionContext"):
                 else:
                     etype = "unknown_folder"
 
+        # Content gate: a media/document classification (whether from the name
+        # map or the substring fallback) must be backed by real files of that
+        # type. Prevents name-only matches like "Windows Photo Viewer" → Images.
+        if etype in _CONTENT_TYPE_EXTS and not _content_confirms_type(descendants, etype):
+            etype = "unknown_folder"
+            fallback_reason = "name suggested media, but the files did not confirm it"
+
+        # Asset gate: an image folder that is really app/UI content (icons,
+        # sprites, web graphics) is app data, not a personal photo library.
+        if etype in _USER_IMAGE_MEDIA_TYPES and _looks_like_app_assets(
+                norm_path, d.name, [c for c in descendants if not c.is_dir]):
+            etype = "application_data"
+            fallback_reason = "Application/UI assets, not a personal media library"
+
         corrected_type, corrected_reason = _safety_correct_entity_type(d.path, etype)
         if corrected_type != etype:
             etype = corrected_type
@@ -1766,7 +2411,8 @@ def _pass7_sweep(ctx: "_DetectionContext"):
         if etype == "user_profile":
             display = f"{d.name} Profile"
         elif etype == "application_data":
-            display = "Application Packages"
+            display = ("Application Packages" if _is_appdata_packages_path(norm_path)
+                       else _qualify_folder_name(d.name, d.path))
         elif etype in ("build_folder", "dev_artifacts", "development_environment"):
             display = _DEV_ARTIFACT_LABELS.get(lower_name, d.name)
         elif etype == "installer_cache":
@@ -1782,13 +2428,17 @@ def _pass7_sweep(ctx: "_DetectionContext"):
             else:
                 display = (f"Logs – {source}" if source
                            else _qualify_folder_name(d.name, d.path))
+        elif etype in ("unknown_folder", "mixed_folder"):
+            # Opaque folder: give the user a content hint instead of a bare
+            # (possibly cryptic) folder name.
+            display = _descriptive_folder_name(d.name, d.path, descendants)
         else:
             display = _qualify_folder_name(d.name, d.path)
 
         # Name-classified folders are a weak signal; a bare unknown_folder
         # is weaker still.
         ctx.confidence = 0.4 if etype != "unknown_folder" else 0.2
-        ent = _build_entity(d.path, display, etype, descendants, reason)
+        ent = _build_entity(ctx, d.path, display, etype, descendants, reason)
         fc = ctx.claim(norm_path)
         ctx.emit_entity(ent, fc)
         pass_entities += 1
@@ -1866,8 +2516,11 @@ def _pass8_loose_files(ctx: "_DetectionContext"):
 
             for inst in inst_files:
                 product = _installer_display_name(inst.name)
+                # Point the entity at the actual installer FILE — not its parent
+                # folder — so the UI shows the exact file and cleanup recycles
+                # only that file (never the whole Downloads folder).
                 ent = SmartEntity(
-                    path=inst.parent,
+                    path=inst.path,
                     name=f"Installer ({product})",
                     entity_type="installer",
                     size_bytes=inst.size_bytes,
@@ -1876,6 +2529,7 @@ def _pass8_loose_files(ctx: "_DetectionContext"):
                     modified=inst.modified,
                     accessed=inst.accessed,
                     children_sample=[inst.name],
+                    removable_file_paths=[inst.path],
                 )
                 ctx.emit_entity(ent)
                 ctx.claimed_paths.add(inst.path.replace("\\", "/").lower())
@@ -1893,6 +2547,7 @@ def _pass8_loose_files(ctx: "_DetectionContext"):
                     modified=max((f.modified for f in arch_files), default=0),
                     accessed=max((f.accessed for f in arch_files), default=0),
                     children_sample=[f.name for f in arch_files[:15]],
+                    removable_file_paths=[f.path for f in arch_files],
                 )
                 ctx.emit_entity(ent)
                 for f in arch_files:
@@ -1912,9 +2567,12 @@ def _pass8_loose_files(ctx: "_DetectionContext"):
             ):
                 total_sz = sum(f.size_bytes for f in dir_files)
                 dir_name = _dir_display_name(dir_path)
+                desc = _content_descriptor(dir_files)
+                misc_name = (f"Misc files in {dir_name} · {desc}" if desc
+                             else f"Misc files in {dir_name}")
                 ent = SmartEntity(
                     path=dir_path,
-                    name=f"Misc files in {dir_name}",
+                    name=misc_name,
                     entity_type="mixed_folder",
                     size_bytes=total_sz,
                     file_count=len(dir_files),
@@ -1922,6 +2580,7 @@ def _pass8_loose_files(ctx: "_DetectionContext"):
                     modified=max((f.modified for f in dir_files), default=0),
                     accessed=max((f.accessed for f in dir_files), default=0),
                     children_sample=[f.name for f in dir_files[:15]],
+                    removable_file_paths=[f.path for f in dir_files],
                 )
                 ctx.emit_entity(ent)
                 for f in dir_files:
@@ -1941,6 +2600,7 @@ def _pass8_loose_files(ctx: "_DetectionContext"):
                 modified=max((f.modified for f in bucket_files), default=0),
                 accessed=max((f.accessed for f in bucket_files), default=0),
                 children_sample=[f.name for f in bucket_files[:15]],
+                removable_file_paths=[f.path for f in bucket_files],
             )
             ctx.emit_entity(ent)
             for f in bucket_files:
@@ -2035,6 +2695,176 @@ def _suppress_low_value_entities(
     return kept
 
 
+def _collect_known_game_names(ctx: "_DetectionContext", entities: list) -> set:
+    """Normalised names of games/apps known to be installed in this scan.
+
+    Sources: game entities detected by platform passes + portable/installed
+    app entities + the Windows uninstall registry. Used to decide whether a
+    save folder's owning game is still present.
+    """
+    names: set = set()
+    for e in entities:
+        if e.entity_type in ("game", "application", "portable_app"):
+            n = _normalize_game_name(e.name)
+            if n:
+                names.add(n)
+    for info in ctx.installed_apps.values():
+        if isinstance(info, dict):
+            n = _normalize_game_name(info.get("name", ""))
+            if n:
+                names.add(n)
+    return names
+
+
+def _enrich_game_saves(ctx: "_DetectionContext", entities: list):
+    """Give every game_saves entity an owning game and install status.
+
+    Turns a bare "Saves" / "Saved Games" finding into something actionable,
+    e.g. "Skyrim Saves — game still installed" or
+    "Game Saves — Witcher 3, Portal 2 (+2) · owning games not found in scan".
+    """
+    known_games = _collect_known_game_names(ctx, entities)
+    enriched = 0
+    for e in entities:
+        if e.entity_type != "game_saves":
+            continue
+        norm = e.path.replace("\\", "/").lower().rstrip("/")
+        leaf = os.path.basename(norm)
+
+        # ── Multi-game container (Saved Games / My Games) ──────────────
+        if leaf in _SAVE_CONTAINER_MARKERS:
+            child_games = [
+                c.name for c in ctx.children_index.get(norm, [])
+                if c.is_dir and c.name.lower() not in _SAVE_LEAF_MARKERS
+            ]
+            if child_games:
+                installed = [g for g in child_games
+                             if _game_is_installed(_normalize_game_name(g), known_games)]
+                shown = ", ".join(child_games[:3])
+                extra = len(child_games) - 3
+                if extra > 0:
+                    shown += f" (+{extra})"
+                e.name = f"Game Saves — {shown}"
+                if installed and len(installed) == len(child_games):
+                    status = "all owning games still installed"
+                elif installed:
+                    status = (f"{len(installed)} of {len(child_games)} owning games "
+                              f"still installed")
+                else:
+                    status = "none of the owning games were found in this scan"
+                e.risk_reason = f"Save data for {len(child_games)} game(s) · {status}"
+                e.summary = (f"Game Saves · {len(child_games)} games · "
+                             f"{e.file_count:,} files · {e.size}")
+                enriched += 1
+                continue
+
+        # ── Single-game save folder ────────────────────────────────────
+        game_seg = _extract_owning_game(norm)
+        if game_seg:
+            display_game = _pretty_game(game_seg)
+            installed = _game_is_installed(_normalize_game_name(game_seg), known_games)
+            e.name = f"{display_game} Saves"
+            if installed:
+                e.risk_reason = f"Save data for {display_game} — game still installed"
+            else:
+                e.risk_reason = (f"Save data for {display_game} — owning game not "
+                                 f"found in this scan (may be uninstalled)")
+            e.summary = (f"Game Saves · {display_game} · "
+                         f"{e.file_count:,} files · {e.size}")
+            enriched += 1
+        elif not e.risk_reason or e.risk_reason.lower().startswith("entity type:"):
+            e.risk_reason = ("Game/app save data — owning game could not be "
+                             "determined from the path")
+            enriched += 1
+
+    if enriched:
+        ctx.log(f"[smart] resolved owning-game context for {enriched} save "
+                f"entit{'y' if enriched == 1 else 'ies'}")
+
+
+def _disambiguate_names(entities: list) -> int:
+    """Append a path hint to entities that share a display name.
+
+    Two "Qt" installs, three "python" trees — a bare repeated name is
+    unscannable. For each colliding name, append the deepest path segment that
+    differs from the name (usually a version or install folder), e.g.
+    "Qt (6.5.0)" / "Qt (5.15.2)". Best-effort and display-only: it never touches
+    size, path, or the AI cache key.
+    """
+    from collections import defaultdict
+    groups: dict[str, list] = defaultdict(list)
+    for e in entities:
+        groups[e.name].append(e)
+
+    renamed = 0
+    for name, group in groups.items():
+        if len(group) < 2:
+            continue
+        low_name = name.lower()
+        for e in group:
+            parts = [p for p in e.path.replace("\\", "/").split("/") if p]
+            hint = next((seg for seg in reversed(parts)
+                         if seg.lower() != low_name), parts[0] if parts else "")
+            if hint:
+                e.name = f"{name} ({hint})"
+                renamed += 1
+    return renamed
+
+
+def _enforce_disjoint_sizes(ctx: "_DetectionContext", entities: list, log_fn) -> int:
+    """Charge every scanned byte to exactly one entity.
+
+    A folder-rooted entity measures its whole subtree. When a sub-entity inside
+    it survives post-processing — ``node_modules``, ``venv``, ``dev_artifacts``
+    and ``shader_cache`` are deliberately *retained* inside apps/games for their
+    cleanup value — those bytes would otherwise be counted twice: once in the
+    child and once in the parent. Here each surviving sub-entity is subtracted
+    from its nearest surviving ancestor.
+
+    Nesting works out because a child's subtree total already includes anything
+    nested below it, and each child is charged to exactly one ancestor. For
+    A ⊃ B ⊃ C this yields A−B, B−C, C — which sums back to A.
+
+    Only subtree-backed entities take part. Loose-file buckets, installer and
+    archive groups stand for a filtered set of files rather than a folder, so
+    subtracting a nested folder from them would be meaningless.
+    """
+    def _norm(p: str) -> str:
+        return p.replace("\\", "/").lower()
+
+    backed = [(e, _norm(e.path)) for e in entities
+              if _norm(e.path) in ctx.subtree_entity_paths]
+    if len(backed) < 2:
+        return 0
+
+    adjusted = 0
+    for child, c_norm in backed:
+        owner, owner_depth = None, -1
+        for parent, p_norm in backed:
+            if p_norm != c_norm and c_norm.startswith(p_norm + "/"):
+                depth = p_norm.count("/")
+                if depth > owner_depth:   # nearest (deepest) surviving ancestor
+                    owner, owner_depth = parent, depth
+        if owner is None:
+            continue
+        c_size, c_files, c_folders, _, _ = ctx.subtree(c_norm)
+        owner.size_bytes = max(0, owner.size_bytes - c_size)
+        owner.file_count = max(0, owner.file_count - c_files)
+        # +1 for the child's own directory, which the parent also counted.
+        owner.folder_count = max(0, owner.folder_count - c_folders - 1)
+        adjusted += 1
+
+    if adjusted:
+        # size / summary are derived from size_bytes at construction time.
+        for e in entities:
+            e.size = _format_size(e.size_bytes)
+            type_label = ENTITY_TYPES.get(e.entity_type, e.entity_type)
+            e.summary = f"{type_label} · {e.file_count:,} files · {e.size}"
+        log_fn(f"[smart] disjoint sizes: {adjusted} nested entit"
+               f"{'y' if adjusted == 1 else 'ies'} charged to one owner")
+    return adjusted
+
+
 def _postprocess(ctx: "_DetectionContext", t0: float) -> list:
     """Drop empty/aggregate entities, absorb sub-folder entities into
     parents, annotate cloud-sync and age, sort, and return the final list."""
@@ -2112,6 +2942,19 @@ def _postprocess(ctx: "_DetectionContext", t0: float) -> list:
     if absorbed:
         log_fn(f"[smart] absorbed {absorbed} sub-folder entities into parent "
                f"app/game entities")
+
+    # Resolve owning game + install status for save entities. Runs after
+    # absorption so every game/app entity that could be an "owner" already
+    # exists in the list.
+    _enrich_game_saves(ctx, entities)
+
+    # Charge every byte to exactly one entity. Must run after absorption, since
+    # only the entities that actually survive can hold a share of the bytes.
+    _enforce_disjoint_sizes(ctx, entities, log_fn)
+
+    # Disambiguate identically-named entities (e.g. two "Qt" installs) so the
+    # list is scannable. Runs last so absorbed/renamed entities are settled.
+    _disambiguate_names(entities)
 
     ctx.coverage_progress("complete")
 
@@ -2243,6 +3086,10 @@ def detect_entities(
             ctx.claimed_paths.add(norm_path)
 
     _pass0_update_caches(ctx)
+    _pass_appdata_packages(ctx)
+    # Explode diverse dump roots BEFORE pass 1, otherwise generic names like
+    # "documents"/"downloads" in _DIR_ENTITY_MAP get claimed as one blob first.
+    _pass_explode_user_roots(ctx)
     _pass1_known_dirs(ctx)
     _pass2_installed_apps(ctx)
     _pass2b_app_markers(ctx)
@@ -2260,6 +3107,7 @@ def detect_entities(
 # ── Internal helpers ──────────────────────────────────────────────
 
 def _build_entity(
+    ctx,
     path: str,
     name: str,
     entity_type: str,
@@ -2272,6 +3120,7 @@ def _build_entity(
     app_version: str = "",
     app_publisher: str = "",
     install_date: str = "",
+    uninstall_string: str = "",
 ) -> SmartEntity:
     """Create a SmartEntity from a path and its children."""
     corrected_type, corrected_reason = _safety_correct_entity_type(path, entity_type)
@@ -2288,9 +3137,23 @@ def _build_entity(
 
     files = [c for c in children if not c.is_dir]
     dirs = [c for c in children if c.is_dir]
-    total_size = sum(c.size_bytes for c in children)
-    mtime = max((c.modified for c in children), default=0)
-    atime = max((c.accessed for c in children), default=0)
+
+    # Size and counts come from the exact subtree aggregate, never from
+    # `children` — that is a capped sample (see _DetectionContext.sample) and
+    # summing it silently under-reported every folder above the cap.
+    norm_path = path.replace("\\", "/").lower()
+    subtree_backed = ctx is not None and norm_path in ctx.subtree_stats
+    if subtree_backed:
+        total_size, file_count, folder_count, mtime, atime = ctx.subtree(norm_path)
+        # This entity's size stands for a whole subtree, so it participates in
+        # the disjointness correction (see _enforce_disjoint_sizes).
+        ctx.subtree_entity_paths.add(norm_path)
+    else:
+        total_size = sum(c.size_bytes for c in children)
+        file_count = len(files)
+        folder_count = len(dirs)
+        mtime = max((c.modified for c in children), default=0)
+        atime = max((c.accessed for c in children), default=0)
 
     # Sample child names for AI context (varied set)
     sample = []
@@ -2303,13 +3166,23 @@ def _build_entity(
         if len(sample) >= 15:
             break
 
+    # For installer/archive folders, cleanup should target only the matching
+    # files (the .exe/.zip), never the whole containing folder (e.g. Downloads).
+    removable: list = []
+    if entity_type in ("installer", "installer_group", "archive_group"):
+        # Walk the full subtree only for the types that need it — cleanup must
+        # target every matching file, not just the ones in the capped sample.
+        pool = ctx.subtree_files(norm_path) if subtree_backed else files
+        wanted = _ARCHIVE_EXTS if entity_type == "archive_group" else _INSTALLER_EXTS
+        removable = [c.path for c in pool if (c.extension or "").lower() in wanted]
+
     return SmartEntity(
         path=path,
         name=name,
         entity_type=entity_type,
         size_bytes=total_size,
-        file_count=len(files),
-        folder_count=len(dirs),
+        file_count=file_count,
+        folder_count=folder_count,
         modified=mtime,
         accessed=atime,
         risk_reason=reason,
@@ -2321,6 +3194,8 @@ def _build_entity(
         app_version=app_version,
         app_publisher=app_publisher,
         install_date=install_date,
+        uninstall_string=uninstall_string,
+        removable_file_paths=removable,
     )
 
 

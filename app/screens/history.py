@@ -17,19 +17,61 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QMessageBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QSizePolicy,
+    QSizePolicy, QStyle, QStyledItemDelegate, QApplication, QStyleOptionViewItem,
 )
 from PySide6.QtCore import Qt, Signal, QObject, QEvent
 from PySide6.QtGui import QColor, QBrush, QFontMetrics
 
 
-class _RowHoverFilter(QObject):
-    """Highlight the whole row on hover, not just the single cell under the cursor.
+class _HoverRowDelegate(QStyledItemDelegate):
+    """Whole-row hover via painter.fillRect — the only QSS-safe approach.
 
-    QTableWidget's ``::item:hover`` QSS selector only repaints the single cell
-    under the cursor — clicking a row gives row-level feedback, but hover never
-    does. We install this filter on the table's viewport, track the mouse-over
-    row ourselves and paint a background brush across every cell in that row.
+    Three obstacles block simpler methods when QSS is active:
+      1. item.setBackground()  — ignored by Qt's QSS proxy.
+      2. backgroundBrush       — ignored by QStyleSheetStyle.
+      3. State_MouseOver       — causes the platform style to repaint the single
+                                 cell directly under the cursor with its own
+                                 highlight on top of our fill, making that cell
+                                 look different from the rest of the hovered row.
+
+    Fix: strip State_MouseOver in initStyleOption so the platform style treats
+    all hovered-row cells the same, fillRect our colour before drawControl, and
+    set backgroundBrush=NoBrush so drawControl paints no background at all.
+    """
+
+    def __init__(self, hover_filter, parent=None):
+        super().__init__(parent)
+        self._filter = hover_filter
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        if (index.row() == self._filter._row
+                and not (option.state & QStyle.State_Selected)):
+            # Remove the per-cell MouseOver flag so the platform style doesn't
+            # overdraw the cell under the cursor with its own single-cell
+            # highlight, which would make that cell look different from the rest
+            # of the row. (Operate on the flag enum directly — it is not int().)
+            option.state &= ~QStyle.State_MouseOver
+
+    def paint(self, painter, option, index):
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        if (index.row() == self._filter._row
+                and not (opt.state & QStyle.State_Selected)):
+            painter.fillRect(opt.rect, self._filter._color)
+            opt.backgroundBrush = QBrush()  # NoBrush — prevent platform background
+        w = opt.widget
+        (w.style() if w else QApplication.style()).drawControl(
+            QStyle.CE_ItemViewItem, opt, painter, w
+        )
+
+
+class _RowHoverFilter(QObject):
+    """Track the hovered row and repaint via delegate + cell-widget stylesheets.
+
+    Two-part approach required because QSS makes item.setBackground() a no-op:
+      _HoverRowDelegate.initStyleOption  — covers QTableWidgetItem cells
+      _sync_widget_bgs                   — covers cell widgets (e.g. MODE badge)
     """
 
     def __init__(self, table: "QTableWidget", color: QColor):
@@ -38,45 +80,51 @@ class _RowHoverFilter(QObject):
         self._color = color
         self._row = -1
         table.viewport().installEventFilter(self)
+        self._delegate = _HoverRowDelegate(self, table)
+        table.setItemDelegate(self._delegate)
 
     def eventFilter(self, obj, event):
-        if obj is self._table.viewport():
-            et = event.type()
-            if et == QEvent.MouseMove:
-                try:
-                    y = int(event.position().y())
-                except AttributeError:  # PySide6 < 6.x fallback
-                    y = event.pos().y()
-                new_row = self._table.rowAt(y)
-                if new_row != self._row:
-                    self._paint_row(self._row, False)
-                    self._row = new_row
-                    self._paint_row(new_row, True)
-            elif et == QEvent.Leave:
-                self._paint_row(self._row, False)
-                self._row = -1
+        try:
+            if obj is self._table.viewport():
+                et = event.type()
+                if et == QEvent.MouseMove:
+                    try:
+                        y = int(event.position().y())
+                    except AttributeError:
+                        y = event.pos().y()
+                    new_row = self._table.rowAt(y)
+                    if new_row != self._row:
+                        self._sync_widget_bgs(self._row, False)
+                        self._row = new_row
+                        self._sync_widget_bgs(new_row, True)
+                        self._table.viewport().update()
+                elif et == QEvent.Leave:
+                    self._sync_widget_bgs(self._row, False)
+                    self._row = -1
+                    self._table.viewport().update()
+        except RuntimeError:
+            # The underlying C++ table was destroyed on a screen rebuild while
+            # this filter is still installed — a late event can arrive before
+            # the filter is torn down. Nothing to do; let it pass through.
+            return False
         return False
 
-    def _paint_row(self, row: int, hovered: bool):
+    def _sync_widget_bgs(self, row: int, hovered: bool):
+        """Update cell-widget backgrounds; delegate handles QTableWidgetItems."""
         if row < 0:
             return
-        selected = self._table.selectionModel().isRowSelected(row, self._table.rootIndex())
         p = get_palette()
+        selected = self._table.selectionModel().isRowSelected(row, self._table.rootIndex())
         if selected:
-            color = QColor(p.get("accent_soft", "#1b2e22"))
+            bg = p.get("accent_soft", "#1b2e22")
         elif hovered:
-            color = self._color
+            bg = self._color.name()
         else:
-            color = None
-        brush = QBrush(color) if color is not None else QBrush()
-        widget_bg = color.name() if color is not None else "transparent"
+            bg = "transparent"
         for col in range(self._table.columnCount()):
-            item = self._table.item(row, col)
-            if item is not None:
-                item.setBackground(brush)
-            widget = self._table.cellWidget(row, col)
-            if widget is not None:
-                widget.setStyleSheet(f"background: {widget_bg};")
+            w = self._table.cellWidget(row, col)
+            if w is not None:
+                w.setStyleSheet(f"background: {bg};")
 
 from app.themes.theme_manager import get_palette
 from app.models.finding import _format_size
@@ -139,26 +187,6 @@ def _risk_pcts(risk_totals: dict) -> tuple:
     review = int((risk_totals.get("Optional", 0) + risk_totals.get("Review", 0)) * 100 / total)
     risk = max(100 - safe - review, 0)
     return safe, review, risk
-
-
-def _category_totals_summary(category_totals: dict) -> str:
-    normalized = {}
-    for cat, value in (category_totals or {}).items():
-        if isinstance(value, dict):
-            count = value.get("count")
-            if count is None:
-                count = value.get("size_bytes", 0)
-        else:
-            count = value
-        try:
-            normalized[cat] = int(count or 0)
-        except (TypeError, ValueError):
-            normalized[cat] = 0
-    counts = Counter(normalized)
-    parts = [f"{cat} ({n})" for cat, n in counts.most_common(3) if n > 0]
-    if len(counts) > 3:
-        parts.append(f"+{len(counts) - 3} more")
-    return ", ".join(parts) if parts else "—"
 
 
 def _category_totals_top(category_totals: dict, limit: int = 3) -> list[tuple[str, int, int]]:
@@ -266,6 +294,26 @@ def _scan_mode_label(mode: str) -> str:
     return tr("Adaptive scan") if mode == "smart" else tr("All files scan")
 
 
+def _cleanup_mode_label(mode: str) -> str:
+    """Plain-text cleanup mode (the badge form lives in _ModeBadge)."""
+    return {
+        "recycle_bin": tr("Recycle Bin"),
+        "permanent":   tr("Permanent"),
+    }.get(mode, (mode or "").replace("_", " ").title())
+
+
+def _muted_line(text: str, p: dict) -> QLabel:
+    """The dim mono one-liner both history detail panels use under their
+    metrics row (e.g. "Completed · Adaptive scan · scanned 423 GB")."""
+    lbl = QLabel(text)
+    lbl.setWordWrap(True)
+    lbl.setStyleSheet(
+        f"font-family: 'JetBrains Mono'; font-size: 10px; "
+        f"color: {p.get('text_dim', '#8a9b8f')};"
+    )
+    return lbl
+
+
 def _cleanup_target_label(item: dict) -> str:
     path = item.get("path", "") or ""
     category = item.get("category", "") or ""
@@ -288,12 +336,6 @@ def _cleanup_target_label(item: dict) -> str:
     if path:
         return os.path.basename(path.rstrip("/\\")) or path
     return name or category or "—"
-
-
-def _grouped_targets(items: list) -> list:
-    """Group cleaned items by readable target label → [(label, count), …]."""
-    counts = Counter(_cleanup_target_label(i) for i in items)
-    return counts.most_common()
 
 
 # ── Shared small widgets ──────────────────────────────────────────
@@ -421,11 +463,16 @@ class CleanupRecordDetail(QFrame):
             failed_count=failed,
             skipped_count=skipped,
             category_label="Cleanup run",
+            retry_label="the cleanup",
         )
 
         # ── Outcome row ───────────────────────────────────────────
+        # Mirrors SessionDetail's metrics row exactly (same size/spacing, bold
+        # only on the two headline metrics) so the two history panels read as
+        # one design — and so the values stop crowding each other.
         stats = QHBoxLayout()
-        stats.setSpacing(20)
+        stats.setSpacing(18)
+        _bold_keys = (tr("IMPACT"), tr("CLEANED"))
         for lbl, val, col in [
             (tr("IMPACT"), impact, _impact_color(impact, p)),
             (tr("CLEANED"), _format_size(freed), p.get("safe", "#7aa88a")),
@@ -433,9 +480,16 @@ class CleanupRecordDetail(QFrame):
             (tr("ATTENTION"), f"{total_exceptions:,}" if total_exceptions else "None",
              p.get("review", "#c7a66c") if total_exceptions else ""),
         ]:
-            stats.addLayout(_kv(lbl, val, p, val_size=13, bold=True, val_color=col))
+            stats.addLayout(_kv(lbl, val, p, val_size=11,
+                                bold=lbl in _bold_keys, val_color=col))
         stats.addStretch()
         layout.addLayout(stats)
+
+        # ── Outcome line ──────────────────────────────────────────
+        # Same shape as the scan panel's "Completed · Adaptive scan · scanned X".
+        layout.addWidget(_muted_line(
+            f"{_cleanup_mode_label(mode)} · {succeeded:,} {tr('items removed')}"
+            f" · {_format_size(freed)} {tr('freed')}", p))
 
         # ── Status note ───────────────────────────────────────────
         note = QLabel(assessment.explanation_text)
@@ -465,6 +519,8 @@ class CleanupRecordDetail(QFrame):
         # ── Targets — grouped, structured preview ─────────────────
         groups = _cleanup_top_categories(items, self._MAX_GROUPS)
         thdr = QLabel(f"{tr('TOP CLEANED')} · {_cleanup_categories_outcome(items)}")
+        thdr.setWordWrap(True)  # long category lists would otherwise clip off-panel
+        thdr.setToolTip(thdr.text())
         thdr.setStyleSheet(
             "font-family: 'Silkscreen', 'JetBrains Mono'; font-size: 8px; "
             f"letter-spacing: 1px; color: {faint};"
@@ -551,18 +607,14 @@ class SessionDetail(QFrame):
         metrics.addStretch()
         layout.addLayout(metrics)
 
-        outcome = QLabel(
-            f"{status_label} · {mode_label} · scanned {_format_size(record.get('total_size', 0))}"
-        )
-        outcome.setWordWrap(True)
-        outcome.setStyleSheet(
-            f"font-family: 'JetBrains Mono'; font-size: 10px; "
-            f"color: {p.get('text_dim', '#8a9b8f')};"
-        )
-        layout.addWidget(outcome)
+        layout.addWidget(_muted_line(
+            f"{status_label} · {mode_label} · "
+            f"{tr('scanned')} {_format_size(record.get('total_size', 0))}", p))
 
         # ── What was found ────────────────────────────────────────
         dk = QLabel(f"{tr('TOP FINDINGS')} · {_category_totals_outcome(record.get('category_totals', {}))}")
+        dk.setWordWrap(True)  # long category lists would otherwise clip off-panel
+        dk.setToolTip(dk.text())
         dk.setStyleSheet(
             "font-family: 'Silkscreen', 'JetBrains Mono'; font-size: 8px; "
             f"letter-spacing: 1px; color: {p.get('text_faint', '#57685e')};"
@@ -759,7 +811,7 @@ class HistoryScreen(QWidget):
         t.setStyleSheet(self._table_qss())
         t.horizontalHeader().setMinimumSectionSize(26)
         # Whole-row hover. Filter is parented to the table so it dies with it.
-        hover_color = QColor(get_palette().get("tint_bg", "#0f1914"))
+        hover_color = QColor(get_palette().get("panel_hover", "#1d2c25"))
         t._row_hover_filter = _RowHoverFilter(t, hover_color)
         return t
 
@@ -940,7 +992,9 @@ class HistoryScreen(QWidget):
         # Table — WHEN / TARGET / MODE / ITEMS
         table = self._new_table([tr("WHEN"), tr("TARGET"), tr("MODE"), tr("ITEMS")])
         hdr = table.horizontalHeader()
-        for col, w in ((0, 128), (2, 120), (3, 92)):
+        # ITEMS holds a formatted count plus an optional "(partial)" tag; give it
+        # room so it isn't clipped to "26182 …". TARGET (Stretch) absorbs the space.
+        for col, w in ((0, 128), (2, 120), (3, 132)):
             hdr.setSectionResizeMode(col, QHeaderView.Fixed)
             table.setColumnWidth(col, w)
         hdr.setSectionResizeMode(1, QHeaderView.Stretch)
@@ -950,9 +1004,13 @@ class HistoryScreen(QWidget):
         for i, s in enumerate(visible_sessions):
 
             status = s.get("status", "")
-            items_str = str(s.get("display_count", s.get("scanned_count", 0)))
+            raw_count = s.get("display_count", s.get("scanned_count", 0))
+            try:
+                items_str = f"{int(raw_count):,}"
+            except (TypeError, ValueError):
+                items_str = str(raw_count)
             if status == "stopped":
-                items_str += " (partial)"
+                items_str += tr(" (partial)")
 
             for col, val, align in [
                 (0, _format_when(s.get("start_time", 0)), Qt.AlignLeft | Qt.AlignVCenter),
@@ -965,6 +1023,8 @@ class HistoryScreen(QWidget):
                 item.setTextAlignment(align)
                 if col == 1:
                     item.setToolTip(s.get("target", ""))
+                elif col == 3:
+                    item.setToolTip(items_str)  # full text on hover if ever clipped
                 table.setItem(i, col, item)
 
         table.cellClicked.connect(self._on_sess_cell_clicked)
@@ -1020,6 +1080,10 @@ class HistoryScreen(QWidget):
         """Center a badge widget within its table cell."""
         holder = QWidget()
         holder.setStyleSheet("background: transparent;")
+        # Let mouse events fall through to the viewport so _RowHoverFilter
+        # can detect the row correctly even when the cursor is over the badge.
+        holder.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         lay = QHBoxLayout(holder)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)

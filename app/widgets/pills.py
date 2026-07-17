@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, Signal
 # Semantic color key → palette key
 _VARIANT_MAP = {
     "safe":      "safe",
-    "optional":  "accent",
+    "optional":  "optional",
     "review":    "review",
     "risk":      "risk",
     "locked":    "text_dim",

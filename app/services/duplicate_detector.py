@@ -121,9 +121,11 @@ class DuplicateDetector(QThread):
         Operator-feed log messages.
     """
 
-    group_found = Signal(object)   # SmartEntity
-    progress    = Signal(int, int) # hashed, total
-    finished    = Signal(int, int) # groups_count, reclaimable_bytes
+    group_found = Signal(object)      # SmartEntity
+    progress    = Signal(int, int)    # hashed, total
+    # reclaimable_bytes is a byte total that easily exceeds 2**31 (a plain
+    # Signal(int) is a 32-bit C++ int and overflows → OverflowError on emit).
+    finished    = Signal(int, "qint64")  # groups_count, reclaimable_bytes
     log_line    = Signal(str)
 
     DEFAULT_THRESHOLD_MB = 10

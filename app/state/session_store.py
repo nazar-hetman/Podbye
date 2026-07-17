@@ -12,12 +12,47 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
 MAX_ANALYZE_HISTORY = 5
 MAX_CLEANUP_HISTORY = 5
+
+
+def _write_json_atomic(path: Path, data: Any) -> None:
+    """Serialize *data* to *path* so readers only ever see a complete file.
+
+    Sessions are written from daemon threads and can be several hundred MB. A
+    plain ``open(path, "w")`` truncates the previous file up front, so a crash,
+    a power loss, or interpreter shutdown killing the daemon mid-``json.dump``
+    leaves behind a half-written file. Every loader treats a JSONDecodeError as
+    "no session", so that silently discards the user's resumable scan.
+
+    Writing to a temp file in the same directory and then ``os.replace``-ing it
+    over the target makes the swap atomic: the old session survives a failed
+    write intact, and a partial write only ever orphans the temp file.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_name = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=str(path.parent),
+            prefix=f".{path.name}.", suffix=".tmp", delete=False,
+        ) as tmp:
+            tmp_name = tmp.name
+            json.dump(data, tmp, indent=2, default=str)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.replace(tmp_name, path)
+        tmp_name = None
+    finally:
+        if tmp_name:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
 
 
 def _sessions_dir() -> Path:
@@ -57,10 +92,8 @@ def save_session(data: dict) -> bool:
     """Write session data to last_run.json. Returns True on success."""
     path = _last_run_path()
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
         data["saved_at"] = time.time()
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, default=str)
+        _write_json_atomic(path, data)
         _save_last_run_summary(_build_last_run_summary(data))
         return True
     except OSError:
@@ -164,11 +197,8 @@ def load_summary() -> dict:
 
 
 def _save_summary(summary: dict) -> None:
-    path = _summary_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
     summary["updated_at"] = time.time()
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2, default=str)
+    _write_json_atomic(_summary_path(), summary)
 
 
 # ── Snapshot builder ─────────────────────────────────────────────
@@ -229,10 +259,7 @@ def _build_last_run_summary(data: dict) -> dict:
 
 
 def _save_last_run_summary(summary: dict) -> None:
-    path = _last_run_summary_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2, default=str)
+    _write_json_atomic(_last_run_summary_path(), summary)
 
 
 def _load_session_prefix_summary(path: Path) -> dict | None:
@@ -283,9 +310,7 @@ def append_to_history(data: dict) -> bool:
         sess_dir.mkdir(parents=True, exist_ok=True)
         session_id = data.get("session_id", "")
         if session_id:
-            full_path = _session_file_path(session_id)
-            with open(full_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, default=str)
+            _write_json_atomic(_session_file_path(session_id), data)
         history = load_history()
         history = [r for r in history if r.get("session_id") != session_id]
         history.insert(0, _build_history_record(data))
@@ -297,8 +322,7 @@ def append_to_history(data: dict) -> bool:
                     old_path.unlink()
             except OSError:
                 pass
-        with open(_history_path(), "w", encoding="utf-8") as f:
-            json.dump(history, f, indent=2, default=str)
+        _write_json_atomic(_history_path(), history)
         summary = load_summary()
         summary["analyze_sessions"] += 1
         summary["total_scanned_bytes"] += int(data.get("total_size", 0) or 0)
@@ -356,11 +380,7 @@ def save_cleanup_record(session_id: str, items: list, result, mode: str) -> bool
         "errors_by_path": result.errors_by_path,
     }
     try:
-        sess_dir = _sessions_dir()
-        sess_dir.mkdir(parents=True, exist_ok=True)
-        record_path = _cleanup_record_path(ts)
-        with open(record_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, default=str)
+        _write_json_atomic(_cleanup_record_path(ts), data)
         records = _load_all_cleanup_records()
         for extra in records[MAX_CLEANUP_HISTORY:]:
             extra_path = _cleanup_record_path(int(extra.get("timestamp", 0) or 0))
@@ -423,8 +443,7 @@ def delete_session_from_history(session_id: str) -> bool:
     try:
         history = load_history()
         history = [r for r in history if r.get("session_id") != session_id]
-        with open(_history_path(), "w", encoding="utf-8") as f:
-            json.dump(history, f, indent=2, default=str)
+        _write_json_atomic(_history_path(), history)
         full_path = _session_file_path(session_id)
         if full_path.exists():
             full_path.unlink()
@@ -445,8 +464,15 @@ def build_snapshot(
     risk_totals: dict,
     findings_dicts: list[dict],
     entities_dicts: list[dict] | None = None,
+    scan_frontier: list[str] | None = None,
 ) -> dict:
-    """Build a serializable session snapshot dict."""
+    """Build a serializable session snapshot dict.
+
+    ``scan_frontier`` is the list of directories the scanner had discovered but
+    not yet walked when the snapshot was taken. On resume it lets the scanner
+    continue from where it stopped instead of re-walking the whole tree. Empty
+    for a completed scan.
+    """
     return {
         "session_id": session_id,
         "target": target,
@@ -460,4 +486,5 @@ def build_snapshot(
         "risk_totals": risk_totals,
         "findings": findings_dicts,
         "entities": entities_dicts or [],
+        "scan_frontier": scan_frontier or [],
     }

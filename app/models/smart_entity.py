@@ -167,11 +167,12 @@ _CATEGORY_BY_TYPE = {
     "user_profile": "User Profile",
     "vm_storage": "Virtual Machines",
 
-    # Installers — consolidated (previously split across
-    # Applications / Archives / Cache & Temp)
+    # Installers — user-facing installer files/packages only.
     "installer": "Installers",
     "installer_group": "Installers",
-    "installer_cache": "Installers",
+    # Vendor update/download staging (e.g. NVIDIA Downloader) is regenerable
+    # cache that lives inside an app, not a user installer — show it as cache.
+    "installer_cache": "Cache & Temp",
 
     # Games
     "game": "Games",
@@ -343,6 +344,7 @@ class SmartEntity:
     app_version: str = ""               # Version string
     app_publisher: str = ""             # Publisher/Developer
     install_date: str = ""              # Installation date if available
+    uninstall_string: str = ""          # Registry uninstaller command (Deep Uninstall)
     
     # Cloud sync
     cloud_sync_provider: str = ""        # "OneDrive" | "Dropbox" | "Google Drive" | "" (none)
@@ -354,6 +356,10 @@ class SmartEntity:
     dup_reclaimable: int = 0             # bytes reclaimable from duplicate_group (all-but-one copy)
     duplicate_locations: list = field(default_factory=list)  # full duplicate location metadata
     removable_duplicate_paths: list = field(default_factory=list)  # duplicate files approved for cleanup
+
+    # Loose / grouped buckets: the actual files this entity stands for, so
+    # cleanup targets those files instead of the entity's (folder/root) path.
+    removable_file_paths: list = field(default_factory=list)
 
     # Computed
     size: str = ""
@@ -413,15 +419,15 @@ class SmartEntity:
     def to_dict(self) -> dict:
         """Convert to dict for the Findings screen."""
         type_label = ENTITY_TYPES.get(self.entity_type, self.entity_type)
-        # Calculate reclaimable based on risk and age/duplicate boosts
-        reclaimable = 0
+        # Reclaimable: duplicates are special (only extra copies); everything
+        # else uses the shared formula so both scan modes agree on the number.
         if self.entity_type == "duplicate_group":
             reclaimable = self.dup_reclaimable if self.risk == "Optional" else 0
-        elif self.risk == "Safe":
-            reclaimable = self.size_bytes
-        elif self.risk == "Review" and self.age_boost > 0:
-            # Old Review-risk entities (dev artifacts, archives, installers) get partial credit
-            reclaimable = int(self.size_bytes * self.age_boost)
+        else:
+            from app.models.risk import reclaimable_bytes
+            reclaimable = reclaimable_bytes(
+                self.risk, self.size_bytes, age_boost=self.age_boost
+            )
         display_size = self.size
         if self.entity_type == "duplicate_group" and self.dup_reclaimable:
             display_size = _format_size(self.dup_reclaimable)
@@ -463,6 +469,7 @@ class SmartEntity:
             "install_date": self.install_date,
             "app_version": self.app_version,
             "app_publisher": self.app_publisher,
+            "uninstall_string": self.uninstall_string,
             # Age / duplicate fields
             "modified": self.modified,
             "accessed": self.accessed,
@@ -471,6 +478,7 @@ class SmartEntity:
             "children_sample": list(self.children_sample),
             "duplicate_locations": list(self.duplicate_locations),
             "removable_duplicate_paths": list(self.removable_duplicate_paths),
+            "removable_file_paths": list(self.removable_file_paths),
         }
 
     def _why_text(self, type_label: str) -> str:

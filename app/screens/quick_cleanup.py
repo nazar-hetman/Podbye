@@ -267,12 +267,6 @@ class _CategoryRow(QFrame):
         active_bg = p.get("panel_alt", "#18241e")
         border = p.get("border", "#213028")
         border_alt = p.get("border_alt", "#2b3d33")
-        border_hover = p.get("border_hover", "#3a5648")
-        accent = p.get("accent", "#7cc596")
-        accent_hover = p.get("accent_hover", "#96bd9f")
-        accent_soft = p.get("accent_soft", "#1b2e22")
-        panel_hover = p.get("panel_hover", "#1d2c25")
-        bg_deep = p.get("bg_deep", "#080d0a")
         text = p.get("text", "#d6e2da")
         dim = p.get("text_dim", "#8a9b8f")
         faint = p.get("text_faint", "#57685e")
@@ -311,8 +305,8 @@ class _CategoryRow(QFrame):
     def show_result(self, assessment: CleanupAssessment):
         p = get_palette()
         safe   = p.get("safe", "#7cc596")
-        warn   = "#d8b46a"
-        danger = "#d68a78"
+        warn   = p.get("review", "#d8b46a")
+        danger = p.get("risk", "#d68a78")
         dim    = p.get("text_dim", "#8a9b8f")
         self._assessment = assessment
 
@@ -484,14 +478,14 @@ class QuickCleanupScreen(QWidget):
         self._exp_text_lbl.setWordWrap(True)
         self._exp_text_lbl.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self._exp_text_lbl.setStyleSheet("font-size: 12px; line-height: 1.5;")
-        _exp_scroll = QScrollArea()
-        _exp_scroll.setWidgetResizable(True)
-        _exp_scroll.setFixedHeight(72)
-        _exp_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        _exp_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        _exp_scroll.setStyleSheet("border: none; background: transparent;")
-        _exp_scroll.setWidget(self._exp_text_lbl)
-        exp_lay.addWidget(_exp_scroll)
+        self._exp_scroll = QScrollArea()
+        self._exp_scroll.setWidgetResizable(True)
+        self._exp_scroll.setFixedHeight(72)
+        self._exp_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._exp_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._exp_scroll.setStyleSheet("border: none; background: transparent;")
+        self._exp_scroll.setWidget(self._exp_text_lbl)
+        exp_lay.addWidget(self._exp_scroll)
 
         self._empty_lbl = QLabel(
             tr("No reclaimable categories found.\nYour temp folders and browser caches appear empty.")
@@ -835,11 +829,17 @@ class QuickCleanupScreen(QWidget):
         self._exp_name_lbl.setText(f"· {cat.label}")
         assessment = self._rows[idx].assessment
         if self._state == _DONE and assessment is not None:
-            self._exp_hdr_lbl.setText(tr("CLEANUP RESULT EXPLANATION"))
+            self._exp_hdr_lbl.setText(tr("WHAT HAPPENED & HOW TO FINISH"))
             self._exp_text_lbl.setText(assessment.explanation_text)
+            # Result explanations carry why + step-by-step actions, so give
+            # them room to show without hiding the steps below the fold.
+            self._exp_scroll.setFixedHeight(150)
+            self._exp_panel.setFixedHeight(204)
         else:
             self._exp_hdr_lbl.setText(tr("EXPLANATION"))
             self._exp_text_lbl.setText(tr(_EXPLANATIONS.get(cat.key, _EXPLANATION_FALLBACK)))
+            self._exp_scroll.setFixedHeight(72)
+            self._exp_panel.setFixedHeight(126)
         self._exp_text_lbl.setStyleSheet("font-size: 12px; line-height: 1.5;")
         self._exp_panel.show()
         self._expanded_index = idx
@@ -1007,6 +1007,8 @@ class QuickCleanupScreen(QWidget):
         self._wc_sub.setText(f"// done in {elapsed_str}")
 
         safe_color = p.get("safe", "#7cc596")
+        warn_color = p.get("review", "#d8b46a")
+        danger_color = p.get("risk", "#d68a78")
         self._total_hdr.setText(tr("TOTAL FREED"))
         self._total_num.setStyleSheet(
             f"font-family: 'JetBrains Mono'; font-size: 32px; "
@@ -1029,12 +1031,12 @@ class QuickCleanupScreen(QWidget):
         self._info_rows["items"].setText(f"{n_ok:,}")
         if overall.state == STATE_FAILED:
             self._info_rows["categories"].setStyleSheet(
-                "font-family: 'JetBrains Mono'; font-size: 12px; color: #d68a78;"
+                f"font-family: 'JetBrains Mono'; font-size: 12px; color: {danger_color};"
             )
             self._info_rows["categories"].setText(overall.summary_value)
         elif overall.state in (STATE_PARTIAL, STATE_IN_USE):
             self._info_rows["categories"].setStyleSheet(
-                "font-family: 'JetBrains Mono'; font-size: 12px; color: #d8b46a;"
+                f"font-family: 'JetBrains Mono'; font-size: 12px; color: {warn_color};"
             )
             self._info_rows["categories"].setText(overall.summary_value)
         else:
@@ -1074,9 +1076,9 @@ class QuickCleanupScreen(QWidget):
 
             dot = QLabel("●")
             if assessment.state == STATE_FAILED:
-                dot.setStyleSheet("font-size: 9px; color: #d68a78;")
+                dot.setStyleSheet(f"font-size: 9px; color: {danger_color};")
             elif assessment.state in (STATE_PARTIAL, STATE_IN_USE):
-                dot.setStyleSheet("font-size: 9px; color: #d8b46a;")
+                dot.setStyleSheet(f"font-size: 9px; color: {warn_color};")
             else:
                 dot.setStyleSheet(f"font-size: 9px; color: {safe_color};")
             dot.setFixedWidth(12)
@@ -1095,9 +1097,9 @@ class QuickCleanupScreen(QWidget):
 
             status_lbl = QLabel(f"  {assessment.breakdown_label}")
             if assessment.state == STATE_FAILED:
-                status_lbl.setStyleSheet("font-size: 10px; color: #d68a78;")
+                status_lbl.setStyleSheet(f"font-size: 10px; color: {danger_color};")
             elif assessment.state in (STATE_PARTIAL, STATE_IN_USE):
-                status_lbl.setStyleSheet("font-size: 10px; color: #d8b46a;")
+                status_lbl.setStyleSheet(f"font-size: 10px; color: {warn_color};")
             else:
                 status_lbl.setStyleSheet(f"font-size: 10px; color: {safe_color};")
             b_row.addWidget(status_lbl)
@@ -1118,17 +1120,32 @@ class QuickCleanupScreen(QWidget):
         n_cleaned = sum(1 for _, _, assessment in cat_rows if assessment.succeeded_count > 0)
         if overall.state in (STATE_PARTIAL, STATE_IN_USE):
             self._subtitle_lbl.setText(
-                f"{n_cleaned} categories cleaned · {n_in_use} files still in use"
+                f"{n_cleaned} categories cleaned · {n_in_use} files still in use — "
+                "steps to finish are shown below"
             )
         elif overall.state == STATE_FAILED:
             self._subtitle_lbl.setText(
-                f"{n_cleaned} categories cleaned · some items need attention"
+                f"{n_cleaned} categories cleaned · some items need attention — "
+                "details are shown below"
             )
         else:
             self._subtitle_lbl.setText(
                 f"{n_cleaned} categories cleaned · {_format_size(freed)} freed"
             )
         self._sel_badge.setVisible(False)
+
+        # Proactively surface WHY a category didn't fully clean and HOW to fix
+        # it. A beginner won't know to click a row to find the "close the
+        # browser" guidance, so auto-expand the first category needing
+        # attention and reveal its result explanation in place.
+        attention_states = (STATE_PARTIAL, STATE_IN_USE, STATE_FAILED)
+        attention_idx = next(
+            (i for i, r in enumerate(self._rows)
+             if r.assessment is not None and r.assessment.state in attention_states),
+            -1,
+        )
+        if attention_idx >= 0:
+            self._on_row_clicked(attention_idx)
 
         self._write_history(result)
 

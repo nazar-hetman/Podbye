@@ -23,9 +23,9 @@ from typing import Callable, Optional
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox,
-    QLineEdit, QTextEdit, QFrame, QTableView,
+    QLineEdit, QTextEdit, QFrame, QTableView, QMessageBox,
     QHeaderView, QAbstractItemView, QScrollArea, QGridLayout,
-    QSizePolicy, QSpacerItem, QStackedWidget
+    QSizePolicy, QSpacerItem, QStackedWidget, QTabWidget
 )
 from PySide6.QtCore import Qt, QTimer, QSize, Signal, QObject
 from PySide6.QtGui import QColor, QFont, QPainter, QFontMetrics, QPen
@@ -37,13 +37,35 @@ from app.screens.cleanup_dialog import CleanupConfirmDialog
 from app.models.findings_table_model import (
     FindingsTableModel, FindingsFilterProxy, FindingsDelegate, COL_CHECK, COL_NAME,
 )
-from app.models.risk import normalize_risk
+from app.models.risk import normalize_risk, risk_fg as _risk_fg, risk_variant as _risk_variant
 from app.models.smart_entity import actionability_for_type
 from app.i18n import tr
 from app.widgets.panels import apply_tactical_label
+from app.widgets.controls import TacticalComboBox
 
 
 # ── Performance Constants ───────────────────────────────────────────
+
+def _ask_ai_button_qss() -> str:
+    """Accent-tinted style so an 'Ask AI' button reads clearly as an action,
+    not as a run of plain text. Themed via the live palette, with a filled
+    hover state."""
+    p = get_palette()
+    accent = p.get("accent", "#7cc596")
+    soft = p.get("accent_soft", "#1b2e22")
+    bg = p.get("panel", "#141d18")
+    faint = p.get("text_faint", "#57685e")
+    border = p.get("border", "#213028")
+    return (
+        f"QPushButton {{ background: {soft}; color: {accent}; "
+        f"border: 1px solid {accent}; border-radius: 3px; "
+        f"padding: 3px 12px; font-size: 11px; font-weight: 600; }}"
+        f"QPushButton:hover {{ background: {accent}; color: {bg}; }}"
+        f"QPushButton:pressed {{ background: {accent}; color: {bg}; }}"
+        f"QPushButton:disabled {{ background: transparent; color: {faint}; "
+        f"border-color: {border}; }}"
+    )
+
 
 # Maximum number of blocks to render (prevent UI freeze with many categories)
 MAX_BLOCKS = 20
@@ -58,110 +80,6 @@ MIN_BLOCK_SIZE_TINY = 40
 
 # Performance logging threshold (ms)
 PERF_LOG_THRESHOLD_MS = 50
-
-
-# ── Category Configuration ────────────────────────────────────────
-
-CATEGORY_CONFIG = {
-    # ── High semantic priority (actionable, user-visible) ───────────
-    "Media": {
-        "icon": "◉",
-        "order": 1,
-        "semantic_boost": 2.0,    # always prominent
-    },
-    "Images": {
-        "icon": "▥",
-        "order": 1.1,
-        "semantic_boost": 2.0,
-    },
-    "Videos": {
-        "icon": "▶",
-        "order": 1.2,
-        "semantic_boost": 2.0,
-    },
-    "Audio": {
-        "icon": "♪",
-        "order": 1.3,
-        "semantic_boost": 2.0,
-    },
-    "Creative Projects": {
-        "icon": "✦",
-        "order": 1.4,
-        "semantic_boost": 1.9,
-    },
-    "Applications": {
-        "icon": "▣",
-        "order": 2,
-        "semantic_boost": 1.8,
-    },
-    "Installers": {
-        "icon": "▾",
-        "order": 2.5,
-        "semantic_boost": 1.5,
-    },
-    "Documents": {
-        "icon": "▤",
-        "order": 3,
-        "semantic_boost": 1.6,
-    },
-    "Dev Artifacts": {
-        "icon": "◆",
-        "order": 4,
-        "semantic_boost": 1.6,
-    },
-    "AI / ML": {
-        "icon": "◈",
-        "order": 5,
-        "semantic_boost": 1.5,
-    },
-    "Databases & Saves": {
-        "icon": "▨",
-        "order": 6,
-        "semantic_boost": 1.5,
-    },
-    "Cache & Temp": {
-        "icon": "▩",
-        "order": 7,
-        "semantic_boost": 1.4,
-    },
-    "Archives": {
-        "icon": "▦",
-        "order": 8,
-        "semantic_boost": 1.3,
-    },
-    "Browser Data": {
-        "icon": "◎",
-        "order": 9,
-        "semantic_boost": 1.3,
-    },
-    # ── Medium priority ──────────────────────────────────────────────
-    "System": {
-        "icon": "◊",
-        "order": 10,
-        "semantic_boost": 1.1,
-    },
-    "System Logs": {
-        "icon": "▧",
-        "order": 11,
-        "semantic_boost": 1.0,
-    },
-    # ── Low visual priority — demoted in layout ──────────────────────
-    "Unknown": {
-        "icon": "·",
-        "order": 99,
-        "semantic_boost": 0.5,    # penalised — shouldn't dominate
-    },
-    "Other": {
-        "icon": "·",
-        "order": 98,
-        "semantic_boost": 0.5,
-    },
-    "Protected / Restricted": {
-        "icon": "⚠",
-        "order": 100,
-        "semantic_boost": 1.0,
-    },
-}
 
 
 # Categories where selecting every item at once is genuinely useful — these
@@ -202,29 +120,13 @@ def _get_category_color(category: str) -> str:
 
 
 def _status_color(risk: str) -> str:
-    """Theme-aware accent color for a risk/status level.
-
-    Routes every status accent through the active palette so chips, badges
-    and filters stay muted and consistent instead of using hardcoded tones.
-    """
-    risk = normalize_risk(risk)
-    p = get_palette()
-    return {
-        "Safe":      p.get("safe",     "#7aa88a"),
-        "Optional":  p.get("optional", "#6e93a8"),
-        "Review":    p.get("review",   "#c7a66c"),
-        "Protected": p.get("risk",     "#c67a69"),
-    }.get(risk, p.get("text_dim", "#8a9b8f"))
+    """Theme-aware accent color for a risk/status level (canonical)."""
+    return _risk_fg(risk)
 
 
 def _status_variant(risk: str) -> str:
-    risk = normalize_risk(risk)
-    return {
-        "Safe": "safe",
-        "Optional": "info",
-        "Review": "review",
-        "Protected": "protected",
-    }.get(risk, "info")
+    """Badge variant for a risk level (canonical)."""
+    return _risk_variant(risk)
 
 
 def _format_display_date(value: str) -> str:
@@ -687,11 +589,24 @@ def _is_application_action_target(entity: dict) -> bool:
     ))
 
 
-def handleDeepUninstall(itemId):
-    """Placeholder for native app uninstaller integration."""
-    message = f"[findings] simulated native uninstaller trigger for {itemId}"
-    print(message)
-    return message
+def _has_uninstaller(entity: dict) -> bool:
+    """True when the app exposes a real registry uninstaller command."""
+    return bool((entity.get("uninstall_string") or "").strip())
+
+
+def launch_uninstaller(uninstall_string: str) -> tuple[bool, str]:
+    """Run an app's native uninstaller command. Returns (started, message)."""
+    cmd = (uninstall_string or "").strip()
+    if not cmd:
+        return False, "no uninstaller command available"
+    try:
+        import subprocess
+        # The registry string is a full command line (often quoted with args),
+        # so let the shell parse it exactly as Windows would.
+        subprocess.Popen(cmd, shell=True)
+        return True, "uninstaller launched"
+    except Exception as exc:  # pragma: no cover - platform/runtime dependent
+        return False, f"could not launch uninstaller: {exc}"
 
 
 def _finding_rgba(hex_color: str, alpha: int) -> str:
@@ -1452,6 +1367,8 @@ class _PreallocDetailPanel(QWidget):
         copy_cb: Callable,
         recycle_cb: Callable | None = None,
         uninstall_cb: Callable | None = None,
+        ask_ai_cb: Callable | None = None,
+        ask_ai_file_cb: Callable | None = None,
         parent=None,
         compact: bool = False,
     ):
@@ -1460,6 +1377,8 @@ class _PreallocDetailPanel(QWidget):
         self._copy_cb = copy_cb
         self._recycle_cb = recycle_cb
         self._uninstall_cb = uninstall_cb
+        self._ask_ai_cb = ask_ai_cb
+        self._ask_ai_file_cb = ask_ai_file_cb
         self._compact = compact
         self._current_path: str = ""
         self._current_entity: dict = {}
@@ -1474,8 +1393,19 @@ class _PreallocDetailPanel(QWidget):
         p = get_palette()
         faint = p.get("text_faint", "#57685e")
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
+        # Two tabs: "Information" (everything below) and "Files" (paginated
+        # per-file browser for grouped/loose entities). The existing content is
+        # built into the Information page so behaviour is unchanged.
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        self._tabs = QTabWidget()
+        outer.addWidget(self._tabs)
+
+        self._info_page = QWidget()
+        root = QVBoxLayout(self._info_page)
+        # Breathing room from the tab pane border (the pane itself only adds 4px).
+        root.setContentsMargins(12, 10, 12, 12)
         root.setSpacing(10)
 
         # ── Header row ────────────────────────────────────────────────
@@ -1646,6 +1576,14 @@ class _PreallocDetailPanel(QWidget):
         self._ai_state_badge.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
         ai_hdr_row.addWidget(self._ai_state_badge)
         ai_hdr_row.addStretch()
+        # On-demand "Ask AI" — explain just this item even when the bulk AI pass
+        # wasn't run. Hidden unless the item has no answer yet (set in update()).
+        self._ai_ask_btn = QPushButton(tr("Ask AI"))
+        self._ai_ask_btn.setCursor(Qt.PointingHandCursor)
+        self._ai_ask_btn.setStyleSheet(_ask_ai_button_qss())
+        self._ai_ask_btn.setVisible(False)
+        self._ai_ask_btn.clicked.connect(self._on_ask_ai_clicked)
+        ai_hdr_row.addWidget(self._ai_ask_btn)
         ai_frame_layout.addLayout(ai_hdr_row)
 
         self._ai_scroll = QScrollArea()
@@ -1720,7 +1658,99 @@ class _PreallocDetailPanel(QWidget):
         utility_row.addStretch()
         action_stack.addLayout(utility_row)
         root.addLayout(action_stack)
+        root.addStretch(1)
+
+        self._tabs.addTab(self._info_page, tr("Information"))
+        self._tabs.addTab(self._build_files_page(), tr("Files"))
+        # Hidden (not just disabled) until an entity with browsable files is
+        # selected — a greyed-out empty tab reads as "broken" to users.
+        self._tabs.setTabEnabled(1, False)
+        self._tabs.setTabVisible(1, False)
+
         self._apply_block_styles()
+
+    # ── Files tab (paginated per-file browser) ────────────────────────
+
+    _FILES_PER_PAGE = 50
+
+    def _build_files_page(self) -> QWidget:
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(12, 10, 12, 10)
+        lay.setSpacing(6)
+
+        # Top row: live selection counter + per-page select / clear.
+        top = QHBoxLayout()
+        top.setSpacing(8)
+        self._files_count_lbl = QLabel(tr("0 selected"))
+        self._files_count_lbl.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 12px; font-weight: bold;"
+        )
+        top.addWidget(self._files_count_lbl)
+        top.addStretch()
+        self._btn_files_select_page = QPushButton(tr("Select page"))
+        self._btn_files_select_page.setObjectName("Subtle")
+        self._btn_files_select_page.setStyleSheet("font-size: 10px; padding: 2px 8px;")
+        self._btn_files_select_page.setCursor(Qt.PointingHandCursor)
+        self._btn_files_select_page.clicked.connect(self._files_select_page)
+        top.addWidget(self._btn_files_select_page)
+        self._btn_files_clear = QPushButton(tr("Clear"))
+        self._btn_files_clear.setObjectName("Subtle")
+        self._btn_files_clear.setStyleSheet("font-size: 10px; padding: 2px 8px;")
+        self._btn_files_clear.setCursor(Qt.PointingHandCursor)
+        self._btn_files_clear.clicked.connect(self._files_clear_selection)
+        top.addWidget(self._btn_files_clear)
+        lay.addLayout(top)
+
+        # File rows.
+        self._files_scroll = QScrollArea()
+        self._files_scroll.setWidgetResizable(True)
+        self._files_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._files_scroll.setStyleSheet("QScrollArea { border: none; }")
+        self._files_container = QWidget()
+        self._files_clay = QVBoxLayout(self._files_container)
+        self._files_clay.setContentsMargins(0, 0, 0, 0)
+        self._files_clay.setSpacing(2)
+        self._files_clay.addStretch()
+        self._files_scroll.setWidget(self._files_container)
+        lay.addWidget(self._files_scroll, stretch=1)
+
+        # Pagination row.
+        pager = QHBoxLayout()
+        pager.setSpacing(8)
+        self._btn_files_prev = QPushButton(tr("‹ Prev"))
+        self._btn_files_prev.setObjectName("Subtle")
+        self._btn_files_prev.setStyleSheet("font-size: 10px; padding: 2px 10px;")
+        self._btn_files_prev.setCursor(Qt.PointingHandCursor)
+        self._btn_files_prev.clicked.connect(lambda: self._files_change_page(-1))
+        pager.addWidget(self._btn_files_prev)
+        self._files_page_lbl = QLabel("")
+        self._files_page_lbl.setObjectName("Dim")
+        self._files_page_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
+        self._files_page_lbl.setAlignment(Qt.AlignCenter)
+        pager.addWidget(self._files_page_lbl, stretch=1)
+        self._btn_files_next = QPushButton(tr("Next ›"))
+        self._btn_files_next.setObjectName("Subtle")
+        self._btn_files_next.setStyleSheet("font-size: 10px; padding: 2px 10px;")
+        self._btn_files_next.setCursor(Qt.PointingHandCursor)
+        self._btn_files_next.clicked.connect(lambda: self._files_change_page(1))
+        pager.addWidget(self._btn_files_next)
+        lay.addLayout(pager)
+
+        # Action.
+        self._btn_recycle_files = QPushButton(tr("Recycle selected files"))
+        self._btn_recycle_files.setObjectName("Primary")
+        self._btn_recycle_files.setCursor(Qt.PointingHandCursor)
+        self._btn_recycle_files.setEnabled(False)
+        self._btn_recycle_files.clicked.connect(self._on_recycle_files)
+        lay.addWidget(self._btn_recycle_files)
+
+        # State.
+        self._all_file_paths: list = []
+        self._selected_files: set = set()
+        self._files_page_idx = 0
+        self._file_checks: list = []   # (QCheckBox, path) for the CURRENT page
+        return page
 
     # ── Slot helpers ──────────────────────────────────────────────────
 
@@ -1743,6 +1773,195 @@ class _PreallocDetailPanel(QWidget):
     def _on_uninstall(self):
         if self._current_entity and self._uninstall_cb:
             self._uninstall_cb(self._current_entity)
+
+    def _on_ask_ai_clicked(self):
+        """User asked to explain just this item. Kick off the request first; if
+        it couldn't start (e.g. no model) leave the button as-is. On success,
+        show 'Analyzing…' until the answer streams back via the
+        finding_updated → populate() signal path."""
+        if not (self._current_entity and self._ask_ai_cb):
+            return
+        reason = self._ask_ai_cb(self._current_entity)
+        if reason:
+            return  # couldn't queue (handled/announced by the callback)
+        # Optimistic in-progress state so the panel reacts instantly.
+        self._ai_ask_btn.setVisible(False)
+        self._ai_section.setVisible(True)
+        self._ai_state_badge.setText(tr("Analyzing"))
+        self._ai_state_badge.setStyleSheet(
+            f"font-family: 'JetBrains Mono'; font-size: 11px; "
+            f"color: {get_palette().get('review', '#d8b46a')};"
+        )
+        self._ai_content_lbl.setText(tr("Reasoning will appear when analysis finishes."))
+        self._ai_content_lbl.setVisible(True)
+        self._ai_text.setVisible(False)
+        self._apply_ai_reasoning_visibility()
+
+    # ── Contained-files list ──────────────────────────────────────────
+
+    def _collect_entity_files(self, entity: dict) -> list:
+        """Concrete files this entity stands for, for the expandable list.
+
+        Prefers the stored ``removable_file_paths`` (loose buckets, installers);
+        falls back to a live, capped folder listing for content-collection
+        folders so photo/video/document groups can also be inspected.
+        """
+        rfp = [p for p in (entity.get("removable_file_paths") or []) if p]
+        if rfp:
+            return rfp
+        if not _is_content_container(entity):
+            return []
+        path = entity.get("path", "")
+        if not path or not os.path.isdir(path):
+            return []
+        out: list = []
+        try:
+            for de in os.scandir(path):
+                try:
+                    if de.is_file(follow_symlinks=False):
+                        out.append(de.path)
+                except OSError:
+                    pass
+                if len(out) >= 500:
+                    break
+        except OSError:
+            pass
+        return out
+
+    def _populate_files_section(self, entity: dict):
+        """Load the entity's files into the paginated Files tab (or disable it)."""
+        is_app = _is_application_action_target(entity)
+        paths = [] if is_app else self._collect_entity_files(entity)
+
+        # A single-file or contentless entity adds no insight — keep Files off.
+        if len(paths) < 2:
+            self._all_file_paths = []
+            self._selected_files = set()
+            self._files_page_idx = 0
+            self._file_checks = []
+            self._tabs.setTabEnabled(1, False)
+            self._tabs.setTabVisible(1, False)
+            self._tabs.setTabText(1, tr("Files"))
+            if self._tabs.currentIndex() == 1:
+                self._tabs.setCurrentIndex(0)
+            return
+
+        self._all_file_paths = paths
+        self._selected_files = set()
+        self._files_page_idx = 0
+        self._tabs.setTabEnabled(1, True)
+        self._tabs.setTabVisible(1, True)
+        self._tabs.setTabText(1, tr("Files ({n})").format(n=len(paths)))
+        self._render_files_page()
+
+    def _file_page_count(self) -> int:
+        return max(1, (len(self._all_file_paths) + self._FILES_PER_PAGE - 1)
+                   // self._FILES_PER_PAGE)
+
+    def _render_files_page(self):
+        """Draw the current page of file rows; selection persists across pages."""
+        while self._files_clay.count() > 1:
+            item = self._files_clay.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        self._file_checks = []
+
+        pages = self._file_page_count()
+        self._files_page_idx = max(0, min(self._files_page_idx, pages - 1))
+        start = self._files_page_idx * self._FILES_PER_PAGE
+        page_paths = self._all_file_paths[start:start + self._FILES_PER_PAGE]
+
+        faint = get_palette().get("text_faint", "#57685e")
+        for p in page_paths:
+            row = QWidget()
+            rl = QHBoxLayout(row)
+            rl.setContentsMargins(0, 0, 0, 0)
+            rl.setSpacing(8)
+            cb = QCheckBox(os.path.basename(p) or p)
+            cb.setToolTip(p)
+            cb.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
+            cb.setChecked(p in self._selected_files)
+            cb.toggled.connect(lambda checked, path=p: self._on_file_toggle(path, checked))
+            rl.addWidget(cb, stretch=1)
+            size_lbl = QLabel(self._file_size_str(p))
+            size_lbl.setStyleSheet(
+                f"font-family: 'JetBrains Mono'; font-size: 10px; color: {faint};"
+            )
+            size_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            rl.addWidget(size_lbl)
+            # Per-file on-demand AI: explain just this one file, without
+            # needing the bulk AI pass to have run.
+            if self._ask_ai_file_cb is not None:
+                ask = QPushButton(tr("Ask AI"))
+                ask.setStyleSheet(_ask_ai_button_qss())
+                ask.setCursor(Qt.PointingHandCursor)
+                ask.setToolTip(tr("Explain this file with AI"))
+                ask.clicked.connect(
+                    lambda _checked=False, path=p: self._ask_ai_file_cb(path)
+                )
+                rl.addWidget(ask)
+            self._files_clay.insertWidget(self._files_clay.count() - 1, row)
+            self._file_checks.append((cb, p))
+
+        self._files_page_lbl.setText(
+            tr("Page {i} of {n}").format(i=self._files_page_idx + 1, n=pages))
+        self._btn_files_prev.setEnabled(self._files_page_idx > 0)
+        self._btn_files_next.setEnabled(self._files_page_idx < pages - 1)
+        self._update_files_counter()
+
+    @staticmethod
+    def _file_size_str(path: str) -> str:
+        try:
+            return _format_size(os.path.getsize(path))
+        except OSError:
+            return "—"
+
+    def _on_file_toggle(self, path: str, checked: bool):
+        if checked:
+            self._selected_files.add(path)
+        else:
+            self._selected_files.discard(path)
+        self._update_files_counter()
+
+    def _files_select_page(self):
+        for cb, p in self._file_checks:
+            if not cb.isChecked():
+                cb.setChecked(True)   # toggled → adds to _selected_files
+        self._update_files_counter()
+
+    def _files_clear_selection(self):
+        self._selected_files = set()
+        for cb, _p in self._file_checks:
+            cb.blockSignals(True)
+            cb.setChecked(False)
+            cb.blockSignals(False)
+        self._update_files_counter()
+
+    def _files_change_page(self, delta: int):
+        self._files_page_idx += delta
+        self._render_files_page()
+
+    def _update_files_counter(self):
+        n = len(self._selected_files)
+        total = len(self._all_file_paths)
+        self._files_count_lbl.setText(tr("{n} of {total} selected").format(n=n, total=total))
+        self._btn_recycle_files.setEnabled(n > 0 and self._recycle_cb is not None)
+        self._btn_recycle_files.setText(
+            tr("Recycle {n} selected file(s)").format(n=n) if n
+            else tr("Recycle selected files")
+        )
+
+    def _on_recycle_files(self):
+        selected = sorted(self._selected_files)
+        if not selected or not self._recycle_cb:
+            return
+        item = dict(self._current_entity)
+        item["removable_file_paths"] = selected
+        item["entity_type"] = self._current_entity.get("entity_type", "")
+        item["name"] = tr("{n} file(s) from {group}").format(
+            n=len(selected), group=self._current_entity.get("name", "group"))
+        self._recycle_cb(item)
 
     # ── Theming ───────────────────────────────────────────────────────
 
@@ -2006,12 +2225,23 @@ class _PreallocDetailPanel(QWidget):
         # reasoning rather than a second copy of the path list.
         has_ai_prose = ai_status in ("ready", "done") and bool(ai_explanation)
         is_container = _is_content_container(entity)
+        # On-demand: offer "Ask AI" when this item has no answer yet (or failed)
+        # and an explainer is wired. This lets the user get reasoning for a
+        # single item even if the bulk AI pass never ran.
+        can_ask_ai = (
+            self._ask_ai_cb is not None
+            and not has_ai_prose
+            and ai_status not in ("pending", "analyzing")
+        )
         show_ai = (
             bool(ai_explanation or ai_status in ("pending", "analyzing", "failed", "error"))
             or is_duplicate
             or is_container
+            or can_ask_ai
         )
         self._ai_section.setVisible(show_ai)
+        self._ai_ask_btn.setVisible(can_ask_ai)
+        self._ai_ask_btn.setEnabled(True)
         if show_ai:
             # Quiet, integrated reasoning block — no accent glow.
             self._apply_block_styles()
@@ -2031,7 +2261,13 @@ class _PreallocDetailPanel(QWidget):
                 self._apply_ai_reasoning_visibility()
             elif has_ai_prose:
                 self._ai_has_long_reasoning = True
-                self._ai_state_badge.setText(tr("Available"))
+                # Signpost the language so a Ukrainian explanation under an
+                # English UI reads as intentional, not a glitch.
+                ai_lang = (entity.get("ai_language") or "").strip()
+                self._ai_state_badge.setText(
+                    tr("Available · {lang}").format(lang=ai_lang) if ai_lang
+                    else tr("Available")
+                )
                 self._ai_state_badge.setStyleSheet(
                     f"font-family: 'JetBrains Mono'; font-size: 11px; color: {get_palette().get('text_dim', '#8a9b8f')};"
                 )
@@ -2086,6 +2322,23 @@ class _PreallocDetailPanel(QWidget):
                 self._ai_content_lbl.setVisible(True)
                 self._ai_text.setVisible(False)
                 self._apply_ai_reasoning_visibility()
+            elif can_ask_ai:
+                # No reasoning yet — invite the user to ask about this item.
+                self._ai_has_long_reasoning = False
+                self._ai_state_badge.setText(tr("Not analyzed"))
+                self._ai_state_badge.setStyleSheet(
+                    f"font-family: 'JetBrains Mono'; font-size: 11px; color: {get_palette().get('text_dim', '#8a9b8f')};"
+                )
+                self._ai_content_lbl.setText(
+                    tr("No AI reasoning yet — click Ask AI to explain this item.")
+                )
+                self._ai_content_lbl.setStyleSheet(
+                    f"font-family: 'JetBrains Mono'; font-size: 12px; "
+                    f"color: {get_palette().get('text_dim', '#8a9b8f')};"
+                )
+                self._ai_content_lbl.setVisible(True)
+                self._ai_text.setVisible(False)
+                self._apply_ai_reasoning_visibility()
             else:
                 self._ai_state_badge.setText("")
                 self._ai_scroll.setVisible(False)
@@ -2109,19 +2362,29 @@ class _PreallocDetailPanel(QWidget):
         # whole-folder Recycle; Open in Explorer becomes the primary action.
         has_path = bool(path and path != "—")
         is_app = _is_application_action_target(entity)
+        has_uninstaller = _has_uninstaller(entity)
         actionability = _entity_actionability(entity)
         allow_recycle = (
             has_path and self._recycle_cb is not None
-            and actionability not in ("review_only", "protected")
+            and actionability != "protected"
         )
+        # For an application, Deep Uninstall (the app's own uninstaller) is the
+        # correct removal — recycling the install tree leaves registry/state
+        # behind. So when a real uninstaller exists, it's the ONLY destructive
+        # action; recycle is offered only as a fallback when none is registered.
+        if is_app and has_uninstaller:
+            allow_recycle = False
         self._btn_recycle.setVisible(allow_recycle)
         self._btn_recycle.setEnabled(allow_recycle)
-        self._btn_uninstall.setEnabled(has_path and self._uninstall_cb is not None)
         self._btn_uninstall.setVisible(is_app)
+        self._btn_uninstall.setEnabled(is_app and self._uninstall_cb is not None)
         self._btn_open.setEnabled(has_path)
         self._btn_copy.setEnabled(has_path)
         # When no whole-folder delete is offered, make Open the prominent action.
         self._style_open_as_primary(is_container and not allow_recycle and not is_app)
+
+        # Expandable per-file list for grouped/loose entities.
+        self._populate_files_section(entity)
 
 
 class RightSidebar(QFrame):
@@ -2133,6 +2396,8 @@ class RightSidebar(QFrame):
         copy_cb: Callable,
         recycle_cb: Callable | None = None,
         uninstall_cb: Callable | None = None,
+        ask_ai_cb: Callable | None = None,
+        ask_ai_file_cb: Callable | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -2181,6 +2446,8 @@ class RightSidebar(QFrame):
             copy_cb=copy_cb,
             recycle_cb=recycle_cb,
             uninstall_cb=uninstall_cb,
+            ask_ai_cb=ask_ai_cb,
+            ask_ai_file_cb=ask_ai_file_cb,
             compact=True,
         )
         self.detail_widget.setStyleSheet("background: transparent; border: none;")
@@ -2426,10 +2693,10 @@ class FindingsEntityRow(QFrame):
             "disabled": tr("AI disabled"),
         }.get(entity.get("ai_status", "none"), "")
         self._ai_lbl.setText(ai_text)
-        # Content/personal and protected entities can't be queued for a
-        # whole-folder delete — disable the checkbox so the only path to them
-        # is inspection (which offers Open / review instead of Recycle).
-        selectable = _entity_actionability(entity) not in ("review_only", "protected")
+        # Only system-protected entities can never be selected. Review and
+        # "uncertain" (Unknown/mixed) items ARE selectable — deleting them just
+        # requires the explicit acknowledgment in the cleanup dialog.
+        selectable = _entity_actionability(entity) != "protected"
         self._check_btn.setEnabled(selectable)
         self._check_btn.blockSignals(True)
         self._check_btn.setChecked(checked and selectable)
@@ -2496,7 +2763,6 @@ class CategoryDetailView(QFrame):
         self.category: Optional[str] = None
         self.entities: list = []
         self._scan_state = None
-        self._sort_idx = 0  # index into FindingsFilterProxy.SORT_KEYS
         self._selected_path: str = ""
         self._row_widgets: dict[str, FindingsEntityRow] = {}
         self._row_pool: list[FindingsEntityRow] = []
@@ -2539,11 +2805,15 @@ class CategoryDetailView(QFrame):
         sort_lbl.setStyleSheet("font-family: 'Silkscreen', 'JetBrains Mono'; font-size: 9px;")
         nav.addWidget(sort_lbl)
 
-        self._sort_btn = QPushButton(tr("Largest first"))
-        self._sort_btn.setObjectName("Subtle")
-        self._sort_btn.setStyleSheet("font-size: 11px; padding: 4px 12px;")
-        self._sort_btn.clicked.connect(self._on_sort_clicked)
-        nav.addWidget(self._sort_btn)
+        # A dropdown (not a cycling button) so the user can see every sort
+        # option and what they're choosing.
+        self._sort_combo = TacticalComboBox()
+        for key, label in FindingsFilterProxy.SORT_KEYS:
+            self._sort_combo.addItem(tr(label), key)
+        self._sort_combo.setCurrentIndex(0)
+        self._sort_combo.apply_reference_style(get_palette(), compact=True)
+        self._sort_combo.currentIndexChanged.connect(self._on_sort_changed)
+        nav.addWidget(self._sort_combo)
 
         layout.addLayout(nav)
 
@@ -2714,6 +2984,8 @@ class CategoryDetailView(QFrame):
             copy_cb=self._copy_path,
             recycle_cb=self._show_selected_cleanup,
             uninstall_cb=self._handle_deep_uninstall,
+            ask_ai_cb=self._on_ask_ai,
+            ask_ai_file_cb=self._on_ask_ai_file,
         )
         self._detail_widget = self._right_sidebar.detail_widget
         results_shell_layout.addWidget(self._right_sidebar, stretch=3)
@@ -2844,16 +3116,16 @@ class CategoryDetailView(QFrame):
             entity = self._model.get_entity(src)
             if not entity:
                 continue
-            if _entity_actionability(entity) in ("review_only", "protected"):
+            if _entity_actionability(entity) == "protected":
                 continue
             rows.add(src)
         if rows:
             self._model.set_checked_rows(rows, True)
 
-    def _on_sort_clicked(self):
-        self._sort_idx = (self._sort_idx + 1) % len(FindingsFilterProxy.SORT_KEYS)
-        key, label = FindingsFilterProxy.SORT_KEYS[self._sort_idx]
-        self._sort_btn.setText(label)
+    def _on_sort_changed(self, index: int):
+        key = self._sort_combo.itemData(index)
+        if not key:
+            return
         self._proxy.set_sort_key(key)
         self._proxy.sort(COL_NAME, Qt.AscendingOrder)
         self._rebuild_entity_rows()
@@ -2955,6 +3227,67 @@ class CategoryDetailView(QFrame):
     def set_scan_state(self, scan_state):
         self._scan_state = scan_state
 
+    def _find_live_item(self, path: str):
+        """Map a displayed entity/finding path back to its live object so the
+        AI explainer can mutate the same instance the UI reads from.
+
+        Uses ScanState's indexed lookup — a linear scan over a large findings
+        list would stall the UI on every click.
+        """
+        if not path or not self._scan_state:
+            return None
+        return self._scan_state.find_by_path(path)
+
+    def _on_ask_ai(self, entity: dict):
+        """On-demand 'Ask AI' for a single item — works even when the bulk AI
+        pass was never run. The explanation streams back via ai_finding_updated,
+        which refreshes the inspector in place."""
+        if not self._scan_state:
+            return "unavailable"
+        ai = getattr(self._scan_state, "ai_explainer", None)
+        if not ai:
+            return "unavailable"
+        live = self._find_live_item(entity.get("path", ""))
+        if live is None:
+            return "unavailable"
+        # Stamp the current session so the streamed result isn't discarded as
+        # stale by ScanState._on_ai_finding_updated.
+        ai._session_id = getattr(self._scan_state, "_session_id", "")
+        reason = ai.explain_item(live)
+        if reason == "no-model":
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self,
+                tr("AI model needed"),
+                tr("Select an AI model in Settings to use Ask AI."),
+            )
+        return reason
+
+    def _on_ask_ai_file(self, path: str):
+        """On-demand AI for a single *file* inside an entity (Files tab).
+
+        Opens a dialog that issues the request and fills in the answer when it
+        arrives. Works with the bulk AI pass switched off.
+        """
+        if not self._scan_state:
+            return
+        ai = getattr(self._scan_state, "ai_explainer", None)
+        if not ai:
+            return
+        live = self._find_live_item(path)
+        if live is None:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self,
+                tr("File not available"),
+                tr("This file is not part of the current scan results."),
+            )
+            return
+        # Stamp the session so the streamed result isn't discarded as stale.
+        ai._session_id = getattr(self._scan_state, "_session_id", "")
+        from app.widgets.ask_ai_dialog import AskAIDialog
+        AskAIDialog(live, ai, parent=self).exec()
+
     # ── Selection & cleanup ───────────────────────────────────────
 
     def _update_selection_display(self):
@@ -3006,6 +3339,12 @@ class CategoryDetailView(QFrame):
         dlg.exec()
         result = dlg.cleanup_result()
         if result and result.succeeded:
+            # Remove the cleaned rows from THIS category view immediately so the
+            # user can't re-click cleanup on items that are already gone.
+            self._model.remove_cleaned(result.succeeded)
+            self._rebuild_entity_rows()
+            self._update_footer()
+            self._clear_detail_sidebar()
             freed = _format_size(result.total_bytes_freed)
             n = len(result.succeeded)
             self._show_toast(f"✓  {n} item(s) moved to Recycle Bin · {freed} freed")
@@ -3013,12 +3352,41 @@ class CategoryDetailView(QFrame):
         return False
 
     def _handle_deep_uninstall(self, entity: dict):
-        item_id = entity.get("path") or entity.get("name") or entity.get("entity_type") or "unknown"
-        message = handleDeepUninstall(item_id)
+        name = entity.get("name") or entity.get("path") or "this application"
+        uninstall_cmd = (entity.get("uninstall_string") or "").strip()
+
+        if not uninstall_cmd:
+            QMessageBox.information(
+                self, tr("No uninstaller found"),
+                tr("Windows has no registered uninstaller for {name}.\n\n"
+                   "Use “Move to Recycle Bin” to remove leftover files you "
+                   "recognize instead.").format(name=name),
+            )
+            return
+
+        reply = QMessageBox.question(
+            self, tr("Deep Uninstall"),
+            tr("Run the official uninstaller for {name}?\n\n"
+               "This launches the application's own uninstaller. Follow its "
+               "prompts to finish removal.").format(name=name),
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        started, message = launch_uninstaller(uninstall_cmd)
         if self._scan_state and hasattr(self._scan_state, "log_line"):
-            self._scan_state.log_line.emit(message)
-        name = entity.get("name") or item_id
-        self._show_toast(f"Deep uninstall simulated · {name}")
+            self._scan_state.log_line.emit(f"[uninstall] {name}: {message}")
+        if started:
+            # The registry snapshot is now stale — refresh it on the next scan.
+            try:
+                from app.services.entity_detector import invalidate_installed_programs_cache
+                invalidate_installed_programs_cache()
+            except Exception:
+                pass
+            self._show_toast(f"Uninstaller launched · {name} — re-scan to confirm removal")
+        else:
+            QMessageBox.warning(self, tr("Deep Uninstall failed"), message)
 
     def _show_toast(self, message: str, ms: int = 5000):
         self._sel_size_lbl.setText(message)

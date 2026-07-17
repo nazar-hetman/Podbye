@@ -77,12 +77,20 @@ _ARCHIVE_EXTS = frozenset({
     ".zip", ".rar", ".7z", ".tar", ".gz", ".iso", ".bz2", ".xz", ".lz4", ".zst",
 })
 
-_MEDIA_EXTS = frozenset({
-    ".mp4", ".mkv", ".mov", ".avi", ".wmv", ".flv", ".webm", ".m4v", ".ts", ".vob",
+# Split media sets so All-files mode produces the SAME Images/Videos/Audio
+# categories as Adaptive mode (instead of one coarse "Media"). _MEDIA_EXTS is
+# kept as their union for any caller that wants the umbrella set.
+_IMAGE_EXTS = frozenset({
     ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".raw", ".svg",
     ".webp", ".heic", ".heif", ".cr2", ".nef", ".arw", ".dng",
+})
+_VIDEO_EXTS = frozenset({
+    ".mp4", ".mkv", ".mov", ".avi", ".wmv", ".flv", ".webm", ".m4v", ".ts", ".vob",
+})
+_AUDIO_EXTS = frozenset({
     ".mp3", ".wav", ".flac", ".aac", ".ogg", ".wma", ".m4a", ".opus", ".aiff",
 })
+_MEDIA_EXTS = _IMAGE_EXTS | _VIDEO_EXTS | _AUDIO_EXTS
 
 _LOG_EXTS = frozenset({".log", ".logs"})
 
@@ -362,10 +370,13 @@ def _detect_path_ownership(parts: frozenset, lower_path: str) -> tuple:
 #  PROTECTED PATH DETECTION
 # ═══════════════════════════════════════════════════════════════════
 
-_PROTECTED_DIR_NAMES = frozenset({
-    "windows", "system32", "syswow64", "winsxs",
-    # "program files" removed — installed apps are reviewable, not system-critical Protected
-    "programdata", "recovery", "boot",
+# System roots protected ONLY at the drive root (C:/Windows), never when the
+# same word appears deeper (a game's .../Saved/Config/Windows is not the OS).
+# ProgramData is intentionally absent so its reclaimable vendor data is scanned.
+_PROTECTED_ROOT_DIR_NAMES = frozenset({
+    "windows", "recovery", "boot",
+    "$windows.~bt", "$windows.~ws", "msocache", "perflogs",
+    "system volume information", "config.msi",
 })
 
 _PROTECTED_APPDATA_DIRS = frozenset({
@@ -375,11 +386,11 @@ _PROTECTED_APPDATA_DIRS = frozenset({
 
 
 def _is_protected_path(lower_path: str) -> bool:
-    parts = lower_path.split("/")
-    for part in parts:
-        if part in _PROTECTED_DIR_NAMES:
-            return True
-    if "appdata" in lower_path:
+    parts = lower_path.rstrip("/").split("/")
+    # Only the first directory under the drive letter is a true system root.
+    if len(parts) >= 2 and parts[1] in _PROTECTED_ROOT_DIR_NAMES:
+        return True
+    if "appdata" in parts:
         for part in parts:
             if part in _PROTECTED_APPDATA_DIRS:
                 return True
@@ -468,9 +479,13 @@ def categorize(path: str, name: str, ext: str, is_dir: bool, size_bytes: int = 0
     if lower_ext in _ARCHIVE_EXTS:
         return "Archives", f"archive: {lower_ext}", "Archive", "heuristic"
 
-    # ── 5c. Media ────────────────────────────────────────────────────
-    if lower_ext in _MEDIA_EXTS:
-        return "Media", f"media file: {lower_ext}", "Media File", "heuristic"
+    # ── 5c. Media — split into Images / Videos / Audio (mode parity) ──
+    if lower_ext in _IMAGE_EXTS:
+        return "Images", f"image file: {lower_ext}", "Image", "heuristic"
+    if lower_ext in _VIDEO_EXTS:
+        return "Videos", f"video file: {lower_ext}", "Video", "heuristic"
+    if lower_ext in _AUDIO_EXTS:
+        return "Audio", f"audio file: {lower_ext}", "Audio", "heuristic"
 
     # ── 5d. Documents ────────────────────────────────────────────────
     if lower_ext in _DOC_EXTS:
@@ -520,7 +535,7 @@ def assign_risk(category: str, path: str, size_bytes: int) -> tuple:
     if category == "Applications":
         return "Review", "application files — verify they are no longer needed"
 
-    if category in ("Documents", "Media", "Archives"):
+    if category in ("Documents", "Media", "Images", "Videos", "Audio", "Archives"):
         if category == "Archives":
             return "Optional", "archive file — usually removable if no longer needed"
         return "Review", f"{category} — may contain user data"
@@ -568,6 +583,11 @@ class Finding:
     size: str = ""
     age: str = ""
 
+    # True when the file is a cloud placeholder (OneDrive "files on-demand",
+    # offline/dehydrated). Its bytes are NOT stored on this disk, so
+    # size_bytes is 0 and the on-disk total stays honest.
+    cloud_only: bool = False
+
     ai_status: str = "none"
     ai_explanation: str = ""
     ai_error: str = ""
@@ -586,7 +606,11 @@ class Finding:
                 self.category, self.path, self.size_bytes
             )
         if not self.size:
-            self.size = _format_size(self.size_bytes)
+            if self.cloud_only:
+                from app.i18n import tr
+                self.size = tr("☁ cloud-only")
+            else:
+                self.size = _format_size(self.size_bytes)
         if not self.age:
             self.age = _format_age(self.modified)
 
@@ -605,7 +629,8 @@ class Finding:
             return "—"
 
     def to_dict(self) -> dict:
-        reclaimable = self.size_bytes if self.risk == "Safe" else 0
+        from app.models.risk import reclaimable_bytes
+        reclaimable = reclaimable_bytes(self.risk, self.size_bytes)
         return {
             "category":        self.category,
             "semantic_label":  self.semantic_label,
@@ -615,6 +640,7 @@ class Finding:
             "is_dir":          self.is_dir,
             "size":            self.size,
             "size_bytes":      self.size_bytes,
+            "cloud_only":      self.cloud_only,
             "reclaimable_bytes": reclaimable,
             "age":             self.age,
             "risk":            self.risk,
@@ -632,24 +658,28 @@ class Finding:
         }
 
     def _why_text(self) -> str:
-        parts = [f"Rule: {self.source_rule}."]
-        if self.risk_reason:
-            parts.append(f"Status: {self.risk_reason}.")
-        return " ".join(parts)
+        """Plain-language explanation, consistent with SmartEntity._why_text."""
+        what = self.semantic_label or self.category or "File"
+        reason = (self.risk_reason or "").strip().rstrip(".")
+        if reason:
+            return f"What it is: {what}. Why flagged: {reason}."
+        return f"What it is: {what}."
 
     def _recommendation(self) -> str:
+        # Wording mirrors SmartEntity._recommendation so the two scan modes
+        # never contradict each other for the same risk level.
         if self.risk == "Protected":
-            return "Do not touch — system-critical path"
-        if self.risk == "Risk":
-            return "Review before cleanup — may still be important"
+            return "Do not remove — system-critical or protected"
+        if self.risk == "Review":
+            return "Review before cleanup — may still matter to you or an app"
         if self.risk == "Optional":
             return "Optional cleanup — remove if you no longer need it"
         if self.risk == "Safe":
             if self.category in ("Cache & Temp", "Browser Data"):
                 return "Remove — auto-regenerated"
             if self.category == "Dev Artifacts":
-                return "Review — check if project is active"
+                return "Safe cleanup — regenerated by build tools"
             if self.category == "System Logs":
                 return "Remove — old logs"
-            return "Remove — safe"
+            return "Likely safe to remove"
         return "Manual review required"

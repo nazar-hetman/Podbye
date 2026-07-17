@@ -17,9 +17,9 @@ from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QStyledItemDelegate, QApplication, QStyle
 
 from app.models.finding import _format_size
-from app.models.risk import normalize_risk
+from app.models.risk import normalize_risk, risk_colors as _risk_colors
 from app.themes.theme_manager import get_palette
-from app.i18n import tr
+from app.i18n import tr, get_language
 
 # ── Column layout ──────────────────────────────────────────────────
 
@@ -32,8 +32,27 @@ COL_RISK   = 5
 COL_AI     = 6
 COL_AGE    = 7
 
+_HEADER_KEYS = ("SELECT", "", "NAME", "SIZE", "ITEMS", "STATUS", "AI", "AGE")
+_headers_cache: tuple[str, tuple[str, ...]] | None = None
+
+
 def _headers():
-    return [tr("SELECT"), "", tr("NAME"), tr("SIZE"), tr("ITEMS"), tr("STATUS"), tr("AI"), tr("AGE")]
+    """Translated column headers, cached per active language.
+
+    Qt calls columnCount()/headerData() constantly while laying out and painting
+    the table, and each miss re-ran eight tr() lookups (a dict hit plus str
+    formatting) to rebuild an identical list. Caching keyed on the active
+    language keeps the live language switch working — _build_ui recreates the
+    table after set_language(), and the next call rebuilds on the key change.
+    """
+    global _headers_cache
+    lang = get_language()
+    if _headers_cache is None or _headers_cache[0] != lang:
+        _headers_cache = (
+            lang,
+            tuple(tr(k) if k else "" for k in _HEADER_KEYS),
+        )
+    return _headers_cache[1]
 
 # ── Lookup tables ──────────────────────────────────────────────────
 
@@ -46,22 +65,8 @@ _AI_SYMBOL = {
 
 _RISK_ORDER = {"Protected": 0, "Review": 1, "Optional": 2, "Safe": 3}
 
-# Maps risk → (soft-background palette key, foreground palette key).
-_RISK_PALETTE_KEYS = {
-    "Safe":      ("safe_soft",     "safe"),
-    "Optional":  ("optional_soft", "optional"),
-    "Review":    ("review_soft",   "review"),
-    "Protected": ("risk_soft",     "risk"),
-}
-
-
-def _risk_colors(risk: str) -> tuple[str, str]:
-    """Return (background, foreground) hex for a risk badge, theme-aware."""
-    p = get_palette()
-    bg_key, fg_key = _RISK_PALETTE_KEYS.get(risk, (None, "text_dim"))
-    bg = p.get(bg_key, p.get("panel_alt", "#18241e")) if bg_key else p.get("panel_alt", "#18241e")
-    fg = p.get(fg_key, p.get("text_dim", "#8a9b8f"))
-    return bg, fg
+# Risk badge colours come from the canonical app.models.risk.risk_colors
+# (imported above as _risk_colors) so every screen agrees.
 
 
 # ── Source model ───────────────────────────────────────────────────
@@ -77,13 +82,23 @@ class FindingsTableModel(QAbstractTableModel):
         super().__init__(parent)
         self._entities: list = []
         self._checked: set = set()
+        self._row_by_path: dict[str, int] = {}
 
     # ── Data management ───────────────────────────────────────────
+
+    def _reindex(self):
+        """Rebuild the path → row lookup used by update_entity_by_path."""
+        self._row_by_path = {
+            e.get("path", ""): row
+            for row, e in enumerate(self._entities)
+            if e.get("path", "")
+        }
 
     def set_entities(self, entities: list):
         self.beginResetModel()
         self._entities = list(entities)
         self._checked.clear()
+        self._reindex()
         self.endResetModel()
 
     def get_entity(self, source_row: int):
@@ -91,18 +106,71 @@ class FindingsTableModel(QAbstractTableModel):
             return self._entities[source_row]
         return None
 
+    def remove_cleaned(self, succeeded_paths) -> int:
+        """Drop or shrink rows whose files were just recycled.
+
+        An entity is removed when its own path was cleaned, or when every file
+        it represented (``removable_file_paths``) is gone. A bucket that was
+        only *partially* cleaned keeps its survivors but drops the recycled
+        files (and updates ``file_count``) so the already-deleted files don't
+        reappear when it is reopened. Returns the count of fully-removed rows.
+        Uses a model reset (same as set_entities) so the proxy/table stay
+        consistent.
+        """
+        if not succeeded_paths:
+            return 0
+        norm = {p.replace("\\", "/").lower().rstrip("/") for p in succeeded_paths}
+        full = {p.replace("\\", "/").lower() for p in succeeded_paths}
+        survivors = []
+        changed = False
+        for e in self._entities:
+            ep = (e.get("path", "") or "").replace("\\", "/").lower().rstrip("/")
+            if ep in norm:
+                changed = True
+                continue
+            rfp = [p for p in (e.get("removable_file_paths") or []) if p]
+            if rfp:
+                remaining = [p for p in rfp if p.replace("\\", "/").lower() not in full]
+                if not remaining:
+                    changed = True
+                    continue  # every file this entity represented is gone
+                if len(remaining) != len(rfp):
+                    # Partial cleanup: keep the bucket but drop the cleaned files
+                    # so they don't show up again when the bucket is reopened.
+                    e = dict(e)
+                    e["removable_file_paths"] = remaining
+                    if "file_count" in e:
+                        e["file_count"] = len(remaining)
+                    changed = True
+            survivors.append(e)
+        if not changed:
+            return 0
+        removed = len(self._entities) - len(survivors)
+        self.beginResetModel()
+        self._entities = survivors
+        self._checked.clear()
+        self._reindex()
+        self.endResetModel()
+        return removed
+
     def update_entity_by_path(self, entity: dict) -> int:
+        """Replace the row for *entity*'s path in place. Returns its row, or -1.
+
+        Indexed rather than scanned: AI explanations stream back one signal per
+        entity, so a linear search here made refreshing a full result set
+        quadratic in the number of entities.
+        """
         path = entity.get("path", "")
         if not path:
             return -1
-        for row, existing in enumerate(self._entities):
-            if existing.get("path", "") == path:
-                self._entities[row] = entity
-                top_left = self.index(row, 0)
-                bottom_right = self.index(row, self.columnCount() - 1)
-                self.dataChanged.emit(top_left, bottom_right, [])
-                return row
-        return -1
+        row = self._row_by_path.get(path, -1)
+        if row < 0 or row >= len(self._entities):
+            return -1
+        self._entities[row] = entity
+        top_left = self.index(row, 0)
+        bottom_right = self.index(row, self.columnCount() - 1)
+        self.dataChanged.emit(top_left, bottom_right, [])
+        return row
 
     # ── QAbstractTableModel overrides ──────────────────────────────
 

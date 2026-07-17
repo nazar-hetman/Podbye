@@ -32,6 +32,12 @@ _THROTTLE_MS = 800
 # Increased to reduce serialization overhead on large scans
 _AUTOSAVE_MS = 30_000
 
+# For large scans, how often (seconds) to write a FULL findings checkpoint so a
+# crash stays resumable. Between these, only the small frontier + summary are
+# saved (every _AUTOSAVE_MS). Bounded to avoid churning multi-hundred-MB JSON
+# to disk — which would also contend with a scan of that same drive.
+_FULL_CHECKPOINT_S = 120.0
+
 # Threshold above which scans are considered "large" (affects autosave behavior)
 _LARGE_SCAN_THRESHOLD = 50_000
 
@@ -121,7 +127,24 @@ class ScanState(QObject):
         self._cat_sizes: dict = {}     # {cat: int}
         self._risk_counts: dict = {}   # {risk: int}
         self._total_size: int = 0
-        self._largest: list = []       # top-10 by size (Finding refs)
+
+        # Resume frontier: directories the scanner hasn't walked yet.
+        # _scan_frontier is updated live by the running worker (for checkpoints);
+        # _resume_frontier is the frontier restored from a saved session, handed
+        # to the next ScanWorker so it continues instead of re-walking.
+        self._scan_frontier: list = []
+        self._resume_frontier: list = []
+        self._last_full_checkpoint: float = 0.0  # time of last full-findings save
+
+        # Lazy {normalized_path: SmartEntity|Finding} index, built on the first
+        # find_by_path() call and dropped whenever findings/entities change.
+        self._path_index: dict | None = None
+
+        # In-flight background session saves. Daemon threads are killed
+        # abruptly at interpreter exit, so shutdown joins these to make sure a
+        # save that was already started actually lands on disk.
+        self._save_lock = threading.Lock()
+        self._save_threads: set = set()
 
         # Throttle timer
         self._throttle = QTimer(self)
@@ -205,6 +228,11 @@ class ScanState(QObject):
         return self._known_paths
 
     @property
+    def resume_frontier(self) -> list:
+        """Directories a restored session hadn't walked yet (for continuation)."""
+        return self._resume_frontier
+
+    @property
     def scan_mode(self) -> str:
         return self._scan_mode
 
@@ -226,31 +254,50 @@ class ScanState(QObject):
             return
         self._entities.extend(entities)
         self._entity_dict_dirty = True
+        self._invalidate_path_index()
         self.ui_refresh.emit()
 
     def remove_entities_by_path(self, paths: set) -> int:
-        """Remove entities whose root path is in the given set.
+        """Remove (or shrink) entities whose files were cleaned.
 
-        Called by the cleanup engine after a successful Recycle Bin operation.
-        Marks caches dirty and emits ui_refresh so connected screens update.
-        Returns the number of removed entities.
+        Called after a successful Recycle Bin operation. An entity is dropped
+        when its own path was cleaned OR when every file it stood for
+        (``removable_file_paths`` — loose buckets, installer folders) is gone.
+        A partially-cleaned bucket keeps the survivors so it doesn't vanish
+        while files remain. Emits ui_refresh so connected screens update.
         """
         norm = {p.replace("\\", "/").lower().rstrip("/") for p in paths}
+        norm_full = {p.replace("\\", "/").lower() for p in paths}
         before = len(self._entities)
-        self._entities = [
-            e for e in self._entities
-            if e.path.replace("\\", "/").lower().rstrip("/") not in norm
-        ]
+        kept: list = []
+        for e in self._entities:
+            ep = e.path.replace("\\", "/").lower().rstrip("/")
+            if ep in norm:
+                continue  # the entity's own path was removed
+            rfp = [p for p in getattr(e, "removable_file_paths", []) if p]
+            if rfp:
+                remaining = [
+                    p for p in rfp
+                    if p.replace("\\", "/").lower() not in norm_full
+                ]
+                if not remaining:
+                    continue  # every file this entity represented is gone
+                if len(remaining) != len(rfp):
+                    # Partial cleanup: keep the entity but drop cleaned files.
+                    e.removable_file_paths = remaining
+                    e.file_count = len(remaining)
+            kept.append(e)
+        self._entities = kept
         removed = before - len(self._entities)
-        if removed:
+        # Always purge matching raw findings so counts/caches stay consistent.
+        self._findings = [
+            f for f in self._findings
+            if f.path.replace("\\", "/").lower() not in norm_full
+        ]
+        if removed or norm_full:
             self._entity_dict_dirty = True
-            # Also purge matching raw findings so the legacy table stays consistent
-            norm_full = {p.replace("\\", "/").lower() for p in paths}
-            self._findings = [
-                f for f in self._findings
-                if f.path.replace("\\", "/").lower() not in norm_full
-            ]
             self._dict_cache_dirty = True
+            self._invalidate_path_index()
             self.ui_refresh.emit()
         return removed
 
@@ -333,7 +380,10 @@ class ScanState(QObject):
         self._cat_sizes.clear()
         self._risk_counts.clear()
         self._total_size = 0
-        self._largest.clear()
+        self._scan_frontier = []
+        self._resume_frontier = []
+        self._last_full_checkpoint = 0.0
+        self._path_index = None
         self._halted = False
         self._stopped = False
         self._pending_ui = False
@@ -445,15 +495,42 @@ class ScanState(QObject):
             risk = f.risk
             self._risk_counts[risk] = self._risk_counts.get(risk, 0) + 1
 
-            # Largest tracking (keep top 20, trim periodically)
-            self._largest.append(f)
-
-        if len(self._largest) > 40:
-            self._largest.sort(key=lambda x: x.size_bytes, reverse=True)
-            self._largest = self._largest[:20]
-
         self._dict_cache_dirty = True
         self._pending_ui = True
+        self._invalidate_path_index()
+
+    def find_by_path(self, path: str):
+        """Return the live SmartEntity or Finding for *path*, or None.
+
+        Used by on-demand "Ask AI" so the explainer mutates the same object the
+        UI reads from. Backed by a lazily-built index — a linear scan over a
+        million findings on every click would stall the UI. The index is only
+        built when something actually asks, and dropped whenever the underlying
+        collections change.
+        """
+        if not path:
+            return None
+        if self._path_index is None:
+            idx: dict = {}
+            for f in self._findings:
+                idx[f.path.replace("\\", "/").lower()] = f
+            # Entities take precedence over the raw finding at the same path.
+            for e in self._entities:
+                idx[e.path.replace("\\", "/").lower()] = e
+            self._path_index = idx
+        return self._path_index.get(path.replace("\\", "/").lower())
+
+    def _invalidate_path_index(self):
+        self._path_index = None
+
+    def on_frontier_update(self, frontier: list):
+        """Store the scanner's latest resume frontier (pending directories).
+
+        Wired to ScanWorker.frontier_update. Kept in sync so periodic and final
+        checkpoints can persist it — enabling a later resume to continue from
+        here instead of re-walking the whole tree.
+        """
+        self._scan_frontier = list(frontier)
 
     # ── Throttled UI refresh ─────────────────────────────────
 
@@ -563,11 +640,6 @@ class ScanState(QObject):
                 counts[e.risk] = counts.get(e.risk, 0) + 1
             return counts
         return dict(self._risk_counts)
-
-    def largest_items(self, n: int = 10) -> list[dict]:
-        """Return top N largest items as dicts."""
-        self._largest.sort(key=lambda x: x.size_bytes, reverse=True)
-        return [f.to_dict() for f in self._largest[:n]]
 
     # ── Smart entity detection ────────────────────────────────
 
@@ -714,11 +786,36 @@ class ScanState(QObject):
                 _log.debug("[smart] [LIFECYCLE] Step 9: entities_ready emitted (empty)")
                 return
             
+            # Resume: carry AI explanations from the previously restored entities
+            # onto freshly re-detected ones (matched by stable cache_key) so we
+            # don't re-run the LLM for entities that didn't change. This
+            # complements the on-disk AI cache and also covers the case where a
+            # run was interrupted before that cache was ever written.
+            if self._run_mode == "resume" and self._entities:
+                prior = {e.cache_key: e for e in self._entities}
+                carried = 0
+                for e in entities:
+                    old = prior.get(e.cache_key)
+                    if (old and getattr(old, "ai_explanation", "")
+                            and e.ai_status in ("none", "pending", "")):
+                        e.ai_status = old.ai_status or "ready"
+                        e.ai_explanation = old.ai_explanation
+                        e.ai_model = old.ai_model
+                        e.ai_language = old.ai_language
+                        e.ai_error = old.ai_error
+                        carried += 1
+                if carried:
+                    self.log_line.emit(
+                        f"[smart] resume: reused AI explanations for {carried} "
+                        f"unchanged entities"
+                    )
+
             # Store entities
             _log.debug("[smart] [LIFECYCLE] Step 3: Storing semantic entities to ScanState...")
             self._entities = entities
             self._pending_entities = None
             self._entity_dict_dirty = True
+            self._invalidate_path_index()
             self._entity_detection_running = False
             
             total_size = sum(e.size_bytes for e in entities)
@@ -789,24 +886,50 @@ class ScanState(QObject):
 
     # ── Session persistence ──────────────────────────────────
 
-    def _build_snapshot(self, status: str, lightweight: bool = False) -> dict:
+    def _aggregates_snapshot(self) -> dict:
+        """Copy the category/risk/size aggregates for a snapshot.
+
+        Must be called on the thread that owns the aggregates (the main thread,
+        where add_findings mutates them). A background save that iterated the
+        live dicts would raise "dictionary changed size during iteration" the
+        moment the scanner recorded a new category mid-save — and the save
+        thread swallows exceptions, so the autosave would silently do nothing.
+        """
+        return {
+            "risk_counts": dict(self._risk_counts),
+            "cat_totals": {c: {"count": n, "size_bytes": self._cat_sizes.get(c, 0)}
+                           for c, n in list(self._cat_counts.items())},
+            "total_size": self._total_size,
+        }
+
+    def _build_snapshot(self, status: str, lightweight: bool = False,
+                        findings: list = None, entities: list = None,
+                        frontier: list = None, aggregates: dict = None) -> dict:
         from app.state.session_store import build_snapshot
 
+        # Callers on a background thread pass stable list snapshots so we never
+        # touch the live lists (which the scanner is mutating) here.
+        findings = self._findings if findings is None else findings
+        entities = self._entities if entities is None else entities
+        frontier = self._scan_frontier if frontier is None else frontier
+        if aggregates is None:
+            aggregates = self._aggregates_snapshot()
+
         # For lightweight (mid-scan) saves, skip serializing all raw findings
-        # to avoid blocking the UI. Full findings only on final save.
-        if lightweight and len(self._findings) > _LARGE_SCAN_THRESHOLD:
+        # to avoid expensive serialization. Full findings only on final save.
+        if lightweight and len(findings) > _LARGE_SCAN_THRESHOLD:
             findings_dicts = []
             entities_dicts = []
         else:
-            findings_dicts = [f.to_dict() for f in self._findings]
-            entities_dicts = [e.to_dict() for e in self._entities]
+            findings_dicts = [f.to_dict() for f in findings]
+            entities_dicts = [e.to_dict() for e in entities]
 
         # Use entity-based aggregates when semantic entities are available —
         # raw _risk_counts and _cat_counts reflect individual files, not groups.
-        if self._entities:
+        if entities:
             e_risk: dict[str, int] = {}
             e_cat: dict[str, dict] = {}
-            for e in self._entities:
+            for e in entities:
                 e_risk[e.risk] = e_risk.get(e.risk, 0) + 1
                 cat = e.category
                 if cat not in e_cat:
@@ -816,10 +939,8 @@ class ScanState(QObject):
             risk_totals = e_risk
             cat_totals = e_cat
         else:
-            risk_totals = dict(self._risk_counts)
-            cat_totals = {c: {"count": self._cat_counts.get(c, 0),
-                              "size_bytes": self._cat_sizes.get(c, 0)}
-                         for c in self._cat_counts}
+            risk_totals = aggregates["risk_counts"]
+            cat_totals = aggregates["cat_totals"]
 
         return build_snapshot(
             session_id=self._session_id,
@@ -827,12 +948,13 @@ class ScanState(QObject):
             scan_mode=self._scan_mode,
             status=status,
             start_time=self._start_time,
-            scanned_count=len(self._findings),
-            total_size=self._total_size,
+            scanned_count=len(findings),
+            total_size=aggregates["total_size"],
             category_totals=cat_totals,
             risk_totals=risk_totals,
             findings_dicts=findings_dicts,
             entities_dicts=entities_dicts,
+            scan_frontier=frontier,
         )
 
     def _save_session(self, status: str):
@@ -846,35 +968,90 @@ class ScanState(QObject):
             pass  # best-effort
 
     def _autosave_session(self):
-        """Periodic auto-save during active scan.
+        """Periodic auto-save during active scan — always off the UI thread.
 
-        For large scans (>50k items), saves summary only (no raw findings)
-        to avoid UI-blocking serialization. Full save happens at checkpoints.
+        Always a lightweight save. For a SMALL scan that still serializes full
+        findings (cheap). For a LARGE scan it writes only the frontier + summary
+        and skips the raw findings — re-encoding ~1M+ findings to JSON on a timer
+        starves the UI thread through the GIL even when done in a worker, causing
+        a multi-second freeze every couple of minutes.
+
+        Full findings for a large scan are written at the moments that matter —
+        on Stop, on app close, and on completion (see set_running / _shutdown /
+        save_session_final) — where a brief pause is expected. A hard crash
+        mid-scan loses the in-progress findings, but the filesystem walk is fast
+        (scandir) so re-running is cheap; the frontier still lets an intentional
+        Stop/close resume without re-walking.
         """
         if not self._is_running:
             return
+        self._save_session_background("running", lightweight=True)
 
-        # For large scans, do a lightweight save in background thread
-        if len(self._findings) > _LARGE_SCAN_THRESHOLD:
-            self._save_session_background("running")
-        else:
-            self._save_session("running")
+    def _save_session_background(self, status: str, lightweight: bool = True,
+                                 append_history: bool = False):
+        """Save session in a background thread to avoid blocking UI.
 
-    def _save_session_background(self, status: str, lightweight: bool = True):
-        """Save session in a background thread to avoid blocking UI."""
+        Snapshots the findings/entities list references on the *caller's* thread
+        (a GIL-atomic ``list()`` copy) so the worker serializes a stable view
+        and never races with the scanner appending findings on the main thread.
+        """
+        findings_snap = list(self._findings)
+        entities_snap = list(self._entities)
+        frontier_snap = list(self._scan_frontier)
+        aggregates_snap = self._aggregates_snapshot()
+
         def _bg_save():
             try:
-                from app.state.session_store import save_session
-                data = self._build_snapshot(status, lightweight=lightweight)
+                from app.state.session_store import save_session, append_to_history
+                data = self._build_snapshot(status, lightweight=lightweight,
+                                            findings=findings_snap,
+                                            entities=entities_snap,
+                                            frontier=frontier_snap,
+                                            aggregates=aggregates_snap)
                 save_session(data)
+                if append_history and status in ("completed", "stopped"):
+                    append_to_history(data)
             except Exception:
-                pass
+                _log.exception("[session] background save failed")
+            finally:
+                with self._save_lock:
+                    self._save_threads.discard(threading.current_thread())
+
         t = threading.Thread(target=_bg_save, daemon=True)
+        with self._save_lock:
+            self._save_threads.add(t)
         t.start()
 
-    def save_session_final(self, status: str = "completed"):
-        """Save session on scan complete or app close. Called externally."""
-        self._save_session(status)
+    def wait_for_saves(self, timeout: float = 5.0) -> bool:
+        """Block until in-flight background saves finish. Returns True if all did.
+
+        Called from shutdown: these are daemon threads, so without this the
+        interpreter would kill a running save on exit and drop the session the
+        user just stopped. Bounded so a stuck write can't hang the close.
+        """
+        deadline = time.monotonic() + timeout
+        with self._save_lock:
+            pending = list(self._save_threads)
+        for t in pending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            t.join(remaining)
+        return not any(t.is_alive() for t in pending)
+
+    def save_session_final(self, status: str = "completed",
+                           background_large: bool = False):
+        """Save session on scan complete or app close. Called externally.
+
+        On scan completion (background_large=True) a big scan is written off the
+        UI thread so the app doesn't freeze while serialising a large snapshot
+        twice. App-close keeps the default synchronous save so it finishes
+        before the process exits.
+        """
+        if background_large and len(self._findings) > _LARGE_SCAN_THRESHOLD:
+            self._save_session_background(status, lightweight=False, append_history=True)
+        else:
+            self._save_session(status)
 
     def restore_from_session(self, data: dict):
         """Restore findings/entities from a saved session snapshot.
@@ -887,6 +1064,9 @@ class ScanState(QObject):
         self._target = data.get("target", "")
         self._scan_mode = data.get("scan_mode", "smart")
         self._start_time = data.get("start_time", time.time())
+        # Directories the interrupted scan never reached — handed to the next
+        # ScanWorker so it continues from here instead of re-walking everything.
+        self._resume_frontier = list(data.get("scan_frontier", []) or [])
 
         # Restore findings
         for fd in data.get("findings", []):
@@ -911,6 +1091,7 @@ class ScanState(QObject):
                     ai_error=fd.get("ai_error", ""),
                     ai_model=fd.get("ai_model", ""),
                     ai_language=fd.get("ai_language", ""),
+                    cloud_only=fd.get("cloud_only", False),
                 )
                 norm = f.path.replace("\\", "/").lower()
                 self._known_paths.add(norm)
@@ -962,6 +1143,7 @@ class ScanState(QObject):
 
         self._dict_cache_dirty = True
         self._entity_dict_dirty = True
+        self._invalidate_path_index()
         self.ui_refresh.emit()
 
         # Emit entities_ready so Findings screen refreshes with restored data

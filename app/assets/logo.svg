@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="34 30 188 188" fill="currentColor">
+  <!-- Vigil mark — the Lift: a container with one cube drawn out.
+       Monochrome currentColor; the host recolours it per theme. -->
+  <path d="M128 84 L184 116 L128 148 L72 116 Z"  opacity="0.82"/>
+  <path d="M72 116 L128 148 L128 204 L72 172 Z"  opacity="0.46"/>
+  <path d="M184 116 L128 148 L128 204 L184 172 Z" opacity="0.64"/>
+  <path d="M150 44 L172 57 L150 70 L128 57 Z" opacity="1"/>
+  <path d="M128 57 L150 70 L150 92 L128 79 Z" opacity="0.58"/>
+  <path d="M172 57 L150 70 L150 92 L172 79 Z" opacity="0.80"/>
+</svg>

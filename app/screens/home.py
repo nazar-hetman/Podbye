@@ -26,6 +26,7 @@ from app.state.session_store import (
     load_session,
     load_session_by_id,
     load_session_summary,
+    load_summary,
 )
 from app.models.finding import _format_size
 from app.models.risk import normalize_risk, normalized_risk_totals
@@ -236,6 +237,10 @@ class HomeScreen(QWidget):
         self._clear_dynamic()
         self._btn_header_new.hide()
 
+        # All-time impact banner sits above every state so the user always
+        # sees the cumulative space Vigil has reclaimed for them.
+        self._build_lifetime_banner()
+
         if self._scan_state and self._scan_state.is_running:
             self._build_live_panel()
             previous = self._latest_completed_session()
@@ -258,6 +263,89 @@ class HomeScreen(QWidget):
         else:
             self._build_empty_state()
             self._header_sub.setText(tr("No analysis sessions"))
+
+    # ─── All-time impact banner ──────────────────────────────
+
+    @staticmethod
+    def _mini_stat(value: str, label: str) -> QVBoxLayout:
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        # Number centered over its label so each stat reads as one tidy block.
+        v = QLabel(value)
+        v.setStyleSheet(f"{_MONO} font-size: 18px; font-weight: bold;")
+        v.setAlignment(Qt.AlignHCenter | Qt.AlignBottom)
+        # A shared minimum width keeps the four stats evenly spaced and stops a
+        # wide value (e.g. "3556.1 GB") from crowding its neighbour.
+        v.setMinimumWidth(78)
+        col.addWidget(v)
+        l = QLabel(label)
+        l.setObjectName("Muted")
+        l.setStyleSheet("font-size: 10px;")
+        l.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+        l.setMinimumWidth(78)
+        col.addWidget(l)
+        return col
+
+    def _build_lifetime_banner(self):
+        """Cumulative 'all-time impact' card: space freed + usage counts.
+
+        Reads the running totals from summary.json. Hidden on a fresh install
+        (nothing freed, scanned, or cleaned yet) so it never shows an empty brag.
+        """
+        s = load_summary()
+        freed    = int(s.get("total_recovered_bytes", 0) or 0)
+        scans    = int(s.get("analyze_sessions", 0) or 0)
+        cleanups = int(s.get("cleanup_sessions", 0) or 0)
+        items    = int(s.get("total_cleanup_items", 0) or 0)
+        analyzed = int(s.get("total_scanned_bytes", 0) or 0)
+        if not (freed or scans or cleanups):
+            return
+
+        accent = get_palette().get("safe", "#7cc596")
+
+        panel = Panel()
+        lay = panel.with_layout(vertical=True, margins=(16, 12, 16, 14), spacing=8)
+        hdr = QLabel(tr("ALL-TIME IMPACT"))
+        hdr.setObjectName("SectionHeader")
+        apply_tactical_label(hdr, font_size=9, letter_spacing=2)
+        lay.addWidget(hdr)
+
+        row = QHBoxLayout()
+        row.setSpacing(20)
+
+        # Hero — total space freed, in the safe/accent colour.
+        parts = _format_size(freed).split(" ", 1)
+        hero = QVBoxLayout()
+        hero.setSpacing(0)
+        hero_val = QHBoxLayout()
+        hero_val.setSpacing(4)
+        hero_val.setAlignment(Qt.AlignBottom)
+        hero_num = QLabel(parts[0] if parts else "0")
+        hero_num.setStyleSheet(f"{_MONO} font-size: 34px; font-weight: bold; color: {accent};")
+        hero_val.addWidget(hero_num)
+        hero_unit = QLabel(parts[1] if len(parts) > 1 else "B")
+        hero_unit.setObjectName("Dim")
+        hero_unit.setStyleSheet(f"{_MONO} font-size: 14px; padding-bottom: 5px;")
+        hero_val.addWidget(hero_unit)
+        hero.addLayout(hero_val)
+        hero_lbl = QLabel(tr("freed all-time"))
+        hero_lbl.setObjectName("Dim")
+        hero_lbl.setStyleSheet("font-size: 11px;")
+        hero.addWidget(hero_lbl)
+        row.addLayout(hero)
+        row.addStretch()
+
+        for value, label in [
+            (f"{scans:,}",            tr("scans")),
+            (f"{cleanups:,}",         tr("cleanups")),
+            (f"{items:,}",            tr("items removed")),
+            (_format_size(analyzed),  tr("analyzed")),
+        ]:
+            row.addLayout(self._mini_stat(value, label))
+
+        lay.addLayout(row)
+        panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._dynamic_container.addWidget(panel)
 
     # ─── Header helpers ──────────────────────────────────────
 
@@ -325,7 +413,8 @@ class HomeScreen(QWidget):
     # ─── Metrics row helper ──────────────────────────────────
 
     def _build_metrics_row(self, total_size: int, findings: int, ai_ready: int,
-                           risk_totals: dict, cat_totals: dict):
+                           risk_totals: dict, cat_totals: dict,
+                           ai_total: int = 0):
         cards_row = QHBoxLayout()
         cards_row.setSpacing(10)
 
@@ -413,10 +502,13 @@ class HomeScreen(QWidget):
         ac_hdr.setObjectName("SectionHeader")
         apply_tactical_label(ac_hdr, font_size=9, letter_spacing=2)
         ac_lay.addWidget(ac_hdr)
-        ac_num = QLabel(f"{ai_ready:,}")
+        # Show progress (ready / total) rather than a bare "0" that reads as
+        # "done, nothing explained" while the queue is still running.
+        ai_in_progress = ai_total > 0 and ai_ready < ai_total
+        ac_num = QLabel(f"{ai_ready:,} / {ai_total:,}" if ai_total else f"{ai_ready:,}")
         ac_num.setStyleSheet(f"{_MONO} font-size: 32px; font-weight: bold;")
         ac_lay.addWidget(ac_num)
-        ac_sub = QLabel(tr("explanations ready"))
+        ac_sub = QLabel(tr("analyzing…") if ai_in_progress else tr("explanations ready"))
         ac_sub.setObjectName("Dim")
         ac_sub.setStyleSheet("font-size: 11px;")
         ac_lay.addWidget(ac_sub)
@@ -440,6 +532,7 @@ class HomeScreen(QWidget):
             total_size=total_size,
             findings=display_count,
             ai_ready=ai_ready,
+            ai_total=ai_total,
             risk_totals=risk_totals,
             cat_totals=cat_totals,
         )
@@ -515,12 +608,13 @@ class HomeScreen(QWidget):
     def _build_resume_panel(self, data: dict):
         risk_totals = _session_risk_totals(data)
         cat_totals  = data.get("category_totals", {})
-        ai_ready, _ = _session_ai_counts(data)
+        ai_ready, ai_total = _session_ai_counts(data)
 
         self._build_metrics_row(
             total_size=data.get("total_size", 0),
             findings=_session_display_count(data),
             ai_ready=ai_ready,
+            ai_total=ai_total,
             risk_totals=risk_totals,
             cat_totals=cat_totals,
         )

@@ -1,4 +1,4 @@
-"""Quick Cleanup detector — locates known safe reclaimable locations.
+r"""Quick Cleanup detector — locates known safe reclaimable locations.
 
 Scans five categories in a background thread:
   1. User Temp    — contents of %TEMP% / %LOCALAPPDATA%\Temp
@@ -13,7 +13,7 @@ was found. Categories with zero bytes are suppressed.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 from PySide6.QtCore import QThread, Signal
@@ -83,7 +83,7 @@ def _enum_top_level(folder: str) -> list:
 # ── Category scanners ─────────────────────────────────────────────
 
 def _scan_user_temp() -> Optional[QuickCleanupCategory]:
-    """Enumerate top-level items inside %TEMP% and %LOCALAPPDATA%\Temp."""
+    r"""Enumerate top-level items inside %TEMP% and %LOCALAPPDATA%\Temp."""
     dirs: set = set()
     for var in ("TEMP", "TMP"):
         p = os.environ.get(var, "")

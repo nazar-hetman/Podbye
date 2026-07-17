@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QApplication,
 )
 from PySide6.QtCore import Signal, Qt
 from app.i18n import tr
 from app.widgets.panels import apply_tactical_label
+from app.widgets.logo import logo_pixmap
+from app.themes.theme_manager import get_palette, theme_signaller
 
 
 class SidebarButton(QPushButton):
@@ -99,13 +101,14 @@ class Sidebar(QFrame):
         brand_layout.setContentsMargins(14, 6, 14, 16)
         brand_layout.setSpacing(10)
 
-        # Sentry icon placeholder (small green square)
-        sentry = QLabel("■")
-        sentry.setObjectName("Accent")
-        sentry.setStyleSheet("font-size: 20px; background: transparent; border: none;")
-        sentry.setFixedSize(26, 26)
-        sentry.setAlignment(Qt.AlignCenter)
-        brand_layout.addWidget(sentry)
+        # Brand mark — the Vigil cube, recoloured to the active theme accent.
+        self._logo_lbl = QLabel()
+        self._logo_lbl.setStyleSheet("background: transparent; border: none;")
+        self._logo_lbl.setFixedSize(26, 26)
+        self._logo_lbl.setAlignment(Qt.AlignCenter)
+        self._render_logo()
+        theme_signaller().theme_changed.connect(self._render_logo)
+        brand_layout.addWidget(self._logo_lbl)
 
         brand_text = QVBoxLayout()
         brand_text.setSpacing(4)
@@ -180,6 +183,15 @@ class Sidebar(QFrame):
         self._status_lbl = op_lbl
 
         layout.addWidget(status)
+
+    def _render_logo(self, theme_key: str = None):
+        """Paint the brand cube in the active theme accent (re-runs on theme change)."""
+        accent = get_palette(theme_key)["accent"]
+        dpr = 1.0
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            dpr = screen.devicePixelRatio()
+        self._logo_lbl.setPixmap(logo_pixmap(accent, 26, dpr))
 
     def _on_click(self, name: str):
         self._set_active(name)

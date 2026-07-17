@@ -2,6 +2,7 @@
 
 import sys
 import os
+import time
 import logging
 
 # Ensure the project root is on sys.path
@@ -29,7 +30,12 @@ from PySide6.QtGui import QFont
 from app.fonts import load_fonts, FONT_UI
 from app.widgets.sidebar import Sidebar
 from app.widgets.topbar import Topbar
-from app.themes.theme_manager import build_qss
+from app.widgets.logo import logo_icon
+from app.widgets.tray import VigilTray
+from app.widgets.close_dialog import (
+    CloseRunningDialog, OUTCOME_QUIT, OUTCOME_BACKGROUND,
+)
+from app.themes.theme_manager import build_qss, get_palette
 
 from app.screens.home import HomeScreen
 from app.screens.quick_cleanup import QuickCleanupScreen
@@ -65,6 +71,13 @@ class VigilWindow(QMainWindow):
         self.resize(1440, 900)
         self._current_theme = "forest"
         self._current_screen_name = "Home"
+        # Background / tray state.
+        self._tray: VigilTray | None = None
+        self._force_quit = False        # set by the tray "Quit" action
+        self._in_background = False     # window hidden, work continuing in tray
+        self._tray_intro_shown = False  # one-time "still running" balloon
+        self._bg_done_notified = False  # completion notice fired for this stint
+        self._pending_lang = None       # deferred UI language (set mid-analysis)
         self._settings_store = SettingsStore()
         init_language(self._settings_store)
         self._scan_state = ScanState(self)
@@ -176,26 +189,77 @@ class VigilWindow(QMainWindow):
                 self._screens["Home"].refresh()
             elif name == "History":
                 self._screens["History"].refresh()
+            elif name == "Settings":
+                self._screens["Settings"].reload_close_behavior()
 
     def _apply_theme(self, theme_key: str):
         self._current_theme = theme_key
         qss = build_qss(theme_key)
         QApplication.instance().setStyleSheet(qss)
+        # Recolour the window / taskbar icon to match the theme accent.
+        icon = logo_icon(get_palette(theme_key)["accent"])
+        self.setWindowIcon(icon)
+        QApplication.instance().setWindowIcon(icon)
+        if self._tray is not None:
+            self._tray.update_icon(icon)
         self._refresh_shell_chrome()
 
     def _on_settings_saved(self):
         """Handle settings save: refresh sidebar and apply language change live."""
         self._refresh_shell_chrome()
-        from app.i18n import get_language, set_language
+        from app.i18n import get_language
         stored_lang = self._settings_store.get("ui_language", "English")
         if stored_lang != get_language():
-            if self._scan_state.is_running:
-                # Scan is active — language will apply on next launch
+            if self._scan_state.is_analysis_active:
+                # Rebuilding the whole UI mid-analysis would tear down the live
+                # scan/findings view, so defer the switch until work settles.
+                # _maybe_apply_pending_language() picks it up on completion/stop.
+                self._pending_lang = stored_lang
+                self._warn_language_deferred()
                 return
-            set_language(stored_lang)
-            self._build_ui()
-            self._navigate(self._current_screen_name)
-            self._apply_theme(self._current_theme)
+            self._apply_language_change(stored_lang)
+
+    def _apply_language_change(self, lang: str):
+        """Activate *lang* and rebuild the shell so every screen re-translates."""
+        from app.i18n import set_language
+        self._pending_lang = None
+        set_language(lang)
+        self._build_ui()
+        self._navigate(self._current_screen_name)
+        self._apply_theme(self._current_theme)
+
+    def _warn_language_deferred(self):
+        """Tell the user the language switch waits for the running analysis."""
+        from PySide6.QtWidgets import QMessageBox
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle(tr("Language change pending"))
+        box.setText(
+            tr("An analysis is running. The language will change "
+               "automatically once it finishes or you stop it.")
+        )
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        box.exec()
+
+    def _maybe_apply_pending_language(self, *args):
+        """Apply a deferred language switch once the pipeline is fully idle.
+
+        Connected to phase/AI completion signals. Guards on is_analysis_active
+        and AI-running so the UI is never rebuilt mid-scan/entity/AI work, and
+        defers the rebuild to the next event-loop tick to avoid tearing down
+        screens from inside the signal that is still being dispatched.
+        """
+        from app.i18n import get_language
+        if not self._pending_lang or self._pending_lang == get_language():
+            self._pending_lang = None
+            return
+        if self._scan_state.is_analysis_active:
+            return
+        if self._ai_explainer and self._ai_explainer.is_running:
+            return
+        lang = self._pending_lang
+        self._pending_lang = None
+        QTimer.singleShot(0, lambda: self._apply_language_change(lang))
 
     def _connect_shell_status_signals(self):
         """Keep the shared shell chrome in sync with scan and AI activity."""
@@ -206,6 +270,10 @@ class VigilWindow(QMainWindow):
         self._scan_state.ui_refresh.connect(self._refresh_shell_chrome)
         self._ai_explainer.queue_started.connect(self._refresh_shell_chrome)
         self._ai_explainer.queue_finished.connect(self._refresh_shell_chrome)
+        # Apply a deferred UI-language switch once analysis fully settles.
+        self._scan_state.scan_phase_changed.connect(self._maybe_apply_pending_language)
+        self._scan_state.scan_halted.connect(self._maybe_apply_pending_language)
+        self._ai_explainer.queue_finished.connect(self._maybe_apply_pending_language)
         self._ai_explainer.queue_progress.connect(lambda *_: self._refresh_shell_chrome())
 
     def _shell_status_text(self) -> str:
@@ -227,6 +295,20 @@ class VigilWindow(QMainWindow):
         right = f"MODEL · {model_short or '—'}"
         self._sidebar.update_status(status=self._shell_status_text())
         self._topbar.set_right_text(right)
+        self._sync_tray()
+
+    def _sync_tray(self):
+        """Keep the tray tooltip current and announce completion once, quietly."""
+        if not self._in_background or self._tray is None:
+            return
+        self._tray.set_status(self._shell_status_text())
+        # Background work just wound down — give one calm heads-up.
+        if not self._is_busy() and not self._bg_done_notified:
+            self._bg_done_notified = True
+            self._tray.notify(
+                tr("Vigil finished"),
+                tr("The task is done. Open Vigil to review, or quit from here."),
+            )
 
     def _on_resume_requested(self, session_data: dict):
         """Resume an unfinished scan from the Home screen."""
@@ -273,7 +355,70 @@ class VigilWindow(QMainWindow):
         if findings and hasattr(findings, 'open_category'):
             findings.open_category(category)
 
-    def closeEvent(self, event):
+    # ── Background / tray ─────────────────────────────────────────
+
+    def _is_busy(self) -> bool:
+        """True while a scan, entity detection or AI job is still running."""
+        if self._scan_state.is_running:
+            return True
+        return bool(self._ai_explainer and self._ai_explainer.is_running)
+
+    def _activity_label(self) -> str:
+        """Noun phrase describing the running work, for the close dialog."""
+        if self._ai_explainer and self._ai_explainer.is_running:
+            return tr("AI analysis")
+        if self._scan_state.is_running:
+            return tr("A scan")
+        return tr("A task")
+
+    def _ensure_tray(self) -> "VigilTray | None":
+        """Create the tray icon on first use; return None if unavailable."""
+        if self._tray is not None:
+            return self._tray
+        if not VigilTray.is_available():
+            return None
+        icon = logo_icon(get_palette(self._current_theme)["accent"])
+        self._tray = VigilTray(icon, parent=self)
+        self._tray.show_requested.connect(self._restore_from_tray)
+        self._tray.quit_requested.connect(self._quit_from_tray)
+        return self._tray
+
+    def _enter_background(self):
+        """Hide the window to the tray, leaving background work running."""
+        tray = self._ensure_tray()
+        if tray is None:
+            # No system tray available — keep work alive but stay minimized
+            # rather than vanishing with no way back.
+            self.showMinimized()
+            return
+        tray.set_status(self._shell_status_text())
+        tray.show()
+        self._in_background = True
+        self._bg_done_notified = False
+        self.hide()
+        if not self._tray_intro_shown:
+            self._tray_intro_shown = True
+            tray.notify(
+                tr("Vigil is still running"),
+                tr("Your task continues in the background. "
+                   "Right-click the tray icon to quit."),
+            )
+
+    def _restore_from_tray(self):
+        """Bring the window back from the tray."""
+        self._in_background = False
+        if self._tray is not None:
+            self._tray.hide()
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _quit_from_tray(self):
+        """Tray 'Quit' — force a real shutdown via closeEvent."""
+        self._force_quit = True
+        self.close()
+
+    def _shutdown(self):
         """Save session state and halt background work before the app exits.
 
         Qt will warn ("QThread: Destroyed while thread is still running") and
@@ -290,24 +435,110 @@ class VigilWindow(QMainWindow):
         except Exception:
             pass
 
-        # Halt any QThread workers parented under a screen
-        # (ScanWorker, DuplicateDetector, StartupAIWorker,
-        # QuickCleanupDetector, CleanupWorker, ...).
-        from PySide6.QtCore import QThread
-        for screen in self._screens.values():
-            for thread in screen.findChildren(QThread):
-                if not thread.isRunning():
-                    continue
-                for method_name in ("cancel", "halt", "stop"):
-                    if hasattr(thread, method_name):
-                        try:
-                            getattr(thread, method_name)()
-                        except Exception:
-                            pass
-                        break
-                thread.wait(500)
+        # Hide immediately so the close feels instant while workers wind down
+        # in the background, rather than looking frozen.
+        if self.isVisible():
+            self.hide()
+            QApplication.processEvents()
 
-        super().closeEvent(event)
+        from PySide6.QtCore import QThread
+
+        # Phase 1 — ask every worker to stop and mute its late signals.
+        # Workers (ScanWorker, DuplicateDetector, StartupAIWorker,
+        # QuickCleanupDetector, CleanupWorker, ...) only check their cancel
+        # flag at loop boundaries, so they may not stop instantly.
+        # Search from the window rather than per-screen: that also covers
+        # workers owned by dialogs (e.g. CleanupWorker in the cleanup dialog),
+        # which are parented to the dialog and so never appeared in a
+        # screen-only sweep.
+        running = []
+        for thread in self.findChildren(QThread):
+            if not thread.isRunning():
+                continue
+            # Block signals first so no callback fires into a screen that
+            # is about to be torn down.
+            thread.blockSignals(True)
+            for method_name in ("cancel", "halt", "stop"):
+                if hasattr(thread, method_name):
+                    try:
+                        getattr(thread, method_name)()
+                    except Exception:
+                        pass
+                    break
+            running.append(thread)
+
+        # Phase 2 — wait for a graceful exit, pumping the event loop so the UI
+        # stays responsive and queued work can drain. Bounded total budget.
+        deadline = time.monotonic() + 3.0
+        for thread in running:
+            while thread.isRunning() and time.monotonic() < deadline:
+                thread.wait(50)
+                QApplication.processEvents()
+
+        # Phase 3 — force-stop any straggler. A QThread that is still running
+        # when its parent is destroyed aborts the process on Windows, so this
+        # last resort is what actually prevents the close-while-busy crash.
+        for thread in running:
+            if thread.isRunning():
+                try:
+                    thread.terminate()
+                    thread.wait(1000)
+                except Exception:
+                    pass
+
+        # Session saves run on daemon threads, which the interpreter kills at
+        # exit — without this join, the session the user just stopped can be
+        # dropped on the floor. Bounded so a stuck write can't hang the close.
+        try:
+            self._scan_state.wait_for_saves()
+        except Exception:
+            pass
+
+        if self._tray is not None:
+            self._tray.hide()
+
+    def closeEvent(self, event):
+        """Route a window close through the user's close-behavior preference.
+
+        When nothing is running (or a real quit was requested), shut down and
+        exit. Otherwise honour `close_behavior`: prompt, always background, or
+        always quit.
+        """
+        if self._force_quit or not self._is_busy():
+            self._shutdown()
+            event.accept()
+            QApplication.instance().quit()
+            return
+
+        behavior = self._settings_store.get("close_behavior", "ask")
+
+        if behavior == "quit":
+            self._shutdown()
+            event.accept()
+            QApplication.instance().quit()
+            return
+
+        if behavior == "background":
+            self._enter_background()
+            event.ignore()
+            return
+
+        # "ask" — prompt the user.
+        dlg = CloseRunningDialog(activity_label=self._activity_label(), parent=self)
+        dlg.exec()
+        remembered = dlg.persisted_setting()
+        if remembered:
+            self._settings_store.set_and_save("close_behavior", remembered)
+
+        if dlg.outcome == OUTCOME_QUIT:
+            self._shutdown()
+            event.accept()
+            QApplication.instance().quit()
+        elif dlg.outcome == OUTCOME_BACKGROUND:
+            self._enter_background()
+            event.ignore()
+        else:  # OUTCOME_CANCEL — stay open and visible
+            event.ignore()
 
 
 def main():
@@ -319,7 +550,21 @@ def main():
     except AttributeError:
         pass
 
+    # Windows: bind an explicit AppUserModelID so the taskbar shows our window
+    # icon instead of the generic Python launcher icon.
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "Vigil.LootCleaner.App"
+            )
+        except Exception:
+            pass
+
     app = QApplication(sys.argv)
+    # The window can hide to the system tray while background work continues,
+    # so closing the last window must not auto-quit the app.
+    app.setQuitOnLastWindowClosed(False)
 
     # Load bundled fonts
     load_fonts()

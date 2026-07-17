@@ -10,24 +10,40 @@ Flow:
 from __future__ import annotations
 
 import os
+import re
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QScrollArea, QLineEdit, QWidget, QCheckBox,
+    QFrame, QScrollArea, QWidget, QCheckBox,
 )
 
 from app.models.finding import _format_size
-from app.models.risk import is_protected, needs_cleanup_confirmation, normalize_risk
+from app.models.risk import (
+    is_protected, normalize_risk, risk_fg as _risk_fg,
+)
 from app.i18n import tr
+from app.themes.theme_manager import get_palette
 from app.services.cleanup_engine import CleanupWorker
 from app.services.cleanup_result_classifier import assess_cleanup_counts
 
 
-# ── Confirmation phrase ───────────────────────────────────────────
+def _is_drive_root_path(path: str) -> bool:
+    """True for a bare drive root such as 'C:/', 'C:\\', or 'C:'."""
+    stripped = path.replace("\\", "/").rstrip("/")
+    return bool(re.fullmatch(r"[A-Za-z]:", stripped))
 
-def _confirm_phrase(count: int) -> str:
-    return f"delete {count} items"
+
+def _is_review_tier(target: dict) -> bool:
+    """True for items that need an explicit opt-in before deletion.
+
+    Review-risk items and 'uncertain' content (Unknown / mixed / personal
+    folders, flagged review_only) require the acknowledgment checkbox; plain
+    Safe / Optional items do not.
+    """
+    if normalize_risk(target.get("risk")) == "Review":
+        return True
+    return target.get("actionability") == "review_only"
 
 
 def _duplicate_target_sizes(item: dict) -> dict[str, int]:
@@ -51,13 +67,31 @@ def _cleanup_targets_for_item(item: dict) -> list[dict]:
     """
     if is_protected(item.get("risk")):
         return []
-    # Personal / mixed content containers are never whole-folder deletable —
-    # the Findings UI gates this, and the dialog refuses defensively too.
-    if item.get("actionability") == "review_only":
-        return []
+    # Note: review_only items (personal/mixed/unknown) ARE returned here — the
+    # dialog gates them behind an explicit "delete review items" acknowledgment
+    # rather than refusing them outright. Only Protected is never deletable.
+
+    # Grouped / loose buckets carry the actual files they stand for. Expand to
+    # per-file targets so cleanup never recycles the bucket's display path
+    # (which can be the scan root or a drive root).
+    file_paths = [p for p in (item.get("removable_file_paths") or []) if p]
+    if file_paths and item.get("entity_type") != "duplicate_group":
+        targets = []
+        for path in file_paths:
+            target = dict(item)
+            target["path"] = path
+            target["name"] = os.path.basename(path) or item.get("name", "")
+            target["is_dir"] = False
+            target["removable_file_paths"] = []
+            targets.append(target)
+        return targets
+
     if item.get("entity_type") != "duplicate_group":
         path = item.get("path", "")
-        return [item] if path else []
+        # Safety net: never offer a drive root (C:/) or empty path as a target.
+        if not path or _is_drive_root_path(path):
+            return []
+        return [item]
 
     paths = [p for p in item.get("removable_duplicate_paths") or [] if p]
     if not paths:
@@ -111,30 +145,37 @@ class CleanupConfirmDialog(QDialog):
         self._optional  = [f for f in items if normalize_risk(f.get("risk")) == "Optional"]
         self._safe      = [f for f in items if normalize_risk(f.get("risk")) == "Safe"]
 
-        self._actionable = []
+        # Expand selected findings into concrete file/folder targets, then split
+        # them into "safe to remove now" vs "review/uncertain" (needs an opt-in).
+        all_targets = []
         self._manual_review = []
         for f in items:
             targets = _cleanup_targets_for_item(f)
             if targets:
-                self._actionable.extend(targets)
+                all_targets.extend(targets)
             elif f.get("entity_type") == "duplicate_group" and not is_protected(f.get("risk")):
                 self._manual_review.append(f)
 
-        self._needs_confirmation = [
-            f for f in self._actionable
-            if needs_cleanup_confirmation(f.get("risk"))
-        ] + self._protected
+        self._safe_targets = [t for t in all_targets if not _is_review_tier(t)]
+        self._review_targets = [t for t in all_targets if _is_review_tier(t)]
 
-        # Cloud-synced items (subset of actionable — deletion propagates to cloud)
-        self._cloud = [f for f in self._actionable if f.get("cloud_sync_provider")]
-        self._total_actionable_size = sum(
-            f.get("size_bytes", 0) for f in self._actionable
-        )
+        # Review items are armed only when the user ticks the acknowledgment.
+        self._review_ack = False
 
-        # Cloud acknowledgment checkbox state
+        # Cloud-synced items (subset of all targets — deletion propagates to cloud)
+        self._cloud = [t for t in all_targets if t.get("cloud_sync_provider")]
         self._cloud_ack = False
 
         self._build_ui()
+
+    # ── Armed target set ──────────────────────────────────────────
+
+    def _armed_targets(self) -> list:
+        """Files that will actually be removed given the current acknowledgments."""
+        targets = list(self._safe_targets)
+        if self._review_ack:
+            targets += self._review_targets
+        return targets
 
     # ── UI construction ───────────────────────────────────────────
 
@@ -151,15 +192,11 @@ class CleanupConfirmDialog(QDialog):
         )
         root.addWidget(header_lbl)
 
-        n_action = len(self._actionable)
-        sub_text = (
-            f"{n_action} item(s) · {_format_size(self._total_actionable_size)} "
-            "will be sent to the Recycle Bin"
-        )
-        sub_lbl = QLabel(sub_text)
-        sub_lbl.setObjectName("Dim")
-        sub_lbl.setStyleSheet("font-size: 12px; margin-bottom: 14px;")
-        root.addWidget(sub_lbl)
+        self._sub_lbl = QLabel("")
+        self._sub_lbl.setObjectName("Dim")
+        self._sub_lbl.setStyleSheet("font-size: 12px; margin-bottom: 14px;")
+        self._sub_lbl.setWordWrap(True)
+        root.addWidget(self._sub_lbl)
 
         # ── Risk breakdown ────────────────────────────────────────
         risk_frame = QFrame()
@@ -169,10 +206,10 @@ class CleanupConfirmDialog(QDialog):
         risk_layout.setSpacing(4)
 
         for label, bucket, color in [
-            (tr("Protected"),  self._protected, "#d68a78"),
-            (tr("Review"),     self._review,    "#d8b46a"),
-            (tr("Optional"),   self._optional,  "#7ab8d4"),
-            (tr("Safe"),       self._safe,      "#7cc596"),
+            (tr("Protected"),  self._protected, _risk_fg("Protected")),
+            (tr("Review"),     self._review,    _risk_fg("Review")),
+            (tr("Optional"),   self._optional,  _risk_fg("Optional")),
+            (tr("Safe"),       self._safe,      _risk_fg("Safe")),
         ]:
             if not bucket:
                 continue
@@ -200,7 +237,7 @@ class CleanupConfirmDialog(QDialog):
                 "system-critical paths are never deleted."
             )
             prot_lbl.setStyleSheet(
-                "font-size: 11px; color: #d68a78; padding: 6px 0;"
+                f"font-size: 11px; color: {_risk_fg('Protected')}; padding: 6px 0;"
             )
             prot_lbl.setWordWrap(True)
             root.addWidget(prot_lbl)
@@ -212,7 +249,7 @@ class CleanupConfirmDialog(QDialog):
                 "No cleanup target was queued because explicit removable duplicate files were not captured."
             )
             manual_lbl.setStyleSheet(
-                "font-size: 11px; color: #d8b46a; padding: 6px 0;"
+                f"font-size: 11px; color: {_risk_fg('Review')}; padding: 6px 0;"
             )
             manual_lbl.setWordWrap(True)
             root.addWidget(manual_lbl)
@@ -229,15 +266,18 @@ class CleanupConfirmDialog(QDialog):
             cloud_layout.setContentsMargins(14, 10, 14, 10)
             cloud_layout.setSpacing(6)
 
+            _pal = get_palette()
+            _cloud_color = _pal.get("optional", "#6e93a8")
             cloud_hdr = QLabel(f"☁  Cloud-synced items ({provider_str})")
-            cloud_hdr.setStyleSheet("font-size: 12px; font-weight: bold; color: #7ab8d4;")
+            cloud_hdr.setStyleSheet(
+                f"font-size: 12px; font-weight: bold; color: {_cloud_color};")
             cloud_layout.addWidget(cloud_hdr)
 
             cloud_warn = QLabel(
                 f"{len(self._cloud)} item(s) are inside a cloud-sync folder. "
                 "Deletion will propagate to your cloud account and all synced devices."
             )
-            cloud_warn.setStyleSheet("font-size: 11px; color: #b0c8d4;")
+            cloud_warn.setStyleSheet(f"font-size: 11px; color: {_pal.get('text_dim', '#8a9b8f')};")
             cloud_warn.setWordWrap(True)
             cloud_layout.addWidget(cloud_warn)
 
@@ -251,14 +291,11 @@ class CleanupConfirmDialog(QDialog):
             root.addWidget(cloud_frame)
             root.addSpacing(10)
 
-        # ── Scrollable path list (non-routine decisions, max 50 shown) ─
-        show_paths = self._needs_confirmation + [
-            f for f in self._actionable
-            if normalize_risk(f.get("risk")) == "Optional"
-        ]
-        if show_paths:
+        # ── Scrollable preview of the review/uncertain items ──────────
+        if self._review_targets:
             list_header = QLabel(
-                tr("Items worth checking ({count}):").format(count=len(show_paths))
+                tr("Review / uncertain items ({count}):").format(
+                    count=len(self._review_targets))
             )
             list_header.setObjectName("Dim")
             list_header.setStyleSheet("font-size: 11px; margin-bottom: 4px;")
@@ -266,7 +303,7 @@ class CleanupConfirmDialog(QDialog):
 
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
-            scroll.setMaximumHeight(160)
+            scroll.setMaximumHeight(140)
             scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             scroll.setStyleSheet("QScrollArea { border: none; }")
 
@@ -275,18 +312,17 @@ class CleanupConfirmDialog(QDialog):
             c_layout.setContentsMargins(0, 0, 0, 0)
             c_layout.setSpacing(2)
 
-            for f in show_paths[:50]:
+            for f in self._review_targets[:50]:
                 row_lbl = QLabel(
-                    f"  {f.get('risk', '?')}  {f.get('name', os.path.basename(f.get('path', '')))}"
+                    f"  {normalize_risk(f.get('risk'))}  "
+                    f"{f.get('name', os.path.basename(f.get('path', '')))}"
                     f"  ·  {_format_size(f.get('size_bytes', 0))}"
                 )
-                row_lbl.setStyleSheet(
-                    "font-family: 'JetBrains Mono'; font-size: 10px;"
-                )
+                row_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 10px;")
                 c_layout.addWidget(row_lbl)
 
-            if len(show_paths) > 50:
-                more_lbl = QLabel(f"  … and {len(show_paths) - 50} more")
+            if len(self._review_targets) > 50:
+                more_lbl = QLabel(f"  … and {len(self._review_targets) - 50} more")
                 more_lbl.setObjectName("Dim")
                 more_lbl.setStyleSheet("font-size: 10px;")
                 c_layout.addWidget(more_lbl)
@@ -294,24 +330,22 @@ class CleanupConfirmDialog(QDialog):
             c_layout.addStretch()
             scroll.setWidget(container)
             root.addWidget(scroll)
-            root.addSpacing(10)
+            root.addSpacing(8)
 
-        # ── Confirmation phrase (Review/Protected/Risk items) ─────
-        self._confirm_input: QLineEdit | None = None
-        self._confirm_hint: QLabel | None = None
-        if self._needs_confirmation:
-            phrase = _confirm_phrase(len(self._actionable))
-            hint = QLabel(tr("Type  <b>{phrase}</b>  to confirm:").format(phrase=phrase))
-            hint.setStyleSheet("font-size: 12px; margin-bottom: 4px;")
-            hint.setTextFormat(Qt.RichText)
-            root.addWidget(hint)
-            self._confirm_hint = hint
-
-            self._confirm_input = QLineEdit()
-            self._confirm_input.setPlaceholderText(phrase)
-            self._confirm_input.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 12px;")
-            self._confirm_input.textChanged.connect(self._on_phrase_changed)
-            root.addWidget(self._confirm_input)
+        # ── Review acknowledgment (replaces the type-to-confirm phrase) ─
+        # Safe/Optional items are always armed. Review/uncertain items are only
+        # included when the user opts in here — no typing required.
+        self._review_cb: QCheckBox | None = None
+        if self._review_targets:
+            review_sz = sum(t.get("size_bytes", 0) for t in self._review_targets)
+            self._review_cb = QCheckBox(
+                tr("Also delete the {n} review/uncertain item(s) above ({size}) — "
+                   "sent to the Recycle Bin, recoverable").format(
+                    n=len(self._review_targets), size=_format_size(review_sz))
+            )
+            self._review_cb.setStyleSheet("font-size: 12px;")
+            self._review_cb.toggled.connect(self._on_review_ack_toggled)
+            root.addWidget(self._review_cb)
             root.addSpacing(10)
 
         # ── Progress area (hidden until worker starts) ────────────
@@ -355,28 +389,42 @@ class CleanupConfirmDialog(QDialog):
 
         root.addLayout(btn_row)
 
-        # Set initial confirm button state
+        # Set initial sub-label + confirm button state
+        self._update_sub_label()
         self._update_confirm_btn()
 
     # ── Event handlers ────────────────────────────────────────────
 
+    def _update_sub_label(self):
+        """Describe what the confirm button will actually remove right now."""
+        armed = self._armed_targets()
+        size = sum(t.get("size_bytes", 0) for t in armed)
+        if not armed:
+            self._sub_lbl.setText(
+                tr("Nothing selected to remove — tick the box below to include "
+                   "review/uncertain items.")
+                if self._review_targets else tr("Nothing to remove.")
+            )
+            return
+        text = tr("{n} item(s) · {size} will be sent to the Recycle Bin").format(
+            n=len(armed), size=_format_size(size))
+        if self._review_targets and not self._review_ack:
+            text += tr("  ·  {n} review item(s) excluded").format(
+                n=len(self._review_targets))
+        self._sub_lbl.setText(text)
+
     def _update_confirm_btn(self):
-        """Re-evaluate whether the confirm button should be enabled."""
-        if not self._actionable:
+        """Enable confirm only when something is armed and cloud ack (if any) is set."""
+        armed = self._armed_targets()
+        if not armed:
             self._btn_confirm.setEnabled(False)
             return
-        # Phrase required when Review/Protected/Risk-equivalent items are present.
-        if self._needs_confirmation:
-            phrase = _confirm_phrase(len(self._actionable))
-            phrase_ok = bool(self._confirm_input and
-                             self._confirm_input.text().strip() == phrase)
-        else:
-            phrase_ok = True
-        # Cloud ack required when cloud items present
         cloud_ok = (not self._cloud) or bool(self._cloud_cb and self._cloud_cb.isChecked())
-        self._btn_confirm.setEnabled(phrase_ok and cloud_ok)
+        self._btn_confirm.setEnabled(cloud_ok)
 
-    def _on_phrase_changed(self, text: str):
+    def _on_review_ack_toggled(self, checked: bool):
+        self._review_ack = bool(checked)
+        self._update_sub_label()
         self._update_confirm_btn()
 
     def _on_cancel(self):
@@ -388,17 +436,22 @@ class CleanupConfirmDialog(QDialog):
         self.reject()
 
     def _on_confirm(self):
-        """Start the cleanup worker."""
+        """Start the cleanup worker on the currently-armed target set."""
+        self._armed = self._armed_targets()
+        if not self._armed:
+            return
         self._btn_confirm.setEnabled(False)
         self._btn_confirm.setText(tr("Moving…"))
-        if self._confirm_input:
-            self._confirm_input.setEnabled(False)
+        if self._review_cb:
+            self._review_cb.setEnabled(False)
+        if self._cloud_cb:
+            self._cloud_cb.setEnabled(False)
 
         # Show progress area
         self._progress_frame.setVisible(True)
-        self._progress_lbl.setText(f"Moving 0 / {len(self._actionable)}…")
+        self._progress_lbl.setText(f"Moving 0 / {len(self._armed)}…")
 
-        paths = [f["path"] for f in self._actionable]
+        paths = [f["path"] for f in self._armed]
 
         self._worker = CleanupWorker(
             paths=paths,
@@ -431,6 +484,7 @@ class CleanupConfirmDialog(QDialog):
             failed_count=n_fail,
             skipped_count=n_skip,
             category_label="Selected items",
+            retry_label="the cleanup",
         )
 
         # Build result text
@@ -454,13 +508,15 @@ class CleanupConfirmDialog(QDialog):
         self._result_lbl.setVisible(True)
         self._progress_lbl.setVisible(False)
 
+        armed = getattr(self, "_armed", self._armed_targets())
+
         # Post-cleanup: remove entities from scan state
         if self._scan_state and result.succeeded:
             try:
                 succeeded = set(result.succeeded)
                 remove_paths = set(succeeded)
                 duplicate_sources: dict[str, set[str]] = {}
-                for f in self._actionable:
+                for f in armed:
                     if f.get("cleanup_source_type") != "duplicate_group":
                         continue
                     source = f.get("cleanup_source_path", "")
@@ -487,7 +543,7 @@ class CleanupConfirmDialog(QDialog):
                             "risk": f.get("risk", ""),
                             "category": f.get("category", ""),
                         }
-                        for f in self._actionable
+                        for f in armed
                     ],
                     result=result,
                     mode=CleanupWorker.MODE_RECYCLE,

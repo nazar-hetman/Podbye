@@ -194,18 +194,20 @@ class AIExplainer(QObject):
             self._queue.extend(eligible)
             self._total_queued += len(eligible)
 
-    def start(self, run_mode: str = "new"):
+    def start(self, run_mode: str = "new", force: bool = False):
         """Begin processing the queue with background threads.
-        
+
         Args:
             run_mode: "new" | "resume" | "restore"
                 - "new": Fresh analysis run, reset all state
                 - "resume": Continuing interrupted run, preserve/restore state
                 - "restore": Opening completed findings, use cache freely
+            force: when True, ignore the global 'ai_findings_enabled' toggle
+                (used by on-demand single-item "Ask AI" requests).
         """
         if self._running:
             return
-        if not self._store.get("ai_findings_enabled", True):
+        if not force and not self._store.get("ai_findings_enabled", True):
             self.log_line.emit("[ai] disabled · findings explanations off")
             return
 
@@ -274,26 +276,61 @@ class AIExplainer(QObject):
             self._total_done = 0
             self._total_failed = 0
 
-    def explain_single(self, finding: Finding):
-        """Re-run explanation for one specific finding (from UI action)."""
-        if not self._store.get("ai_findings_enabled", True):
-            return
-        finding.ai_status = "pending"
-        finding.ai_explanation = ""
-        finding.ai_error = ""
+    def explain_item(self, item) -> str:
+        """Explain one Finding/SmartEntity on demand (user clicked "Ask AI").
+
+        Works for both scan modes and deliberately bypasses the global
+        'ai_findings_enabled' toggle and the risky-only filter — the user
+        explicitly asked about this specific item. The on-disk cache is reused
+        (run_mode="restore") so a previously-seen item answers instantly.
+
+        Returns "" when the request was queued, or a short reason code the
+        caller can surface to the user:
+            "no-model"  — no AI model configured in Settings
+        """
+        model = self._store.get("ai_model", "")
+        if not model:
+            self.log_line.emit("[ai] cannot explain · no model selected")
+            return "no-model"
+
+        item.ai_status = "pending"
+        item.ai_explanation = ""
+        item.ai_error = ""
         with self._lock:
-            self._queue.insert(0, finding)  # high priority
+            self._queue.insert(0, item)  # front of queue — the user is waiting
+            self._total_queued += 1
+        name = getattr(item, "name", "item")
+        self.log_line.emit(f"[ai] ask · {name}")
         if not self._running:
-            self.start()
+            # force=True so this runs even when bulk explanations are disabled.
+            self.start(run_mode="restore", force=True)
+        return ""
 
     # ── Internals ───────────────────────────────────────────
 
     def _dispatcher(self):
         """Dispatcher loop — spawns up to max_concurrent worker threads."""
-        # Acquire global AI slot — waits for any Startup AI job to finish first.
-        # 5-minute timeout prevents deadlock if something goes wrong.
-        if not _AI_GLOBAL_LOCK.acquire(timeout=300):
-            self.log_line.emit("[ai] timeout waiting for global AI slot — queue cancelled")
+        # Acquire the global AI slot — only one AI job (Findings queue, Startups,
+        # or a manual "Ask AI") runs at a time. Wait in short cancellable steps
+        # rather than giving up: a long Startups run can legitimately hold the
+        # slot for many minutes, and dropping the whole queue after a fixed
+        # timeout meant those items silently never got explained.
+        waited = 0.0
+        _MAX_WAIT = 1800.0  # 30-min safety cap for a genuinely stuck holder
+        while not self._cancel.is_set() and waited < _MAX_WAIT:
+            if _AI_GLOBAL_LOCK.acquire(timeout=1.0):
+                break
+            waited += 1.0
+            if waited == 5.0:  # only announce once, if we actually have to wait
+                self.log_line.emit("[ai] waiting for another AI job to finish…")
+        else:
+            # Cancelled, or hit the safety cap without ever getting the slot.
+            if waited >= _MAX_WAIT:
+                self.log_line.emit("[ai] gave up waiting for the AI slot — run AI again to retry")
+            self._running = False
+            return
+        if self._cancel.is_set():
+            _AI_GLOBAL_LOCK.release()
             self._running = False
             return
 

@@ -46,8 +46,18 @@ _DEFAULTS = {
     # Language
     "ui_language": "English",
 
+    # Window close behavior when background work (scan / cleanup / AI) is
+    # running. One of:
+    #   "ask"        — prompt with the close dialog (default)
+    #   "background" — always minimize to the tray and keep working
+    #   "quit"       — always stop the work and exit
+    "close_behavior": "ask",
+
     # Scan behavior
     "confirm_risky_cleanup": True,
+    # Follow into other drives/volumes (mounted disks, junctions to another
+    # volume). Off by default so a scan stays on the chosen drive.
+    "scan_cross_volumes": False,
 
     # Cleanup safety
     "perm_delete_enabled": False,
