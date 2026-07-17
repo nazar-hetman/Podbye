@@ -555,7 +555,8 @@ class SettingsScreen(QWidget):
         self._btn_test = QPushButton(tr("Test"))
         self._btn_test.setObjectName("Ghost")
         self._btn_test.setCursor(Qt.PointingHandCursor)
-        self._btn_test.setStyleSheet(self._utility_btn_qss())
+        # No inline stylesheet — it would suppress the #Ghost fill/border and
+        # leave the button invisible on a panel_alt panel.
         self._btn_test.clicked.connect(self._test_connection)
         ep_h.addWidget(self._btn_test)
         srv_lay.addLayout(_setting_row(tr("Endpoint"), tr("Ollama-compatible HTTP server. Vigil never reaches the public network."), ep_w))
