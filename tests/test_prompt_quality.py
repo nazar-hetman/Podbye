@@ -91,16 +91,13 @@ def test_strip_reasoning_is_case_and_multiline_insensitive():
 
 
 def test_gen_options_are_low_temperature_for_facts():
-    for length in ("compact", "standard", "detailed"):
+    for length in ("compact", "standard", "detailed", "bogus"):
         opts = _gen_options(length)
         assert opts["temperature"] <= 0.3, "temperature too high for factual output"
-        assert opts["num_predict"] > 0
 
 
-def test_gen_options_scale_with_length():
-    assert (_gen_options("compact")["num_predict"]
-            < _gen_options("detailed")["num_predict"])
-
-
-def test_gen_options_unknown_length_falls_back_to_standard():
-    assert _gen_options("bogus") == _gen_options("standard")
+def test_gen_options_do_not_cap_output_length():
+    """num_predict must not be sent. A thinking model spends tokens reasoning
+    before the answer, so a cap truncates it to an empty response."""
+    for length in ("compact", "standard", "detailed"):
+        assert "num_predict" not in _gen_options(length)
