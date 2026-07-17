@@ -2206,6 +2206,12 @@ def _pass_explode_user_roots(ctx: "_DetectionContext"):
         # Never explode protected, sandboxed, or app-owned trees.
         if _is_protected_path(norm) or _is_appdata_packages_path(norm):
             continue
+        # A directory that IS a registered install root (e.g. C:/Qt, whose
+        # registry entry covers the whole tree) must stay whole — pass 2 will
+        # claim it as one application. Exploding it here strands the root and
+        # lets each version/tool subfolder fragment into its own "Qt (…)".
+        if norm in ctx.installed_apps or (norm + "/") in ctx.installed_apps:
+            continue
 
         subdirs = [
             c for c in ctx.gather_direct(norm)
