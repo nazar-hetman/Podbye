@@ -165,10 +165,11 @@ def test_to_dict_exposes_confidence():
 
 
 def test_refined_category_taxonomy():
-    # installer family consolidated into one category
+    # User-facing installers are "Installers"; vendor update/download staging
+    # (installer_cache) is regenerable cache shown under Cache & Temp.
     assert _entity("installer").category == "Installers"
     assert _entity("installer_group").category == "Installers"
-    assert _entity("installer_cache").category == "Installers"
+    assert _entity("installer_cache").category == "Cache & Temp"
     # media split by content type; media_collection stays the mixed bucket
     assert _entity("photo_collection").category == "Images"
     assert _entity("video_collection").category == "Videos"
