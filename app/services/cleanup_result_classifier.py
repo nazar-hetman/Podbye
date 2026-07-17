@@ -8,6 +8,7 @@ STATE_SUCCESS = "success"
 STATE_PARTIAL = "partial"
 STATE_IN_USE = "in_use"
 STATE_ALREADY_CLEAN = "already_clean"
+STATE_SKIPPED = "skipped"
 STATE_FAILED = "failed"
 
 
@@ -136,6 +137,29 @@ def assess_cleanup_counts(
                 f"There was nothing removable left in {label}.\n\n"
                 "This usually means the category was already cleaned or there was "
                 f"nothing left for {retry_label} to remove."
+            ),
+        )
+
+    # Only protected items were skipped — nothing was actually moved. Without
+    # this branch the code fell through to STATE_SUCCESS and told the user the
+    # category was "cleaned successfully · all files moved safely", directly
+    # contradicting the "No items were moved · N protected skipped" line above it.
+    if succeeded_count == 0 and in_use_count == 0 and failed_count == 0 and skipped_count > 0:
+        return CleanupAssessment(
+            state=STATE_SKIPPED,
+            succeeded_count=succeeded_count,
+            in_use_count=in_use_count,
+            failed_count=failed_count,
+            skipped_count=skipped_count,
+            short_label="nothing to clean",
+            item_label=f"{skipped_count:,} protected item(s) skipped",
+            breakdown_label="all protected",
+            summary_key_label="Skipped",
+            summary_value=f"{skipped_count:,} protected",
+            explanation_text=(
+                f"Nothing was removed from {label}.\n\n"
+                f"{skipped_count:,} item(s) are protected and were skipped to keep "
+                "your system safe — protected items are never moved to the Recycle Bin."
             ),
         )
 

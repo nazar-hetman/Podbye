@@ -2805,10 +2805,26 @@ def _disambiguate_names(entities: list) -> int:
             parts = [p for p in e.path.replace("\\", "/").split("/") if p]
             hint = next((seg for seg in reversed(parts)
                          if seg.lower() != low_name), parts[0] if parts else "")
+            hint = _shorten_disambiguation_hint(hint)
             if hint:
                 e.name = f"{name} ({hint})"
                 renamed += 1
     return renamed
+
+
+# Verbose container segments compressed to a short tag when used as a
+# disambiguation hint — "Microsoft (Program Files (x86))" reads as clutter, so
+# the bitness (the part that actually distinguishes the two installs) is what we
+# keep: "Microsoft (x86)" / "Microsoft (64-bit)".
+_HINT_COMPRESSION = {
+    "program files (x86)": "x86",
+    "program files": "64-bit",
+    "programdata": "shared",
+}
+
+
+def _shorten_disambiguation_hint(hint: str) -> str:
+    return _HINT_COMPRESSION.get(hint.strip().lower(), hint)
 
 
 def _enforce_disjoint_sizes(ctx: "_DetectionContext", entities: list, log_fn) -> int:
