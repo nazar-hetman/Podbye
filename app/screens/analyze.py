@@ -233,41 +233,45 @@ class AnalyzeScreen(QWidget):
         border_alt = p.get("border_alt", "#2b3d33")
         border_hover = p.get("border_hover", "#3a5648")
         accent = p.get("accent", "#7cc596")
-        # Folder half: left-rounded, no right border (joins the ALL chip).
-        self._btn_folder.setStyleSheet(
-            f"QPushButton {{"
+
+        # The container owns the border + background of the whole field.
+        self._target_field.setStyleSheet(
+            f"QFrame#TargetField {{"
             f"background-color: {panel_alt};"
-            f"border: 1px solid {border_alt}; border-right: none;"
-            f"color: {text_color};"
-            f"padding: 5px 12px; font-size: 11px; font-family: 'JetBrains Mono';"
-            f"text-align: left;"
-            f"border-top-left-radius: 2px; border-bottom-left-radius: 2px;"
-            f"border-top-right-radius: 0; border-bottom-right-radius: 0;"
-            f"}}"
-            f"QPushButton:hover {{ background-color: {panel_hover}; color: {p.get('text', '#d6e2da')}; }}"
-            f"QPushButton:disabled {{"
-            f"background-color: {p.get('bg_deep', '#080d0a')};"
-            f"border-color: {p.get('border', '#213028')};"
-            f"color: {p.get('text_faint', '#57685e')};"
+            f"border: 1px solid {border_hover if all_active else border_alt};"
+            f"border-radius: 2px;"
             f"}}"
         )
-        # ALL chip: right-rounded. Filled with the accent when it is the active
-        # target so the user can see all-drives is selected.
+        # Folder zone: flat, borderless, left-aligned text. min-height:0 keeps it
+        # from inheriting the global button min-height and overflowing the field.
+        self._btn_folder.setStyleSheet(
+            f"QPushButton#TargetFolderBtn {{"
+            f"background: transparent; border: none; min-height: 0;"
+            f"color: {text_color};"
+            f"padding: 0 10px; font-size: 11px; font-family: 'JetBrains Mono';"
+            f"text-align: left;"
+            f"}}"
+            f"QPushButton#TargetFolderBtn:hover {{ color: {p.get('text', '#d6e2da')}; }}"
+        )
+        # ALL chip: flat, with a left divider. Fills with the accent when it is
+        # the active target so all-drives selection is obvious.
         if all_active:
-            chip_bg, chip_fg, chip_border = accent, p.get("on_accent", "#070c09"), accent
+            chip_bg, chip_fg = accent, p.get("on_accent", "#070c09")
         else:
-            chip_bg, chip_fg, chip_border = panel_alt, p.get("text_dim", "#8a9b8f"), border_alt
+            chip_bg, chip_fg = "transparent", p.get("text_dim", "#8a9b8f")
         self._btn_scan_all.setStyleSheet(
-            f"QPushButton {{"
-            f"background-color: {chip_bg};"
-            f"border: 1px solid {chip_border};"
+            f"QPushButton#TargetAllChip {{"
+            f"background-color: {chip_bg}; min-height: 0;"
+            f"border: none; border-left: 1px solid {border_alt};"
             f"color: {chip_fg};"
             f"font-size: 10px; font-weight: 600; font-family: 'JetBrains Mono';"
-            f"letter-spacing: 1px;"
+            f"letter-spacing: 1px; padding: 0;"
             f"border-top-right-radius: 2px; border-bottom-right-radius: 2px;"
-            f"border-top-left-radius: 0; border-bottom-left-radius: 0;"
             f"}}"
-            f"QPushButton:hover {{ border-color: {border_hover}; color: {p.get('text', '#d6e2da') if not all_active else chip_fg}; }}"
+            f"QPushButton#TargetAllChip:hover {{"
+            f"color: {chip_fg if all_active else p.get('text', '#d6e2da')};"
+            f"background-color: {chip_bg if all_active else panel_hover};"
+            f"}}"
         )
 
     def _rebuild_styles(self, theme_key: str = ""):
@@ -327,25 +331,28 @@ class AnalyzeScreen(QWidget):
         title_col.addWidget(self._drive_lbl)
         header.addLayout(title_col, stretch=1)
 
-        # Target control: one field-like unit — a wide folder picker plus an
-        # inline "ALL" chip at the right edge that selects every fixed drive.
-        target_field = QWidget()
-        target_field.setFixedHeight(32)
-        tf_lay = QHBoxLayout(target_field)
-        tf_lay.setContentsMargins(0, 0, 0, 0)
+        # Target control: one field-like unit — the container (a QFrame) owns
+        # the border and background; the two flat buttons inside are borderless
+        # zones of equal height, so nothing can overflow or misalign. A wide
+        # folder picker plus an inline "ALL" chip that selects every fixed drive.
+        self._target_field = QFrame()
+        self._target_field.setObjectName("TargetField")
+        self._target_field.setFixedSize(256, 32)
+        tf_lay = QHBoxLayout(self._target_field)
+        tf_lay.setContentsMargins(1, 1, 1, 1)
         tf_lay.setSpacing(0)
 
         self._btn_folder = QPushButton()
+        self._btn_folder.setObjectName("TargetFolderBtn")
         self._btn_folder.setCursor(Qt.PointingHandCursor)
-        self._btn_folder.setFixedWidth(204)
-        self._btn_folder.setFixedHeight(32)
+        self._btn_folder.setFixedHeight(30)
         self._btn_folder.clicked.connect(self._pick_folder)
-        tf_lay.addWidget(self._btn_folder)
+        tf_lay.addWidget(self._btn_folder, stretch=1)
 
         self._btn_scan_all = QPushButton(tr("ALL"))
+        self._btn_scan_all.setObjectName("TargetAllChip")
         self._btn_scan_all.setCursor(Qt.PointingHandCursor)
-        self._btn_scan_all.setFixedWidth(52)
-        self._btn_scan_all.setFixedHeight(32)
+        self._btn_scan_all.setFixedSize(50, 30)
         self._btn_scan_all.setToolTip(
             tr("Scan every internal (fixed) drive at once. "
                "Removable and network drives are skipped.")
@@ -353,7 +360,7 @@ class AnalyzeScreen(QWidget):
         self._btn_scan_all.clicked.connect(self._pick_all_drives)
         tf_lay.addWidget(self._btn_scan_all)
 
-        header.addWidget(target_field, alignment=Qt.AlignVCenter)
+        header.addWidget(self._target_field, alignment=Qt.AlignVCenter)
 
         # Scan mode selector
         self._mode_combo = TacticalComboBox()
