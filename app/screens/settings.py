@@ -615,6 +615,19 @@ class SettingsScreen(QWidget):
         self._model_meta_lbl.setObjectName("Muted")
         self._model_meta_lbl.setStyleSheet(self._helper_style())
         model_v.addWidget(self._model_meta_lbl)
+        # Freshness guidance — explanation quality is bounded by the model's
+        # knowledge cutoff. A model trained before an app existed can't identify
+        # it and falls back to restating the folder name.
+        model_hint1 = QLabel(tr("Newer, larger models give better explanations and recognise more recent apps."))
+        model_hint1.setObjectName("Dim")
+        model_hint1.setStyleSheet(self._helper_style())
+        model_hint1.setWordWrap(True)
+        model_v.addWidget(model_hint1)
+        model_hint2 = QLabel(tr("A model trained before an app existed may not identify it correctly."))
+        model_hint2.setObjectName("Dim")
+        model_hint2.setStyleSheet(self._helper_style())
+        model_hint2.setWordWrap(True)
+        model_v.addWidget(model_hint2)
         mod_lay.addLayout(_setting_row(tr("Active model"), tr("Choose the local model used for explanations."), model_w))
         self._populate_fallback_models()
 
