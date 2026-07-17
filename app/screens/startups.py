@@ -536,6 +536,9 @@ class StartupInspectorPanel(QFrame):
 
         self._name_lbl = QLabel(tr("Select a startup entry"))
         self._name_lbl.setStyleSheet("font-size: 13px; font-weight: 700;")
+        # Long scheduled-task names (e.g. "OneDrive Startup Task-S-1-5-21-…")
+        # must wrap, or they push the whole inspection panel past the window.
+        self._name_lbl.setWordWrap(True)
         layout.addWidget(self._name_lbl)
 
         self._publisher_lbl = QLabel(tr("Choose an entry on the left to inspect impact and recommendation."))
