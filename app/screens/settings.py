@@ -911,9 +911,10 @@ class SettingsScreen(QWidget):
         b_lay.addLayout(_panel_title(tr("Build"), tr("product")) )
         self._register_styled_panel(build_panel)
 
+        from app.version import __version__, BUILD
         for k, v in [
-            (tr("Version"), "1.0.0-beta.1"),
-            (tr("Build"), "2026.06"),
+            (tr("Version"), __version__),
+            (tr("Build"), BUILD),
         ]:
             val_lbl = QLabel(v)
             val_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 12px;")

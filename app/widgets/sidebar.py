@@ -116,7 +116,8 @@ class Sidebar(QFrame):
         wordmark.setObjectName("Wordmark")
         brand_text.addWidget(wordmark)
 
-        version = QLabel("v1.0")
+        from app.version import short_version
+        version = QLabel(short_version())
         version.setObjectName("Muted")
         version.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 9px; letter-spacing: 1px;")
         brand_text.addWidget(version)
