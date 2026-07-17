@@ -271,6 +271,24 @@ def _estimated_reclaimable(record: dict) -> int:
     return 0
 
 
+def _freed_for_session(session_id: str) -> tuple[int, int]:
+    """(bytes_freed, items_removed) across cleanups spawned by this scan session.
+
+    Cleanup records store the scan session_id that spawned them, so an analyze
+    session can report what was actually deleted from its findings — not just
+    what was reclaimable. Best-effort; returns (0, 0) when nothing links.
+    """
+    if not session_id:
+        return 0, 0
+    from app.state.session_store import load_cleanup_records
+    freed = items = 0
+    for rec in load_cleanup_records():
+        if rec.get("session_id") == session_id:
+            freed += int(rec.get("total_bytes_freed", 0) or 0)
+            items += int(rec.get("succeeded_count", 0) or 0)
+    return freed, items
+
+
 def _impact_label(size_bytes: int, *, attention_count: int = 0, found_count: int = 0) -> str:
     if size_bytes >= 10 * 1024 ** 3 or attention_count >= 100:
         return "High"
@@ -594,15 +612,25 @@ class SessionDetail(QFrame):
         metrics = QHBoxLayout()
         metrics.setSpacing(18)
         reclaimable_text = _format_size(reclaimable) if has_reclaimable else tr("Not recorded")
-        for k, v, col in [
+        # What was actually deleted from this session's findings (cleanups link
+        # back by session_id). Only shown once something has been cleaned.
+        freed_bytes, freed_items = _freed_for_session(record.get("session_id", ""))
+        rows = [
             (tr("IMPACT"), impact, _impact_color(impact, p)),
             (tr("RECLAIMABLE"), reclaimable_text,
              p.get("safe", "#7aa88a") if reclaimable else ""),
+        ]
+        if freed_bytes > 0 or freed_items > 0:
+            rows.append((tr("FREED"),
+                         f"{_format_size(freed_bytes)} · {freed_items:,}",
+                         p.get("safe", "#7aa88a")))
+        rows += [
             (tr("FOUND"), items_val, ""),
             (tr("REVIEW"), f"{attention:,}" if attention else "None",
              p.get("review", "#c7a66c") if attention else ""),
             (tr("DURATION"), _format_duration(duration), ""),
-        ]:
+        ]
+        for k, v, col in rows:
             metrics.addLayout(_kv(k, v, p, val_size=11, bold=k in (tr("IMPACT"), tr("RECLAIMABLE")), val_color=col))
         metrics.addStretch()
         layout.addLayout(metrics)
