@@ -24,6 +24,9 @@ crash.log
 *.log
 semantic_entity_export.json
 
+# Ad-hoc scratch/report output from local debugging runs.
+scratch_*
+
 # ── Archives / design exports ────────────────────────────
 *.tar
 *.zip

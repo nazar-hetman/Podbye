@@ -125,6 +125,9 @@ After Phase 1, all existing detection passes run on the **unclaimed** pool only.
 
 | Pass | Detection Target | Method |
 |------|-------------------|--------|
+| **0** | Vendor update caches | NVIDIA update/cache staging merged into one root |
+| **0b** | AppData/Local/Packages | Each UWP package folder → named `application_data` entity (`_humanize_package_name`: "SpotifyAB.SpotifyMusic_…" → "Spotify (app data)") |
+| **pre** | Heterogeneous user roots | Documents/Downloads/etc. with diverse subfolders are claimed as pass-through nodes (`_pass_explode_user_roots`) so they break into per-subfolder entities instead of one blob; loose files become "straggler" buckets |
 | **1** | Known directories | `node_modules`, `.venv`, `cache`, `models`, etc. |
 | **2** | Installed applications | Windows registry lookup |
 | **2b** | Portable applications | Marker files (`.exe`, `steam.exe`, etc.) |
@@ -212,7 +215,11 @@ Unknown (fallback)
 **Games:**
 - `game` — Platform-verified game installation
 - `game_cache` — Shader/cache data
-- `game_saves` — Save data / profiles
+- `game_saves` — Save data / profiles. In post-processing, `_enrich_game_saves()`
+  resolves the **owning game** from the save path and cross-references it
+  against games/apps detected in the same scan + the Windows registry, so the
+  entity is named e.g. "Skyrim Saves — game still installed" or
+  "Game Saves — Witcher 3, Portal 2 (+2)" instead of a bare "Saves".
 
 **Development:**
 - `dev_project` — Source code project
@@ -812,15 +819,23 @@ After `CleanupWorker.finished`:
 
 ## Files Added/Modified
 
-### New Files
+> ⚠️ **Accuracy note.** This document was written during an earlier design phase
+> and describes some modules (`semantic_entity.py`, `streaming_entity_detector.py`,
+> `installed_software.py`, `media_hierarchy.py`, `smart_ai_queue.py`) that were
+> never built. The shipping implementation lives in **`app/services/entity_detector.py`**
+> (the multi-pass `detect_entities` pipeline) and **`app/models/smart_entity.py`**
+> (the `SmartEntity` model). Treat the file list below as historical intent, not
+> the current layout.
 
-| File | Purpose |
-|------|---------|
-| `app/models/semantic_entity.py` | Hierarchical entity model |
-| `app/services/streaming_entity_detector.py` | Real-time entity detection |
-| `app/services/installed_software.py` | Install verification |
-| `app/services/media_hierarchy.py` | Media sub-categorization |
-| `app/services/smart_ai_queue.py` | Intelligent AI selection |
+### Aspirational files (NOT in the codebase)
+
+| File | Intended purpose | Reality |
+|------|---------|---------|
+| `app/models/semantic_entity.py` | Hierarchical entity model | → `app/models/smart_entity.py` |
+| `app/services/streaming_entity_detector.py` | Real-time entity detection | → `app/services/entity_detector.py` |
+| `app/services/installed_software.py` | Install verification | folded into `entity_detector.py` (registry walk) |
+| `app/services/media_hierarchy.py` | Media sub-categorization | content passes in `entity_detector.py` |
+| `app/services/smart_ai_queue.py` | Intelligent AI selection | `app/services/ai_explainer.py` |
 
 ### Modified Files
 
