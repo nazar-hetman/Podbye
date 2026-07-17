@@ -28,6 +28,23 @@ from app.services.ollama_client import generate
 from app.services.prompt_builder import build_prompt, build_entity_prompt
 
 
+# Generation options per length. Low temperature keeps factual explanations
+# consistent (the default 0.8 makes small models ramble and invent). num_predict
+# is a runaway cap, set well above what the sentence count needs so it never
+# truncates a legitimate answer — the prompt controls length, this only bounds a
+# looping model.
+_LENGTH_OPTIONS = {
+    "compact":  {"temperature": 0.2, "num_predict": 160},
+    "standard": {"temperature": 0.2, "num_predict": 320},
+    "detailed": {"temperature": 0.2, "num_predict": 420},
+}
+
+
+def _gen_options(length: str) -> dict:
+    return _LENGTH_OPTIONS.get((length or "standard").lower().strip(),
+                               _LENGTH_OPTIONS["standard"])
+
+
 # ── Priority helpers ────────────────────────────────────────────
 
 _RISK_PRIORITY = {
@@ -469,6 +486,7 @@ class AIExplainer(QObject):
             prompt=prompt,
             timeout=timeout,
             cancel_flag=self._cancel,
+            options=_gen_options(length),
         )
         duration = time.time() - t0
 
@@ -574,6 +592,7 @@ class AIExplainer(QObject):
             prompt=prompt,
             timeout=timeout,
             cancel_flag=self._cancel,
+            options=_gen_options(length),
         )
         duration = time.time() - t0
 

@@ -57,9 +57,12 @@ _FORMAT_RULES = {
 # ── Directness rule ────────────────────────────────────────────
 
 _DIRECTNESS = (
-    "Be direct and specific. Name the actual application, not generic descriptions like "
-    "'contains executable files' or 'stores configuration data'. "
-    "Avoid hedging phrases. State clear impacts."
+    "Say what kind of tool or data this is and what people use it for, in plain "
+    "words a non-expert understands. If you are not sure of the exact product, "
+    "name the closest well-known equivalent — for example 'an AI code-completion "
+    "tool like GitHub Copilot'. Never define an item by repeating its own name "
+    "('X contains files for X'), and do not use vague filler like 'contains files' "
+    "or 'stores data'. State concrete impacts."
 )
 
 

@@ -105,12 +105,31 @@ def list_models(endpoint: str, timeout: int = 4) -> list:
         return []
 
 
+def strip_reasoning(text: str) -> str:
+    """Remove <think>…</think> reasoning blocks some models emit before the answer.
+
+    Reasoning models (qwen3, deepseek-r1, …) prepend their chain-of-thought in a
+    <think> block. That is not the explanation — left in, it dumps a wall of
+    "let me consider…" into the UI. Strip the block and keep only the answer.
+    A cheap, model-agnostic guard: no effect on models that never emit one.
+    """
+    lowered = text.lower()
+    if "<think>" in lowered:
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+        # An unterminated block (truncated mid-thought) — keep only the text
+        # before the dangling open tag so raw chain-of-thought never surfaces.
+        if "<think>" in text.lower():
+            text = re.split(r"<think>", text, maxsplit=1, flags=re.IGNORECASE)[0]
+    return text.strip()
+
+
 def generate(
     endpoint: str,
     model: str,
     prompt: str,
     timeout: int = 180,
     cancel_flag=None,
+    options: dict | None = None,
 ) -> Tuple[bool, str]:
     """Send a prompt to Ollama /api/generate (non-streaming).
 
@@ -119,6 +138,10 @@ def generate(
 
     *cancel_flag*: an object with a boolean `is_set()` method (e.g. threading.Event).
     If set before or during the request, returns early.
+
+    *options*: Ollama generation options (temperature, num_predict, …). A low
+    temperature keeps factual explanations consistent; num_predict caps runaway
+    output. Universally supported, so safe to always send.
 
     Returns (success, response_text_or_error).
     """
@@ -129,11 +152,14 @@ def generate(
         return False, "cancelled"
 
     url = endpoint.rstrip("/") + "/api/generate"
-    payload = json.dumps({
+    body_dict = {
         "model": model,
         "prompt": prompt,
         "stream": False,
-    }).encode("utf-8")
+    }
+    if options:
+        body_dict["options"] = options
+    payload = json.dumps(body_dict).encode("utf-8")
 
     import time as _time
     t0 = _time.time()
@@ -144,7 +170,7 @@ def generate(
             if cancel_flag and cancel_flag.is_set():
                 return False, "cancelled"
             body = json.loads(resp.read().decode("utf-8"))
-            text = body.get("response", "").strip()
+            text = strip_reasoning(body.get("response", "").strip())
             if not text:
                 return False, "empty response from model"
             return True, text
