@@ -742,5 +742,7 @@
   "When closing while busy": "Під час закриття, коли зайнято",
   "If a task is still running when you close the window, Vigil can ask, keep working in the system tray, or stop and quit.": "Якщо під час закриття вікна ще виконується завдання, Vigil може запитати, продовжити роботу в системному треї або зупинитися й вийти.",
   "Newer, larger models give better explanations and recognise more recent apps.": "Новіші та більші моделі дають кращі пояснення й розпізнають сучасніші застосунки.",
-  "A model trained before an app existed may not identify it correctly.": "Модель, навчена до появи застосунку, може не розпізнати його правильно."
+  "A model trained before an app existed may not identify it correctly.": "Модель, навчена до появи застосунку, може не розпізнати його правильно.",
+  "Don't ask again for review/uncertain items": "Більше не запитувати про елементи для перегляду",
+  "  ·  includes {n} review/uncertain item(s)": "  ·  включно з {n} елемент(ами) для перегляду"
 }

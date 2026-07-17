@@ -487,8 +487,8 @@ QPushButton#Danger:focus {{
     border-color: {text};
 }}
 QPushButton#Ghost {{
-    background-color: transparent;
-    border: 1px solid {border};
+    background-color: {panel_alt};
+    border: 1px solid {border_alt};
     color: {text};
     padding: 7px 14px;
     border-radius: 2px;
@@ -503,8 +503,8 @@ QPushButton#Ghost:disabled {{
     background: transparent;
 }}
 QPushButton#Subtle {{
-    background-color: transparent;
-    border: 1px solid {border};
+    background-color: {panel_alt};
+    border: 1px solid {border_alt};
     color: {text_dim};
     padding: 7px 14px;
     border-radius: 2px;

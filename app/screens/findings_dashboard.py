@@ -277,6 +277,32 @@ def _short_parent(path: str, segments: int = 2) -> str:
     return "…/" + "/".join(parts[-segments:])
 
 
+def _elide_path_middle(path: str, max_len: int = 54) -> str:
+    """Shorten a path for a single-line display, keeping the drive and the tail.
+
+    Long paths otherwise wrapped and stretched the inspection panel. Middle
+    elision preserves the two ends a user reads — the drive/root and the file
+    itself — e.g. ``C:/Users/…/CachedData/c97a3f/index.db``. Display only; the
+    full path is kept as the widget tooltip and used verbatim by Copy/Open.
+    """
+    p = str(path or "").replace("\\", "/")
+    if len(p) <= max_len:
+        return p
+    parts = [seg for seg in p.split("/") if seg]
+    if len(parts) <= 2:
+        return p[: max_len - 1] + "…"
+    head = parts[0]                       # drive / root
+    tail_parts = parts[1:]
+    tail = tail_parts[-1]
+    # Grow the tail from the end until we hit the budget.
+    for i in range(len(tail_parts) - 2, 0, -1):
+        candidate = "/".join(tail_parts[i:])
+        if len(head) + len(candidate) + 5 > max_len:
+            break
+        tail = candidate
+    return f"{head}/…/{tail}"
+
+
 def _duplicate_short_parents(entity: dict) -> list[str]:
     """De-duplicated, shortened parent folders for a duplicate group."""
     shorts: list[str] = []
@@ -1487,6 +1513,9 @@ class _PreallocDetailPanel(QWidget):
 
         self._path_key  = _mk_key("PATH:")
         self._path_val  = _mk_val()
+        # The path is elided to one line (full path in the tooltip) so a long
+        # path can't wrap and stretch the inspection panel.
+        self._path_val.setWordWrap(False)
         self._size_key  = _mk_key("SIZE:")
         self._size_val  = _mk_val()
         self._items_key = _mk_key("CONTAINS:")
@@ -2188,7 +2217,12 @@ class _PreallocDetailPanel(QWidget):
 
         # Info rows
         self._cat_val.setText(category)
-        self._path_val.setText(_duplicate_path_preview(entity) if is_duplicate else path or "—")
+        if is_duplicate:
+            self._path_val.setText(_duplicate_path_preview(entity))
+            self._path_val.setToolTip("")
+        else:
+            self._path_val.setText(_elide_path_middle(path) if path else "—")
+            self._path_val.setToolTip(path or "")
         self._size_val.setText(size)
         self._items_val.setText(contains_text or f"{item_count:,} items")
         # For duplicates the dedicated DUPLICATE LOCATIONS block below already
@@ -3339,11 +3373,16 @@ class CategoryDetailView(QFrame):
         def _log(msg: str):
             if hasattr(self._scan_state, "log_line"):
                 self._scan_state.log_line.emit(msg)
+        # If the user turned off review confirmation ("Don't ask again"), the
+        # dialog still opens for progress/result but auto-starts the move.
+        store = getattr(self._scan_state, "_settings_store", None)
+        confirm = store.get("confirm_risky_cleanup", True) if store else True
         dlg = CleanupConfirmDialog(
             items=items,
             scan_state=self._scan_state,
             session_id=session_id,
             log_fn=_log,
+            auto_confirm=not confirm,
             parent=self,
         )
         dlg.exec()

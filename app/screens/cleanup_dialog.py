@@ -125,8 +125,9 @@ class CleanupConfirmDialog(QDialog):
     """
 
     def __init__(self, items: list, scan_state=None, session_id: str = "",
-                 log_fn=None, parent=None):
+                 log_fn=None, auto_confirm: bool = False, parent=None):
         super().__init__(parent)
+        self._auto_confirm = auto_confirm
         self.setWindowTitle(tr("Confirm Cleanup"))
         self.setModal(True)
         self.setMinimumWidth(560)
@@ -159,8 +160,10 @@ class CleanupConfirmDialog(QDialog):
         self._safe_targets = [t for t in all_targets if not _is_review_tier(t)]
         self._review_targets = [t for t in all_targets if _is_review_tier(t)]
 
-        # Review items are armed only when the user ticks the acknowledgment.
-        self._review_ack = False
+        # Review items are armed by default — the user explicitly selected them,
+        # so there is no opt-in tick. A confirmation dialog is still shown (this
+        # dialog), unless the user has turned that off via "Don't ask again".
+        self._review_ack = True
 
         # Cloud-synced items (subset of all targets — deletion propagates to cloud)
         self._cloud = [t for t in all_targets if t.get("cloud_sync_provider")]
@@ -332,20 +335,17 @@ class CleanupConfirmDialog(QDialog):
             root.addWidget(scroll)
             root.addSpacing(8)
 
-        # ── Review acknowledgment (replaces the type-to-confirm phrase) ─
-        # Safe/Optional items are always armed. Review/uncertain items are only
-        # included when the user opts in here — no typing required.
-        self._review_cb: QCheckBox | None = None
+        # ── "Don't ask again" (only when review/uncertain items are present) ─
+        # Review items are already armed; this simply lets the user skip this
+        # confirmation for future review cleanups. It is stored as the existing
+        # confirm_risky_cleanup setting so it stays reversible in Settings.
+        self._dont_ask_cb: QCheckBox | None = None
         if self._review_targets:
-            review_sz = sum(t.get("size_bytes", 0) for t in self._review_targets)
-            self._review_cb = QCheckBox(
-                tr("Also delete the {n} review/uncertain item(s) above ({size}) — "
-                   "sent to the Recycle Bin, recoverable").format(
-                    n=len(self._review_targets), size=_format_size(review_sz))
+            self._dont_ask_cb = QCheckBox(
+                tr("Don't ask again for review/uncertain items")
             )
-            self._review_cb.setStyleSheet("font-size: 12px;")
-            self._review_cb.toggled.connect(self._on_review_ack_toggled)
-            root.addWidget(self._review_cb)
+            self._dont_ask_cb.setStyleSheet("font-size: 12px;")
+            root.addWidget(self._dont_ask_cb)
             root.addSpacing(10)
 
         # ── Progress area (hidden until worker starts) ────────────
@@ -393,6 +393,12 @@ class CleanupConfirmDialog(QDialog):
         self._update_sub_label()
         self._update_confirm_btn()
 
+        # When the user has turned confirmation off, skip straight to the move
+        # (still showing progress/result in this dialog) instead of asking.
+        if self._auto_confirm and self._armed_targets():
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, self._on_confirm)
+
     # ── Event handlers ────────────────────────────────────────────
 
     def _update_sub_label(self):
@@ -400,16 +406,12 @@ class CleanupConfirmDialog(QDialog):
         armed = self._armed_targets()
         size = sum(t.get("size_bytes", 0) for t in armed)
         if not armed:
-            self._sub_lbl.setText(
-                tr("Nothing selected to remove — tick the box below to include "
-                   "review/uncertain items.")
-                if self._review_targets else tr("Nothing to remove.")
-            )
+            self._sub_lbl.setText(tr("Nothing to remove."))
             return
         text = tr("{n} item(s) · {size} will be sent to the Recycle Bin").format(
             n=len(armed), size=_format_size(size))
-        if self._review_targets and not self._review_ack:
-            text += tr("  ·  {n} review item(s) excluded").format(
+        if self._review_targets:
+            text += tr("  ·  includes {n} review/uncertain item(s)").format(
                 n=len(self._review_targets))
         self._sub_lbl.setText(text)
 
@@ -421,11 +423,6 @@ class CleanupConfirmDialog(QDialog):
             return
         cloud_ok = (not self._cloud) or bool(self._cloud_cb and self._cloud_cb.isChecked())
         self._btn_confirm.setEnabled(cloud_ok)
-
-    def _on_review_ack_toggled(self, checked: bool):
-        self._review_ack = bool(checked)
-        self._update_sub_label()
-        self._update_confirm_btn()
 
     def _on_cancel(self):
         if self._worker and self._worker.isRunning():
@@ -440,10 +437,18 @@ class CleanupConfirmDialog(QDialog):
         self._armed = self._armed_targets()
         if not self._armed:
             return
+        # Persist "Don't ask again" before starting — reversible in Settings.
+        if self._dont_ask_cb and self._dont_ask_cb.isChecked():
+            store = getattr(self._scan_state, "_settings_store", None)
+            if store is not None:
+                try:
+                    store.set_and_save("confirm_risky_cleanup", False)
+                except Exception:
+                    pass
         self._btn_confirm.setEnabled(False)
         self._btn_confirm.setText(tr("Moving…"))
-        if self._review_cb:
-            self._review_cb.setEnabled(False)
+        if self._dont_ask_cb:
+            self._dont_ask_cb.setEnabled(False)
         if self._cloud_cb:
             self._cloud_cb.setEnabled(False)
 
