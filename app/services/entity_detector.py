@@ -3270,6 +3270,12 @@ def _postprocess(ctx: "_DetectionContext", t0: float) -> list:
     # owning program, and nothing we cannot.
     _enrich_support_folders(entities)
 
+    # Curated rules for well-known Windows locations (thumbnail cache, package
+    # caches, Windows-installed vendor folders). Annotates generic results and
+    # may raise protection; never talks a specific classification down.
+    from app.services.known_paths import apply_known_path_rules
+    apply_known_path_rules(entities)
+
     # Charge every byte to exactly one entity. Must run after absorption, since
     # only the entities that actually survive can hold a share of the bytes.
     _enforce_disjoint_sizes(ctx, entities, log_fn)

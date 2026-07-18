@@ -121,17 +121,19 @@ testable — no AI needed. Two halves, and **the pattern half is the strong one*
   `.node-red`). Measured top entries: `.ollama` 6.8 GB, `.vscode` 2.8 GB,
   `.lmstudio` 2.65 GB, `.codex` 757 MB, `.claude` 376 MB.
 
-- [ ] **Curated list (for what patterns can't express).**
+- [x] **Curated list (for what patterns can't express).** *(done)*
   e.g. `C:\Program Files (x86)\Microsoft` = Edge / Copilot / OneDrive —
   **Windows-installed components the user never chose**. Label them as such and
   keep them Protected/Review; removing Edge components breaks the OS.
   → `app/services/classification_rules.json` already ships in the build, so
   this has a home and can be updated without a code change.
 
-- [ ] **Precedence must be explicit**, or a stale rule will override a true
-  fact. Proposed order: **registry/filesystem evidence → curated rules →
-  patterns → heuristics → AI.** Rules annotate; they never overrule verified
-  evidence.
+- [x] **Precedence is explicit.** *(done)* Implemented as: a curated rule may
+  relabel a *generic* classification, and may **always raise caution** — but it
+  can never talk a specific classification down. That last direction matters
+  both ways: `Package Cache` looks like a plain cache by content, yet removing
+  it costs offline repair, so the rule lifts it Safe → Optional; conversely a
+  rule cannot downgrade something a pass identified specifically.
 
 - [x] **Owner detection — SAFETY-CRITICAL.** *(done, and deliberately limited)*
   Built `app/services/app_presence.py`: an alias table plus five evidence
