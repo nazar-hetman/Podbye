@@ -141,6 +141,16 @@ These are bugs where the UI can mislead someone into deleting the wrong thing.
   → What remains is genuinely miscellaneous: loose "Misc files in …" buckets in
   Downloads/Documents/profile, and a small `bin` folder.
 
+- [x] **Browser caches split from profile data.** *(done)*
+  A browser profile is mostly irreplaceable — passwords, cookies, history,
+  bookmarks — so the whole tree sat at Review and its cache went unnoticed
+  inside it. Measured: **794 MB of the 6.35 GB Chrome profile is pure cache**,
+  613 MB of that under Service Worker alone.
+  → Caches are now separated before the profile is claimed, so **776 MB across
+  Chrome + Edge is offered as Safe** while 5.7 GB of profile data stays Review.
+  Precise about what is disposable: `Service Worker/CacheStorage` and
+  `ScriptCache` are taken, its `Database` (registrations) is not.
+
 ### Built-in knowledge base (rules + AI hybrid)
 
 The single highest-leverage way to shrink "Unknown". Deterministic, fast, and

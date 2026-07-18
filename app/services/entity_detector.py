@@ -2125,6 +2125,59 @@ def _pass2b_app_markers(ctx: "_DetectionContext"):
             f"entities: {ctx.entities_created}")
 
 
+# Folder names inside a browser profile that hold regenerable cached data.
+# Deliberately precise: "Service Worker" as a whole is NOT here — it also holds
+# the registration Database — so only its two cache children are listed.
+_BROWSER_CACHE_DIRS = {
+    "cache", "code cache", "gpucache", "shadercache", "grshadercache",
+    "dawngraphitecache", "dawnwebgpucache", "media cache",
+    "cachestorage", "scriptcache",
+}
+
+
+def _pass_browser_caches(ctx: "_DetectionContext"):
+    """Split regenerable caches out of browser profiles.
+
+    A browser profile is mostly irreplaceable — passwords, cookies, history,
+    bookmarks — so the whole tree sits at Review and its cache goes unnoticed
+    inside it. Measured on a real profile: 794 MB of the 6.35 GB Chrome folder
+    is pure cache, 613 MB of it under Service Worker alone.
+
+    Runs before the profile pass so the caches are claimed first and the profile
+    keeps everything else. Only the cache children of Service Worker are taken;
+    its Database holds registrations and is left alone.
+    """
+    ctx.log("[smart] pre-pass: separating browser caches from profile data...")
+    found = 0
+    for f in ctx.all_dirs:
+        norm = f.path.replace("\\", "/").lower().rstrip("/")
+        if norm in ctx.claimed_paths:
+            continue
+        if f.name.lower() not in _BROWSER_CACHE_DIRS:
+            continue
+        # Must actually sit inside browser storage — a folder called "Cache" in
+        # a source tree is not browser data.
+        if "user data" not in norm and "profiles" not in norm:
+            continue
+        browser = next((b.title() for b in _BROWSER_KEYWORDS if b in norm), "Browser")
+        # Name by location, not just the folder name: a profile holds several
+        # folders literally called "Cache", and leaving them identical makes the
+        # disambiguator append the same word again ("Cache (Cache)").
+        parent = os.path.basename(os.path.dirname(f.path.replace("\\", "/")))
+        where = f"{parent} / {f.name}" if parent else f.name
+        ent = _build_entity(
+            ctx, f.path, f"{browser} cache · {where}", "cache_folder",
+            ctx.sample(norm),
+            f"Cached web content — {browser} rebuilds it as you browse; "
+            "your passwords, cookies, history and bookmarks are untouched",
+        )
+        fc = ctx.claim(norm)
+        ctx.emit_entity(ent, fc)
+        found += 1
+    if found:
+        ctx.log(f"[smart]   → separated {found} browser cache folder(s)")
+
+
 def _pass3_browser_profiles(ctx: "_DetectionContext"):
     """Pass 3 - browser profile/data folders, by path keyword + context."""
     ctx.log("[smart] pass 3: detecting browser profiles...")
@@ -3522,6 +3575,8 @@ def detect_entities(
     _pass1_known_dirs(ctx)
     _pass2_installed_apps(ctx)
     _pass2b_app_markers(ctx)
+    # Caches first, so the profile pass claims only the irreplaceable data.
+    _pass_browser_caches(ctx)
     _pass3_browser_profiles(ctx)
     _pass3b_games(ctx)
     _pass4_cache_folders(ctx)
