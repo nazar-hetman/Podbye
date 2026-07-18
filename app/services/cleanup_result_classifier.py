@@ -1,8 +1,17 @@
-"""Rule-based cleanup result classification and human-readable explanations."""
+"""Rule-based cleanup result classification and human-readable explanations.
+
+Every user-facing string here goes through tr() **at call time**, not at import
+time: the language can change while the app is running, and a table translated
+once at import would keep whatever language was active at startup.
+
+The rule tables below therefore hold English source text, which is also the
+translation key.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from app.i18n import tr
 
 STATE_SUCCESS = "success"
 STATE_PARTIAL = "partial"
@@ -119,7 +128,7 @@ def assess_cleanup_counts(
     cleanup (e.g. "Quick Cleanup" or "the cleanup"). It keeps the guidance
     accurate regardless of which flow triggered the cleanup.
     """
-    label = category_label or "This category"
+    label = category_label or tr("This category")
 
     if succeeded_count == 0 and in_use_count == 0 and failed_count == 0 and skipped_count == 0:
         return CleanupAssessment(
@@ -128,15 +137,17 @@ def assess_cleanup_counts(
             in_use_count=in_use_count,
             failed_count=failed_count,
             skipped_count=skipped_count,
-            short_label="already clean",
-            item_label="nothing removable found",
-            breakdown_label="already clean",
-            summary_key_label="Status",
-            summary_value="Already clean",
+            short_label=tr("already clean"),
+            item_label=tr("nothing removable found"),
+            breakdown_label=tr("already clean"),
+            summary_key_label=tr("Status"),
+            summary_value=tr("Already clean"),
             explanation_text=(
-                f"There was nothing removable left in {label}.\n\n"
-                "This usually means the category was already cleaned or there was "
-                f"nothing left for {retry_label} to remove."
+                tr("There was nothing removable left in {label}.", label=label)
+                + "\n\n"
+                + tr("This usually means the category was already cleaned or "
+                     "there was nothing left for {retry} to remove.",
+                     retry=retry_label)
             ),
         )
 
@@ -151,69 +162,77 @@ def assess_cleanup_counts(
             in_use_count=in_use_count,
             failed_count=failed_count,
             skipped_count=skipped_count,
-            short_label="nothing to clean",
-            item_label=f"{skipped_count:,} protected item(s) skipped",
-            breakdown_label="all protected",
-            summary_key_label="Skipped",
-            summary_value=f"{skipped_count:,} protected",
+            short_label=tr("nothing to clean"),
+            item_label=tr("{n:,} protected item(s) skipped", n=skipped_count),
+            breakdown_label=tr("all protected"),
+            summary_key_label=tr("Skipped"),
+            summary_value=tr("{n:,} protected", n=skipped_count),
             explanation_text=(
-                f"Nothing was removed from {label}.\n\n"
-                f"{skipped_count:,} item(s) are protected and were skipped to keep "
-                "your system safe — protected items are never moved to the Recycle Bin."
+                tr("Nothing was removed from {label}.", label=label) + "\n\n"
+                + tr("{n:,} item(s) are protected and were skipped to keep your "
+                     "system safe — protected items are never moved to the "
+                     "Recycle Bin.", n=skipped_count)
             ),
         )
 
     if failed_count > 0:
-        value = f"{failed_count:,} unexpected issue(s)"
+        value = tr("{n:,} unexpected issue(s)", n=failed_count)
         if in_use_count:
-            value = f"{in_use_count:,} in use · {failed_count:,} need attention"
+            value = tr("{locked:,} in use · {failed:,} need attention",
+                       locked=in_use_count, failed=failed_count)
         return CleanupAssessment(
             state=STATE_FAILED,
             succeeded_count=succeeded_count,
             in_use_count=in_use_count,
             failed_count=failed_count,
             skipped_count=skipped_count,
-            short_label="needs attention",
+            short_label=tr("needs attention"),
             item_label=(
-                f"✓  {succeeded_count:,} moved · {failed_count:,} unexpected"
+                tr("✓  {moved:,} moved · {failed:,} unexpected",
+                   moved=succeeded_count, failed=failed_count)
                 if succeeded_count
-                else f"{failed_count:,} could not be cleaned"
+                else tr("{n:,} could not be cleaned", n=failed_count)
             ),
-            breakdown_label="needs attention",
-            summary_key_label="Failed" if not in_use_count else "Status",
+            breakdown_label=tr("needs attention"),
+            summary_key_label=tr("Failed") if not in_use_count else tr("Status"),
             summary_value=value,
             explanation_text=(
-                "Windows returned an unexpected cleanup error for part of this category.\n\n"
-                "This is different from a normal locked-file case, so Vigil left those "
-                "items alone instead of forcing the cleanup.\n\n"
-                "You can:\n"
-                "• restart Windows\n"
-                f"• run {retry_label} again\n"
-                "• if this keeps happening, review the affected folder manually"
+                tr("Windows returned an unexpected cleanup error for part of "
+                   "this category.") + "\n\n"
+                + tr("This is different from a normal locked-file case, so Vigil "
+                     "left those items alone instead of forcing the cleanup.")
+                + "\n\n" + tr("You can:") + "\n"
+                + "• " + tr("restart Windows") + "\n"
+                + "• " + tr("run {retry} again", retry=retry_label) + "\n"
+                + "• " + tr("if this keeps happening, review the affected folder "
+                            "manually")
             ),
         )
 
     if in_use_count > 0:
         rule = _EXPECTED_RULES.get(category_key or "", _fallback_expected_rule())
-        intro = rule["intro"]
+        intro = tr(rule["intro"])
         if succeeded_count > 0:
-            intro = f"Most removable files were cleaned. {intro}"
+            intro = tr("Most removable files were cleaned.") + " " + intro
             state = STATE_PARTIAL
-            short_label = "partial cleanup"
-            item_label = f"✓  {succeeded_count:,} moved · {in_use_count:,} locked"
-            breakdown_label = "partial cleanup"
+            short_label = tr("partial cleanup")
+            item_label = tr("✓  {moved:,} moved · {locked:,} locked",
+                            moved=succeeded_count, locked=in_use_count)
+            breakdown_label = tr("partial cleanup")
         else:
             state = STATE_IN_USE
-            short_label = "in use by system"
-            item_label = f"{in_use_count:,} files currently in use"
-            breakdown_label = "in use by system"
+            short_label = tr("in use by system")
+            item_label = tr("{n:,} files currently in use", n=in_use_count)
+            breakdown_label = tr("in use by system")
 
-        actions = [action.format(retry=retry_label) for action in rule["actions"]]
+        # Each action is a translation key in its own right; {retry} is filled
+        # after translation so the placeholder survives.
+        actions = [tr(action, retry=retry_label) for action in rule["actions"]]
         explanation = (
             f"{intro}\n\n"
-            f"{rule['context']}\n\n"
-            "This is normal and does not mean cleanup failed.\n\n"
-            "To fully clean this category:\n"
+            + tr(rule["context"]) + "\n\n"
+            + tr("This is normal and does not mean cleanup failed.") + "\n\n"
+            + tr("To fully clean this category:") + "\n"
             + "\n".join(f"• {action}" for action in actions)
         )
         return CleanupAssessment(
@@ -225,8 +244,8 @@ def assess_cleanup_counts(
             short_label=short_label,
             item_label=item_label,
             breakdown_label=breakdown_label,
-            summary_key_label="Skipped",
-            summary_value=f"{in_use_count:,} locked / in use",
+            summary_key_label=tr("Skipped"),
+            summary_value=tr("{n:,} locked / in use", n=in_use_count),
             explanation_text=explanation,
             actions=actions,
         )
@@ -237,14 +256,15 @@ def assess_cleanup_counts(
         in_use_count=in_use_count,
         failed_count=failed_count,
         skipped_count=skipped_count,
-        short_label="cleaned",
-        item_label=f"✓  {succeeded_count:,} moved",
-        breakdown_label="cleaned",
-        summary_key_label="Status",
-        summary_value="Cleaned successfully",
+        short_label=tr("cleaned"),
+        item_label=tr("✓  {n:,} moved", n=succeeded_count),
+        breakdown_label=tr("cleaned"),
+        summary_key_label=tr("Status"),
+        summary_value=tr("Cleaned successfully"),
         explanation_text=(
-            f"{label} was cleaned successfully.\n\n"
-            "All removable files in this category were moved safely. "
-            "Anything that was cleaned remains recoverable in the Recycle Bin."
+            tr("{label} was cleaned successfully.", label=label) + "\n\n"
+            + tr("All removable files in this category were moved safely. "
+                 "Anything that was cleaned remains recoverable in the "
+                 "Recycle Bin.")
         ),
     )
