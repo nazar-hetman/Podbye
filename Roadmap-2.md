@@ -10,7 +10,7 @@ Update the checkbox and add a short `→ note` when something lands.
 
 ---
 
-## Phase 1 — Data safety & correctness (do first)
+## Phase 1 — Data safety & correctness ✅ COMPLETE
 
 These are bugs where the UI can mislead someone into deleting the wrong thing.
 
@@ -65,9 +65,23 @@ These are bugs where the UI can mislead someone into deleting the wrong thing.
   the accounting ratio is 1.000. Risk is Review — a download may be precious or
   disposable, so the user decides.
 
-- [ ] **User directories (Videos / Documents / Images).** Show individual files
-  cleanly; group sub-folders as app-specific media instead of breaking the
-  layout.
+- [x] **User directories (Videos / Documents / Images).** *(done)*
+  Individual files were already shown cleanly once loose buckets carried their
+  real folder (first item above). What remained was the sub-folders: probed on
+  the real profile, `Documents\Klei` — 58 MB of Don't Starve save data — showed
+  as **"Klei · documents and code & config"** typed `unknown_folder`, i.e. as
+  noise, and it counted toward the Unknown pile.
+  → Fix: a direct child of Documents / Videos / Pictures / Music / Saved Games
+  is application data. Those entities now carry the clean folder name, the
+  `application_data` type and the "Application Data" category. Grouping, sizes
+  and containment are untouched — only the label and type change.
+  → Verified on the real profile: `Klei`, `grassdata` and `Mission Planner` are
+  now App Data instead of Unknown, which also chips away at Phase 3's target.
+  → Deliberately **not** decided here: whether the owning app is still
+  installed. That needs alias handling and multiple evidence sources to be
+  safe (see the knowledge-base section) — a wrong "orphaned" verdict would
+  invite deleting live data. A test asserts this rule never claims an app is
+  missing or the folder is deletable.
 
 ## Phase 2 — Quick wins
 

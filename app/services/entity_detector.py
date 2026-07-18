@@ -2862,6 +2862,50 @@ def _collect_known_game_names(ctx: "_DetectionContext", entities: list) -> set:
     return names
 
 
+# Default Windows content folders. A folder sitting directly inside one of
+# these was almost always created BY an application to store its data there —
+# Documents/Klei (Don't Starve saves), Documents/My Games, Pictures/<app>.
+_USER_CONTENT_ROOT_NAMES = {
+    "documents", "my documents", "videos", "my videos",
+    "pictures", "my pictures", "music", "my music", "saved games",
+}
+
+
+def _enrich_user_content_subfolders(entities: list) -> int:
+    """Name app-owned folders in Documents/Videos/Pictures/Music honestly.
+
+    A direct child of a user content folder is application data, not an
+    unclassified pile: Documents/Klei (58 MB of Don't Starve saves) was showing
+    as "Klei · documents and code & config" typed unknown_folder, which tells
+    the user nothing and reads as noise.
+
+    Only the label and type change — the folder is still grouped exactly as
+    before, so sizes and containment are untouched. Whether the owning app is
+    still installed is deliberately NOT decided here: that needs alias handling
+    and several evidence sources to be safe (see the knowledge-base plan), and
+    a wrong "orphaned" verdict would invite deleting live data.
+    """
+    changed = 0
+    for e in entities:
+        if e.entity_type not in ("unknown_folder", "mixed_folder"):
+            continue
+        norm = e.path.replace("\\", "/").rstrip("/")
+        parent_leaf = os.path.basename(os.path.dirname(norm)).lower()
+        if parent_leaf not in _USER_CONTENT_ROOT_NAMES:
+            continue
+        leaf = os.path.basename(norm)
+        if not leaf:
+            continue
+        where = os.path.basename(os.path.dirname(norm))
+        e.entity_type = "application_data"
+        e.name = leaf                      # drop the "· docs and code" noise
+        e.risk_reason = (f"Application data stored in {where} by {leaf} — "
+                         "keep it if you still use that program")
+        e.summary = f"App data · {leaf} · stored in {where}"
+        changed += 1
+    return changed
+
+
 def _enrich_game_saves(ctx: "_DetectionContext", entities: list):
     """Give every game_saves entity an owning game and install status.
 
@@ -3173,6 +3217,10 @@ def _postprocess(ctx: "_DetectionContext", t0: float) -> list:
     # absorption so every game/app entity that could be an "owner" already
     # exists in the list.
     _enrich_game_saves(ctx, entities)
+
+    # Folders sitting directly in Documents/Videos/Pictures/Music are app data,
+    # not unclassified piles — label them as such.
+    _enrich_user_content_subfolders(entities)
 
     # Charge every byte to exactly one entity. Must run after absorption, since
     # only the entities that actually survive can hold a share of the bytes.
