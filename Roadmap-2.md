@@ -64,34 +64,69 @@ These are bugs where the UI can mislead someone into deleting the wrong thing.
   This is the most valuable classification work and it is measurable: re-run
   the C:/ scan and compare the Unknown total.
 
-- [ ] **Static path rules (rules + AI hybrid).** Local JSON of known
-  application paths (Chrome, Edge, VS Code, …), e.g. recognising
-  `C:\Program Files (x86)\Microsoft` as built-in Windows/Edge components.
-  → `app/services/classification_rules.json` already exists and ships in the
-  build, so this has a home. Keep it *complementary* to registry detection,
-  which stays authoritative — a hardcoded list drifts and can't be complete.
+### Built-in knowledge base (rules + AI hybrid)
 
-- [ ] **Orphaned app data detection.** For config folders like
-  `C:\Users\<user>\.something`: if the parent app is installed → "Active app
-  configuration files"; if missing → "Orphaned files (safe to delete if the
-  app was uninstalled)".
-  → Reuses the installed-check already built for game saves
-  (`Installed: True/False`), so this is mostly wiring, not new logic.
+The single highest-leverage way to shrink "Unknown". Deterministic, fast, and
+testable — no AI needed. Two halves, and **the pattern half is the strong one**:
+
+- [ ] **Pattern rules (do these first — they scale).**
+  A single rule — "a dotfolder in the user profile is support data for
+  `<name>`" — already covers **34 folders / 14.25 GB** on this machine, and it
+  works for apps no curated list would ever contain (`.irizi`, `.nexe`,
+  `.node-red`). Measured top entries: `.ollama` 6.8 GB, `.vscode` 2.8 GB,
+  `.lmstudio` 2.65 GB, `.codex` 757 MB, `.claude` 376 MB.
+
+- [ ] **Curated list (for what patterns can't express).**
+  e.g. `C:\Program Files (x86)\Microsoft` = Edge / Copilot / OneDrive —
+  **Windows-installed components the user never chose**. Label them as such and
+  keep them Protected/Review; removing Edge components breaks the OS.
+  → `app/services/classification_rules.json` already ships in the build, so
+  this has a home and can be updated without a code change.
+
+- [ ] **Precedence must be explicit**, or a stale rule will override a true
+  fact. Proposed order: **registry/filesystem evidence → curated rules →
+  patterns → heuristics → AI.** Rules annotate; they never overrule verified
+  evidence.
+
+- [ ] **Orphaned vs active app data — SAFETY-CRITICAL, see finding below.**
+  If the owning app is installed → "Active app configuration files".
+  If genuinely absent → "Orphaned files (safe to delete if uninstalled)".
+
+> **⚠ Verified risk — do not ship the naive version.**
+> Matching a dotfolder name against the uninstall registry gets it wrong most
+> of the time. Probed on this machine: `.vscode` (2.8 GB) and `.lmstudio`
+> (2.65 GB) are **not** found by name, yet both apps are installed —
+> **7 of 11 probed apps would be mislabelled "orphaned, safe to delete"**,
+> risking ~5.4 GB of real data. Modern apps install per-user, as MSIX, or
+> portable, and never touch the classic uninstall key.
+>
+> Requirements before this ships:
+> 1. **Alias table** (`.vscode` → "Visual Studio Code"). This is where a
+>    curated list genuinely earns its keep — as *aliases*, not paths.
+> 2. **Multiple evidence sources**: uninstall registry, `%LOCALAPPDATA%\Programs`,
+>    Start-Menu shortcuts, PATH executables, running processes.
+> 3. **Fail safe** — absence of evidence is not evidence of absence. If the app
+>    cannot be confirmed missing, mark **Review / "could not verify"**, never Safe.
+> 4. **Never auto-mark large payload folders Safe.** `.ollama` is 6.8 GB of
+>    downloaded models; deleting it is a re-download decision, not a cleanup.
 
 ## Phase 4 — AI backends
 
-- [ ] **LM Studio and llama.cpp support.** Both expose OpenAI/Ollama-compatible
-  HTTP APIs, so this is mostly endpoint + response-shape handling on top of
-  the Local/Server toggle that already exists.
+**Scope (confirmed):** local models only, running on this machine or on a
+mini-PC / home server on the **same network**. No cloud APIs — the existing
+LAN-only guard and the "no cloud processing" promise stay exactly as they are.
+The Local/Server toggle already provides the endpoint; what's left is speaking
+each backend's API.
 
-- [?] **Remote API servers — needs a product decision.**
-  The client deliberately refuses anything that is not loopback/LAN
-  (`is_local_endpoint`), and the About screen promises *"No cloud processing.
-  Decisions stay on your machine."* A home-server or Mini-PC on the **LAN** is
-  already supported by the Server toggle. Allowing a genuinely **remote/cloud**
-  endpoint would break that promise, so it should be an explicit, consented
-  choice with clear UI — not a quiet feature flag. Decide the scope before
-  building.
+- [ ] **Support the three popular local runtimes: Ollama, LM Studio, llama.cpp.**
+  Ollama works today (`/api/generate`). LM Studio and llama.cpp both serve an
+  **OpenAI-compatible** `/v1/chat/completions`, so one extra request/response
+  shape covers both.
+  → Design note: auto-detect the backend by probing `/api/tags` (Ollama) then
+  `/v1/models` (OpenAI-compatible) so the user doesn't have to declare which
+  server they're running — it should just work after entering the address.
+  → `strip_reasoning()` already handles `<think>` output, which matters here:
+  llama.cpp and LM Studio commonly serve reasoning models.
 
 ## Phase 5 — Languages (last, by agreement)
 
@@ -105,7 +140,9 @@ These are bugs where the UI can mislead someone into deleting the wrong thing.
 
 ## Phase 6 — Cross-platform (recommend deferring)
 
-- [?] **Linux support — bigger than it looks; suggest not doing it yet.**
+Agreed as a good addition, but **not urgent** — parked here deliberately.
+
+- [ ] **Linux support — worth doing eventually; bigger than it looks.**
   This is not "add Linux paths". Windows-specific APIs span 8 modules:
   `winreg` (installed apps, startup entries), `win32com` (shortcuts),
   `shell32` (Recycle Bin), `%APPDATA%` layout, and Task Scheduler. Startup
