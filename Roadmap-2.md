@@ -14,13 +14,20 @@ Update the checkbox and add a short `→ note` when something lands.
 
 These are bugs where the UI can mislead someone into deleting the wrong thing.
 
-- [!] **Loose media / documents show the drive root as their path.**
+- [x] **Loose media / documents showed the drive root as their path.** *(fixed)*
   Reproduced on this machine: scanning `C:\Users\Nazar\Desktop` produced
   `Loose documents` (15 files) and `Loose media files` (2 files) whose `path`
-  is `C:/`. A user reviewing them sees "drive root junk" when the files are
-  actually on the Desktop. Loose-file buckets must carry their real parent
-  folder, and the UI must show it.
-  → Highest priority item on this roadmap.
+  was `C:/`.
+  → Cause: only the *misc* bucket split by parent folder; every other bucket
+  (documents, media, archives, databases, models, logs) emitted one entity
+  rooted at the scan target. Beyond the wrong label this **merged unrelated
+  folders into a single deletable bucket**, so one click could recycle files
+  from all over the disk.
+  → Fix: every loose bucket now splits by parent directory and is named for it
+  ("Loose documents in Desktop"). Verified on a full C:/ scan — 1.6M files, no
+  entity misreports its location, and no entity lists a file outside its own
+  folder. Entity count went **down** (904 → 741), so the split did not add
+  noise. Files genuinely sitting in `C:\` still use the root, correctly.
 
 - [ ] **Rule 1 — App boundaries.** A database/image/video/logo inside a
   recognised application's install folder is part of that app, never loose

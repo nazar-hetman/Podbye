@@ -2589,6 +2589,42 @@ def _pass8_loose_files(ctx: "_DetectionContext"):
             name = stripped or "root"
         return name
 
+    def _emit_dir_split(bucket_type: str, files: list, label: str) -> int:
+        """Emit one entity per parent directory, returning how many were made.
+
+        EVERY loose bucket is split by folder, not just the misc catch-all.
+        A single bucket rooted at the scan target reported the drive root as
+        its path — "Loose documents" at "C:/" for files actually sitting on the
+        Desktop. That hides where the files really are, and worse, it merges
+        unrelated folders into one entity so a single click would recycle files
+        from all over the disk.
+        """
+        by_dir: dict[str, list[Finding]] = defaultdict(list)
+        for f in files:
+            by_dir[f.parent].append(f)
+        emitted = 0
+        for dir_path, dir_files in sorted(
+            by_dir.items(), key=lambda x: -sum(f.size_bytes for f in x[1])
+        ):
+            total_sz = sum(f.size_bytes for f in dir_files)
+            ent = SmartEntity(
+                path=dir_path,
+                name=f"{label} in {_dir_display_name(dir_path)}",
+                entity_type=bucket_type,
+                size_bytes=total_sz,
+                file_count=len(dir_files),
+                folder_count=0,
+                modified=max((f.modified for f in dir_files), default=0),
+                accessed=max((f.accessed for f in dir_files), default=0),
+                children_sample=[f.name for f in dir_files[:15]],
+                removable_file_paths=[f.path for f in dir_files],
+            )
+            ctx.emit_entity(ent)
+            for f in dir_files:
+                ctx.claimed_paths.add(f.path.replace("\\", "/").lower())
+            emitted += 1
+        return emitted
+
     pass8_entities = 0
     for bucket_type, bucket_files in _buckets.items():
         if not bucket_files:
@@ -2626,23 +2662,8 @@ def _pass8_loose_files(ctx: "_DetectionContext"):
                 pass8_entities += 1
 
             if arch_files:
-                total_sz = sum(f.size_bytes for f in arch_files)
-                ent = SmartEntity(
-                    path=ctx.target_root,
-                    name=_BUCKET_LABELS["archive_group"],
-                    entity_type="archive_group",
-                    size_bytes=total_sz,
-                    file_count=len(arch_files),
-                    folder_count=0,
-                    modified=max((f.modified for f in arch_files), default=0),
-                    accessed=max((f.accessed for f in arch_files), default=0),
-                    children_sample=[f.name for f in arch_files[:15]],
-                    removable_file_paths=[f.path for f in arch_files],
-                )
-                ctx.emit_entity(ent)
-                for f in arch_files:
-                    ctx.claimed_paths.add(f.path.replace("\\", "/").lower())
-                pass8_entities += 1
+                pass8_entities += _emit_dir_split(
+                    "archive_group", arch_files, _BUCKET_LABELS["archive_group"])
 
         elif bucket_type == "mixed_folder":
             # Always split misc files by parent directory so the location
@@ -2678,24 +2699,8 @@ def _pass8_loose_files(ctx: "_DetectionContext"):
                 pass8_entities += 1
 
         else:
-            total_sz = sum(f.size_bytes for f in bucket_files)
             label = _BUCKET_LABELS.get(bucket_type, "Uncategorized files")
-            ent = SmartEntity(
-                path=ctx.target_root,
-                name=label,
-                entity_type=bucket_type,
-                size_bytes=total_sz,
-                file_count=len(bucket_files),
-                folder_count=0,
-                modified=max((f.modified for f in bucket_files), default=0),
-                accessed=max((f.accessed for f in bucket_files), default=0),
-                children_sample=[f.name for f in bucket_files[:15]],
-                removable_file_paths=[f.path for f in bucket_files],
-            )
-            ctx.emit_entity(ent)
-            for f in bucket_files:
-                ctx.claimed_paths.add(f.path.replace("\\", "/").lower())
-            pass8_entities += 1
+            pass8_entities += _emit_dir_split(bucket_type, bucket_files, label)
 
     ctx.log(f"[smart]   → bucketed {len(loose_files):,} loose files into "
             f"{pass8_entities} entities")
