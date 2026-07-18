@@ -50,8 +50,20 @@ These are bugs where the UI can mislead someone into deleting the wrong thing.
   → Re-verified on real data: all 24 entities in those subtrees are now
   Protected, 0 unprotected.
 
-- [ ] **Downloads folder.** Treat strictly as a collection of standalone files;
-  never parse as a unified application directory.
+- [x] **Downloads folder.** *(fixed)*
+  Probed on the real Downloads: top-level files were already handled well
+  (installers became individual entities), but a *downloaded folder* shattered —
+  one extracted Qt build produced "Misc files in release", ".cache",
+  "Misc files in translations", "Misc files in QtQml" and more, none meaningful
+  on its own.
+  → Fix: a `_pass_downloads` pre-pass claims each direct child folder of a
+  Downloads folder as one `download_item` entity before any generic pass can
+  break it up, and claims Downloads itself as a pass-through node so loose
+  files still bucket individually rather than collapsing into one blob.
+  → Verified on the real folder: the extracted download is now **1 entity**
+  (was 3), installers stay individual, loose files still bucket per type, and
+  the accounting ratio is 1.000. Risk is Review — a download may be precious or
+  disposable, so the user decides.
 
 - [ ] **User directories (Videos / Documents / Images).** Show individual files
   cleanly; group sub-folders as app-specific media instead of breaking the

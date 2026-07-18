@@ -59,6 +59,9 @@ ENTITY_TYPES = {
     # Documents
     "document_folder":  "Documents Folder",
 
+    # Downloads — one entity per downloaded item, never a merged blob
+    "download_item":    "Downloaded Item",
+
     # Cache & Temp
     "cache_folder":     "Cache / Temp Folder",
     "temp_folder":      "Temporary Files",
@@ -128,6 +131,9 @@ _ENTITY_RISK = {
     
     # Documents
     "document_folder":  "Review",
+
+    # Downloads — the user decides; a download may be precious or disposable
+    "download_item":    "Review",
     
     # Cache & Temp
     "cache_folder":     "Safe",
@@ -206,6 +212,9 @@ _CATEGORY_BY_TYPE = {
 
     # Documents
     "document_folder": "Documents",
+
+    # Downloads
+    "download_item": "Downloads",
 
     # Browser Data
     "browser_profile": "Browser Data",

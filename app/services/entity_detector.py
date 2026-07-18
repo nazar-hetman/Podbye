@@ -966,6 +966,15 @@ def _safety_correct_entity_type(path: str, entity_type: str) -> tuple[str, str]:
 # ── Heterogeneous user-root explosion ─────────────────────────────
 # Multi-purpose dump folders that should be broken into per-subfolder
 # entities rather than shown as one opaque blob.
+_DOWNLOAD_ROOT_NAMES = {"downloads", "download"}
+
+
+def _is_download_root(path: str) -> bool:
+    """True when *path* is a Downloads folder (the user's or any other)."""
+    return os.path.basename(path.replace("\\", "/").rstrip("/")).lower() \
+        in _DOWNLOAD_ROOT_NAMES
+
+
 _MULTIPURPOSE_ROOT_NAMES = {
     "documents", "document", "my documents", "downloads", "download",
     "desktop", "personal",
@@ -1724,6 +1733,49 @@ def _pass_game_save_engines(ctx: "_DetectionContext"):
         ctx.log(f"[smart]   mapped {pass_entities} per-game save folder(s)")
 
 
+def _pass_downloads(ctx: "_DetectionContext"):
+    """Downloads is a collection of individual downloads — never one blob.
+
+    Each direct child FOLDER is a single downloaded item (an extracted archive,
+    an installer's payload, a cloned repo) and is claimed whole. Without this
+    the folder is treated like any other tree and one download shatters into
+    unrelated fragments — a single extracted Qt build produced "Misc files in
+    release", ".cache", "Misc files in translations", "Misc files in QtQml" and
+    more, none of which means anything on its own.
+
+    The Downloads folder itself is then claimed as a pass-through node (no
+    entity of its own) so its loose files still bucket individually instead of
+    collapsing into one "Downloads" blob.
+    """
+    ctx.log("[smart] pre-pass: mapping Downloads to individual items...")
+    items = 0
+    for f in ctx.all_dirs:
+        norm = f.path.replace("\\", "/").lower().rstrip("/")
+        if norm in ctx.claimed_paths or not _is_download_root(f.path):
+            continue
+
+        for child in ctx.children_index.get(norm, []):
+            if not child.is_dir:
+                continue
+            c_norm = child.path.replace("\\", "/").lower().rstrip("/")
+            if c_norm in ctx.claimed_paths:
+                continue
+            ent = _build_entity(
+                ctx, child.path, child.name, "download_item",
+                ctx.sample(c_norm), "Downloaded item — kept whole",
+            )
+            fc = ctx.claim(c_norm)
+            ctx.emit_entity(ent, fc)
+            items += 1
+
+        # Pass-through claim: no blob entity for Downloads itself, so its loose
+        # files fall through to the per-type/per-folder bucketer.
+        ctx.claimed_paths.add(norm)
+
+    if items:
+        ctx.log(f"[smart]   → mapped {items} downloaded item(s)")
+
+
 def _pass1_known_dirs(ctx: "_DetectionContext"):
     """Pass 1 - known directory names (node_modules, venv, cache, .git, ...).
 
@@ -2296,7 +2348,6 @@ def _pass_explode_user_roots(ctx: "_DetectionContext"):
         # lets each version/tool subfolder fragment into its own "Qt (…)".
         if norm in ctx.installed_apps or (norm + "/") in ctx.installed_apps:
             continue
-
         subdirs = [
             c for c in ctx.gather_direct(norm)
             if c.is_dir
@@ -3268,6 +3319,9 @@ def detect_entities(
     _pass0_update_caches(ctx)
     _pass_appdata_packages(ctx)
     _pass_game_save_engines(ctx)
+    # Downloads first: each downloaded folder is claimed whole before any
+    # generic pass can shatter it into fragments.
+    _pass_downloads(ctx)
     # Explode diverse dump roots BEFORE pass 1, otherwise generic names like
     # "documents"/"downloads" in _DIR_ENTITY_MAP get claimed as one blob first.
     _pass_explode_user_roots(ctx)
