@@ -144,3 +144,76 @@ def test_background_save_survives_concurrent_finding_ingest(sessions_dir):
 
 def test_wait_for_saves_returns_true_when_idle(sessions_dir):
     assert ScanState().wait_for_saves(timeout=1.0) is True
+
+
+# ── session size: the freeze that made reopening a scan unusable ──
+
+
+def _many_findings(n):
+    return [Finding(path=f"C:/x/d{i%100}/f{i}.log", name=f"f{i}.log", is_dir=False,
+                    size_bytes=1000, extension=".log", modified=1, accessed=1,
+                    parent=f"C:/x/d{i%100}") for i in range(n)]
+
+
+def _entities(n):
+    from app.models.smart_entity import SmartEntity
+    return [SmartEntity(path=f"C:/x/d{i}", name=f"d{i}", entity_type="cache_folder",
+                        size_bytes=1000, file_count=10, folder_count=1)
+            for i in range(n)]
+
+
+def test_a_large_scan_does_not_persist_every_raw_finding(sessions_dir):
+    """A full C:/ scan holds ~1.6M findings. Writing them produced 1.6 GB
+    session files (17 GB across the retained history), and reopening one parsed
+    that JSON and rebuilt every object on the UI thread — freezing the app."""
+    import json
+    from app.state.scan_state import ScanState, _LARGE_SCAN_THRESHOLD
+
+    st = ScanState()
+    st.add_findings(_many_findings(_LARGE_SCAN_THRESHOLD + 5000))
+    st._entities = _entities(300)
+    snap = st._build_snapshot("completed")
+
+    assert snap["findings_omitted"] is True
+    assert snap["findings"] == []
+    size_mb = len(json.dumps(snap, default=str)) / 1e6
+    assert size_mb < 5, f"snapshot is {size_mb:.1f} MB — the freeze is back"
+
+
+def test_entities_are_always_kept_because_findings_renders_them(sessions_dir):
+    """Dropping entities would leave a reopened session with nothing to show."""
+    from app.state.scan_state import ScanState, _LARGE_SCAN_THRESHOLD
+    st = ScanState()
+    st.add_findings(_many_findings(_LARGE_SCAN_THRESHOLD + 1000))
+    st._entities = _entities(250)
+    for lightweight in (True, False):
+        snap = st._build_snapshot("running", lightweight=lightweight)
+        assert len(snap["entities"]) == 250, (
+            f"lightweight={lightweight} dropped the entities the UI needs")
+
+
+def test_reopening_a_large_session_is_fast(sessions_dir):
+    import json
+    import time
+    from app.state.scan_state import ScanState, _LARGE_SCAN_THRESHOLD
+    st = ScanState()
+    st.add_findings(_many_findings(_LARGE_SCAN_THRESHOLD + 5000))
+    st._entities = _entities(300)
+    blob = json.dumps(st._build_snapshot("completed"), default=str)
+
+    start = time.time()
+    restored = ScanState()
+    restored.restore_from_session(json.loads(blob))
+    elapsed = time.time() - start
+    assert restored.entity_count == 300
+    assert elapsed < 2.0, f"reopening took {elapsed:.1f}s — this is the freeze"
+
+
+def test_a_small_scan_still_keeps_its_findings(sessions_dir):
+    """Below the threshold nothing changes — a resume can still dedup by path."""
+    from app.state.scan_state import ScanState
+    st = ScanState()
+    st.add_findings(_many_findings(500))
+    snap = st._build_snapshot("completed")
+    assert snap["findings_omitted"] is False
+    assert len(snap["findings"]) == 500

@@ -961,14 +961,21 @@ class ScanState(QObject):
         if aggregates is None:
             aggregates = self._aggregates_snapshot()
 
-        # For lightweight (mid-scan) saves, skip serializing all raw findings
-        # to avoid expensive serialization. Full findings only on final save.
-        if lightweight and len(findings) > _LARGE_SCAN_THRESHOLD:
-            findings_dicts = []
-            entities_dicts = []
-        else:
-            findings_dicts = [f.to_dict() for f in findings]
-            entities_dicts = [e.to_dict() for e in entities]
+        # Entities are ALWAYS persisted: they are what the Findings screen
+        # shows, and there are a few hundred of them even for a whole drive.
+        entities_dicts = [e.to_dict() for e in entities]
+
+        # Raw findings are not. A full C:/ scan holds ~1.6M of them, and writing
+        # them produced 1.6 GB session files (17 GB across the retained
+        # history). Reopening one then parsed that JSON and rebuilt 1.6M objects
+        # on the UI thread, which froze the app for minutes.
+        #
+        # Nothing the user looks at needs them: Findings renders entities. They
+        # only helped a resume skip already-seen paths, and the scan frontier
+        # already prevents re-walking finished directories — so above the
+        # threshold they are omitted and the snapshot says so.
+        findings_omitted = len(findings) > _LARGE_SCAN_THRESHOLD
+        findings_dicts = [] if findings_omitted else [f.to_dict() for f in findings]
 
         # Use entity-based aggregates when semantic entities are available —
         # raw _risk_counts and _cat_counts reflect individual files, not groups.
@@ -1001,6 +1008,7 @@ class ScanState(QObject):
             findings_dicts=findings_dicts,
             entities_dicts=entities_dicts,
             scan_frontier=frontier,
+            findings_omitted=findings_omitted,
         )
 
     def _save_session(self, status: str):

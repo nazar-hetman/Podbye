@@ -465,6 +465,7 @@ def build_snapshot(
     findings_dicts: list[dict],
     entities_dicts: list[dict] | None = None,
     scan_frontier: list[str] | None = None,
+    findings_omitted: bool = False,
 ) -> dict:
     """Build a serializable session snapshot dict.
 
@@ -485,6 +486,9 @@ def build_snapshot(
         "category_totals": category_totals,
         "risk_totals": risk_totals,
         "findings": findings_dicts,
+        # True when the raw per-file list was too large to persist. Findings
+        # renders entities, so this only tells a resume it cannot dedup by path.
+        "findings_omitted": findings_omitted,
         "entities": entities_dicts or [],
         "scan_frontier": scan_frontier or [],
     }
