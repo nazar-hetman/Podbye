@@ -235,15 +235,28 @@ each backend's API.
   against a fake server. **Still to do: one live run against LM Studio's
   server** (it was installed but its local server was not started).
 
-## Phase 5 — Languages (last, by agreement)
+## Phase 5 — Languages (last, by agreement) — French done
 
-- [ ] **UI + AI prompts in English, Ukrainian, Spanish, German, French.**
-  Ukrainian already works end to end.
-  → Not just translation: every language needs **layout QA**. Ukrainian
-  already overflowed three controls (sidebar nav, scan button, mode combo) and
-  had to be shortened. Before adding languages, add an automated check that
-  measures rendered string width against each control's width, so overflow is
-  caught by tests instead of by eye.
+- [x] **Infrastructure + layout QA.** *(done)* i18n was hardcoded to Ukrainian;
+  it now maps any display name to a locale file, keeps the English fallback
+  **per string** (so a partial file is useful rather than all-or-nothing), and
+  builds the language pickers from the files actually present.
+  → The layout harness renders Analyze, Settings and the sidebar in every
+  shipped language and measures text against each control's committed width.
+  It immediately found a real shipping overflow: the Ukrainian "SCAN" gutter
+  label ("СКАНУВАННЯ", 70px) inside a fixed 36px control.
+
+- [x] **French.** *(462 strings, 62% — needs native review)* All navigation,
+  actions, risk levels, table headers and every destructive-action string is
+  translated; the remaining 38% is longer help prose that falls back to English
+  per string. Layout verified — no control overflows in French.
+
+- [?] **Spanish and German — deliberately not started.** No reviewer available
+  for either. The vocabulary here is safety-critical ("Review", "Protected",
+  "Move to Recycle Bin"), and a confidently wrong word on a destructive action
+  is a data-loss risk, not a cosmetic one. The infrastructure is ready: drop an
+  `es.json` / `de.json` into app/locales and the picker and layout tests pick
+  them up automatically.
 
 ## Phase 6 — Cross-platform (recommend deferring)
 
