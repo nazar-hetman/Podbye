@@ -119,3 +119,47 @@ def test_no_rule_claims_something_is_deletable_without_explaining():
 def test_lookup_is_case_and_separator_insensitive():
     path = _local("Microsoft", "Windows", "Explorer")
     assert lookup(path.replace("/", "\\").upper()) is not None
+
+
+# ── Program Files pattern rule ───────────────────────────────────
+
+
+def test_program_files_folder_becomes_an_application():
+    """Real installs often don't match the uninstall registry by folder name.
+    On a real C:/ scan this left 15 GB of obvious applications in "Unknown"
+    with names like "gstreamer · documents"."""
+    from app.services.entity_detector import _enrich_program_files_apps
+    e = _e("C:/Program Files/gstreamer", etype="unknown_folder",
+           name="gstreamer · documents")
+    assert _enrich_program_files_apps([e]) == 1
+    assert e.entity_type == "application"
+    assert e.name == "gstreamer", "descriptor noise not cleaned"
+    assert "uninstaller" in e.risk_reason.lower()
+
+
+def test_both_program_files_roots_are_covered():
+    from app.services.entity_detector import _enrich_program_files_apps
+    ents = [_e("C:/Program Files/Alpha"), _e("C:/Program Files (x86)/Beta")]
+    assert _enrich_program_files_apps(ents) == 2
+    assert all(x.entity_type == "application" for x in ents)
+
+
+def test_components_nested_deeper_are_not_relabelled():
+    """Only a direct child is the application; deeper folders belong to it."""
+    from app.services.entity_detector import _enrich_program_files_apps
+    e = _e("C:/Program Files/SomeApp/plugins/extra")
+    assert _enrich_program_files_apps([e]) == 0
+    assert e.entity_type == "unknown_folder"
+
+
+def test_a_specific_classification_is_kept():
+    from app.services.entity_detector import _enrich_program_files_apps
+    e = _e("C:/Program Files/SteamLibrary", etype="game")
+    assert _enrich_program_files_apps([e]) == 0
+    assert e.entity_type == "game"
+
+
+def test_folders_outside_program_files_are_untouched():
+    from app.services.entity_detector import _enrich_program_files_apps
+    e = _e("C:/Users/n/projects/thing")
+    assert _enrich_program_files_apps([e]) == 0

@@ -2871,6 +2871,44 @@ _USER_CONTENT_ROOT_NAMES = {
 }
 
 
+def _enrich_program_files_apps(entities: list) -> int:
+    """A top-level folder in Program Files is an installed application.
+
+    Plenty of real installs never match the uninstall registry by folder name —
+    they register under a product name, ship as components, or don't register at
+    all. On a real C:/ scan that left 15 GB of obvious applications sitting in
+    "Unknown" with descriptor-noise names: "gstreamer · documents",
+    "Fortinet · installers and logs & backups", "Razer · code & config and
+    images", plus Microsoft SQL Server, Google, draw.io, OpenVPN and others.
+
+    Being a direct child of Program Files is strong evidence on its own, so
+    these become applications with their plain folder name. Only generic
+    classifications are replaced — anything a pass identified specifically
+    (a game, a dev environment) keeps its answer.
+    """
+    changed = 0
+    for e in entities:
+        if e.entity_type not in ("unknown_folder", "mixed_folder"):
+            continue
+        norm = e.path.replace("\\", "/").rstrip("/").lower()
+        parts = norm.split("/")
+        # drive / "program files" / <app>  — exactly depth 2, so components
+        # nested deeper stay owned by their parent application.
+        if len(parts) != 3 or parts[1] not in _INSTALL_ROOT_NAMES:
+            continue
+        name = os.path.basename(e.path.replace("\\", "/").rstrip("/"))
+        if not name:
+            continue
+        e.entity_type = "application"
+        e.name = name
+        e.risk_reason = (f"Installed application in {parts[1].title()} — "
+                         "remove it through its own uninstaller, not by "
+                         "deleting the folder")
+        e.summary = f"Installed application · {name}"
+        changed += 1
+    return changed
+
+
 def _enrich_support_folders(entities: list) -> int:
     """Label dotfolder app data with what we can actually prove about its owner.
 
@@ -3269,6 +3307,10 @@ def _postprocess(ctx: "_DetectionContext", t0: float) -> list:
     # Profile dotfolders are app support data; say what we can prove about the
     # owning program, and nothing we cannot.
     _enrich_support_folders(entities)
+
+    # A top-level Program Files folder is an installed application, even when
+    # the registry does not name it.
+    _enrich_program_files_apps(entities)
 
     # Curated rules for well-known Windows locations (thumbnail cache, package
     # caches, Windows-installed vendor folders). Annotates generic results and

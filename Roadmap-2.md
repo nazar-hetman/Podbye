@@ -104,10 +104,27 @@ These are bugs where the UI can mislead someone into deleting the wrong thing.
 
 ## Phase 3 — Categorization quality (highest user value)
 
-- [ ] **Reduce "Unknown".** Measured baseline from a full C:/ scan:
-  **130 entities / 87 GB — 19% of the disk, the second-largest category.**
-  This is the most valuable classification work and it is measurable: re-run
-  the C:/ scan and compare the Unknown total.
+- [x] **Reduce "Unknown".** *(done — measured, not estimated)*
+  Baseline from a full C:/ scan: **130 entities / 87 GB — 19% of the disk**,
+  the second-largest category. Re-measured on the same disk after the Phase 1
+  fixes, the knowledge base and the Program Files rule:
+
+  | | entities | bytes | share of disk |
+  |---|---|---|---|
+  | baseline | 130 | 87.0 GB | 19% |
+  | after Phase 1 + knowledge base | 108 | 15.2 GB | ~3% |
+  | **after the Program Files rule** | **66** | **814 MB** | **0.17%** |
+
+  → **99% of the Unknown bytes are now classified**, with the accounting ratio
+  still 0.921 (no double-counting).
+  → The last big pattern was the plainest one: a top-level folder in Program
+  Files is an installed application, even when the uninstall registry does not
+  name it. That alone moved ~14 GB (gstreamer 4.2 GB, Fortinet 3.3 GB, SQL
+  Server 2.1 GB, Razer, Google, draw.io, OpenVPN …) out of Unknown and replaced
+  descriptor-noise names like "gstreamer · documents" with the real folder name.
+  → What remains is genuinely miscellaneous: loose "Misc files in …" buckets,
+  `C:\AMD` driver leftovers, and `jbr` (a JRE bundled inside PyCharm, which
+  ideally gets absorbed into its parent app).
 
 ### Built-in knowledge base (rules + AI hybrid)
 
