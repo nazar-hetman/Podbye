@@ -15,6 +15,7 @@ from app.widgets.panels import Panel, apply_tactical_label
 from app.widgets.controls import TacticalComboBox
 from app.themes.theme_manager import THEME_NAMES, THEME_KEYS, get_palette, theme_signaller
 from app.i18n import tr
+from app.services.ollama_client import LOCAL_ENDPOINT
 
 
 # ─── Helpers ───────────────────────────────────────────────
@@ -161,7 +162,18 @@ class SettingsScreen(QWidget):
         """Load persisted settings into UI widgets."""
         if not self._store:
             return
+        # Endpoint mode + address. Radios are set with signals blocked so
+        # restoring the saved state can't fire the toggle handler and overwrite
+        # the very values being loaded.
+        is_local = self._store.get("ai_endpoint_mode", "local") != "server"
+        for rb in (self._rb_ep_local, self._rb_ep_server):
+            rb.blockSignals(True)
+        self._rb_ep_local.setChecked(is_local)
+        self._rb_ep_server.setChecked(not is_local)
+        for rb in (self._rb_ep_local, self._rb_ep_server):
+            rb.blockSignals(False)
         self._endpoint_input.setText(self._store.get("ai_endpoint"))
+        self._apply_endpoint_mode_state(is_local)
         self._timeout_slider.setValue(self._store.get("ai_timeout"))
         self._timeout_val.setText(f"{self._store.get('ai_timeout')} s")
         self._concurrent_slider.setValue(self._store.get("ai_max_concurrent"))
@@ -317,6 +329,37 @@ class SettingsScreen(QWidget):
             f"border: 1px solid {border}; color: {text}; background: transparent; border-radius: 2px; }}"
             f"QPushButton:hover {{ background: {hover_bg}; border-color: {hover_border}; }}"
         )
+
+    def _on_endpoint_mode_changed(self, _checked: bool = False):
+        """Switch between the built-in local endpoint and a custom server one.
+
+        The custom address lives in its own setting (``ai_server_endpoint``), so
+        flipping to Local and back restores exactly what the user typed instead
+        of discarding it. Only ``ai_endpoint`` — the address AI calls actually
+        use — is repointed.
+        """
+        local = self._rb_ep_local.isChecked()
+        self._save_value("ai_endpoint_mode", "local" if local else "server")
+        if local:
+            self._endpoint_input.setText(LOCAL_ENDPOINT)
+            self._save_value("ai_endpoint", LOCAL_ENDPOINT)
+        else:
+            remembered = self._store.get("ai_server_endpoint", "") if self._store else ""
+            self._endpoint_input.setText(remembered)
+            self._save_value("ai_endpoint", remembered)
+        self._apply_endpoint_mode_state(local)
+
+    def _apply_endpoint_mode_state(self, local: bool):
+        """Local mode shows the fixed address read-only; Server mode is editable."""
+        self._endpoint_input.setEnabled(not local)
+
+    def _on_endpoint_edited(self):
+        """Persist a hand-typed endpoint (Server mode only edits are possible)."""
+        text = self._endpoint_input.text().strip()
+        self._save_value("ai_endpoint", text)
+        if self._rb_ep_server.isChecked():
+            # Remember it separately so a Local round-trip doesn't lose it.
+            self._save_value("ai_server_endpoint", text)
 
     def _model_level_label(self, size_bytes: int) -> str:
         from app.services.ollama_client import format_model_size
@@ -539,14 +582,34 @@ class SettingsScreen(QWidget):
         srv_lay.addLayout(_panel_title(tr("Local Model Server"), tr("endpoint")))
         self._register_styled_panel(server_panel)
 
+        # Connection mode — Local (built-in address) vs Server (custom LAN host)
+        mode_w = QWidget()
+        mode_h = QHBoxLayout(mode_w)
+        mode_h.setContentsMargins(0, 0, 0, 0)
+        mode_h.setSpacing(16)
+        self._rb_ep_local = QRadioButton(tr("Local"))
+        self._rb_ep_server = QRadioButton(tr("Server"))
+        for rb in (self._rb_ep_local, self._rb_ep_server):
+            rb.setCursor(Qt.PointingHandCursor)
+            self._style_radio(rb)
+            mode_h.addWidget(rb)
+        mode_h.addStretch()
+        self._rb_ep_local.setChecked(True)
+        self._rb_ep_local.toggled.connect(self._on_endpoint_mode_changed)
+        srv_lay.addLayout(_setting_row(
+            tr("Connection mode"),
+            tr("Local uses Ollama on this machine. Server points Vigil at another "
+               "machine on your network (LAN addresses only)."),
+            mode_w,
+        ))
+
         # Endpoint
-        self._endpoint_input = QLineEdit("http://127.0.0.1:11434")
+        self._endpoint_input = QLineEdit(LOCAL_ENDPOINT)
         self._endpoint_input.setStyleSheet(self._input_qss())
         self._styled_inputs.append(self._endpoint_input)
         self._endpoint_input.setFixedWidth(280)
-        self._endpoint_input.editingFinished.connect(
-            lambda: self._save_value("ai_endpoint", self._endpoint_input.text().strip())
-        )
+        self._endpoint_input.setPlaceholderText("http://192.168.1.50:11434")
+        self._endpoint_input.editingFinished.connect(self._on_endpoint_edited)
         ep_w = QWidget()
         ep_h = QHBoxLayout(ep_w)
         ep_h.setContentsMargins(0, 0, 0, 0)

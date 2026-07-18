@@ -14,6 +14,9 @@ from urllib.parse import urlparse
 from typing import Tuple
 
 
+# The built-in "Local" endpoint — Ollama's default on this machine.
+LOCAL_ENDPOINT = "http://127.0.0.1:11434"
+
 # Fallback model list if Ollama is offline
 _FALLBACK_MODELS = [
     "llama3.2:3b",

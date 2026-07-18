@@ -28,7 +28,14 @@ def _config_path() -> Path:
 
 _DEFAULTS = {
     # AI settings
+    # ai_endpoint is the ACTIVE endpoint every AI call uses. ai_endpoint_mode
+    # picks where it comes from: "local" (the built-in loopback address) or
+    # "server" (a custom LAN address). ai_server_endpoint remembers the custom
+    # address separately, so toggling back to Local never discards what the
+    # user typed.
     "ai_endpoint": "http://127.0.0.1:11434",
+    "ai_endpoint_mode": "local",
+    "ai_server_endpoint": "",
     "ai_model": "",
     "ai_tone": "Neutral",
     "ai_length": "Standard",
