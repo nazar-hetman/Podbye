@@ -29,14 +29,26 @@ These are bugs where the UI can mislead someone into deleting the wrong thing.
   folder. Entity count went **down** (904 → 741), so the split did not add
   noise. Files genuinely sitting in `C:\` still use the root, correctly.
 
-- [ ] **Rule 1 — App boundaries.** A database/image/video/logo inside a
-  recognised application's install folder is part of that app, never loose
-  media. *Partly exists* as the Containment Rule; needs an explicit test that
-  media inside an app folder is never emitted as a standalone media entity.
+- [x] **Rule 1 — App boundaries.** *(verified — already held; now pinned)*
+  Probed against the real `C:\Program Files` and `Program Files (x86)`
+  (290k findings): no media/database/logo inside an app install folder was
+  emitted as a standalone media entity — the Containment Rule was doing its
+  job. Locked in with tests so a future change can't regress it.
 
-- [ ] **Rule 2 — System protection.** `C:\Windows\SystemApps\...` and similar
-  must stay protected; OS app assets must never appear as "deletable images".
-  *Partly exists* (`_is_protected_path`); needs the same explicit test.
+- [x] **Rule 2 — System protection.** *(was broken — fixed)*
+  Reproduced on the real `C:\Windows` (339,338 findings): **52 of 53 entities
+  were not Protected**, including `Cache – Cortana.Ui` marked **Safe** and six
+  `Images – …` collections of OS app assets marked **Review**, plus
+  `Packages – servicing` (Safe) and `Backup – WinSxS` (Optional).
+  → Cause: risk is assigned by whichever pass claims an entity first, so cache
+  and image passes labelled OS content before protection was considered.
+  → Fix: a final `_enforce_system_protection` pass — one choke point covering
+  every pass — forces Protected inside `Windows\{SystemApps, WinSxS,
+  servicing, assembly}`. Deliberately narrow: `Windows\Temp`, `Windows\Logs`
+  and the Windows Update download cache **stay cleanable**, verified by a
+  test, because over-protecting would gut the product's core value.
+  → Re-verified on real data: all 24 entities in those subtrees are now
+  Protected, 0 unprotected.
 
 - [ ] **Downloads folder.** Treat strictly as a collection of standalone files;
   never parse as a unified application directory.

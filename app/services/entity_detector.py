@@ -2899,6 +2899,48 @@ def _enrich_game_saves(ctx: "_DetectionContext", entities: list):
                 f"entit{'y' if enriched == 1 else 'ies'}")
 
 
+# Subtrees of C:/Windows that must never be offered for cleanup, whatever a
+# classification pass decided. These hold OS application packages and the
+# servicing/component store: hand-deleting them breaks Windows features or
+# Windows Update. Deliberately narrow — Windows/Temp, Windows/Logs and the
+# Windows Update download cache stay cleanable, because they genuinely are.
+_RISK_PROTECTED = "Protected"
+
+_NEVER_CLEAN_WINDOWS_SUBTREES = {
+    "systemapps",   # OS app packages (Cortana, CloudExperienceHost, …) + their assets
+    "winsxs",       # component store; Microsoft: never delete by hand
+    "servicing",    # servicing stack / packages — breaks Windows Update
+    "assembly",     # GAC
+}
+
+
+def _enforce_system_protection(entities: list, log_fn=None) -> int:
+    """Force Protected on entities inside never-clean OS subtrees.
+
+    Risk is assigned by whichever pass claims an entity first, so a cache or
+    image pass could label OS app assets Safe/Review before protection was ever
+    considered — e.g. "Cache – Cortana.Ui" (Safe) and six "Images – …"
+    collections under Windows/SystemApps. Applying this once at the end is a
+    single choke point that covers every pass, including future ones.
+    """
+    changed = 0
+    for e in entities:
+        parts = e.path.replace("\\", "/").lower().rstrip("/").split("/")
+        # parts[0]=drive, parts[1]=windows, parts[2]=subtree
+        if len(parts) >= 3 and parts[1] == "windows" \
+                and parts[2] in _NEVER_CLEAN_WINDOWS_SUBTREES:
+            if e.risk != _RISK_PROTECTED:
+                e.risk = _RISK_PROTECTED
+                e.risk_reason = (
+                    f"Windows {parts[2]} — part of the operating system; "
+                    "removing it can break Windows features or updates"
+                )
+                changed += 1
+    if changed and log_fn:
+        log_fn(f"[smart] protected {changed} entities inside Windows system subtrees")
+    return changed
+
+
 def _disambiguate_names(entities: list) -> int:
     """Append a path hint to entities that share a display name.
 
@@ -3084,6 +3126,11 @@ def _postprocess(ctx: "_DetectionContext", t0: float) -> list:
     # Charge every byte to exactly one entity. Must run after absorption, since
     # only the entities that actually survive can hold a share of the bytes.
     _enforce_disjoint_sizes(ctx, entities, log_fn)
+
+    # Rule 2 (system protection): OS app packages and the servicing/component
+    # store are never cleanable, whatever an earlier pass decided. Runs after
+    # absorption so it applies to the entities that actually survive.
+    _enforce_system_protection(entities, log_fn)
 
     # Disambiguate identically-named entities (e.g. two "Qt" installs) so the
     # list is scannable. Runs last so absorbed/renamed entities are settled.
