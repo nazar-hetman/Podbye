@@ -21,6 +21,10 @@ from __future__ import annotations
 
 import os
 
+from app.models.risk import (
+    RISK_SAFE, RISK_OPTIONAL, RISK_PROTECTED, risk_sort_index,
+)
+
 _LOCAL = (os.environ.get("LOCALAPPDATA") or "").replace("\\", "/").lower()
 _ROAM = (os.environ.get("APPDATA") or "").replace("\\", "/").lower()
 _PDATA = (os.environ.get("ProgramData") or "").replace("\\", "/").lower()
@@ -44,45 +48,45 @@ def _rules() -> list[dict]:
 
     if _LOCAL:
         add(f"{_LOCAL}/microsoft/windows/explorer", "cache_folder",
-            "Thumbnail & icon cache", "Safe",
+            "Thumbnail & icon cache", RISK_SAFE,
             "Windows thumbnail and icon cache — rebuilt automatically the next "
             "time you browse folders")
         add(f"{_LOCAL}/microsoft/windows/inetcache", "cache_folder",
-            "Internet file cache", "Safe",
+            "Internet file cache", RISK_SAFE,
             "Temporary internet files — regenerated as you browse")
-        add(f"{_LOCAL}/crashdumps", "log_folder", "Crash dumps", "Safe",
+        add(f"{_LOCAL}/crashdumps", "log_folder", "Crash dumps", RISK_SAFE,
             "Crash dumps kept for troubleshooting — safe to clear")
-        add(f"{_LOCAL}/d3dscache", "shader_cache", "DirectX shader cache", "Safe",
+        add(f"{_LOCAL}/d3dscache", "shader_cache", "DirectX shader cache", RISK_SAFE,
             "DirectX shader cache — rebuilt by games automatically")
-        add(f"{_LOCAL}/pip/cache", "dev_artifacts", "pip download cache", "Safe",
+        add(f"{_LOCAL}/pip/cache", "dev_artifacts", "pip download cache", RISK_SAFE,
             "Python package download cache — re-downloaded on demand")
-        add(f"{_LOCAL}/yarn/cache", "dev_artifacts", "Yarn cache", "Safe",
+        add(f"{_LOCAL}/yarn/cache", "dev_artifacts", "Yarn cache", RISK_SAFE,
             "Yarn package cache — restored by a reinstall")
     if _ROAM:
-        add(f"{_ROAM}/npm-cache", "dev_artifacts", "npm cache", "Safe",
+        add(f"{_ROAM}/npm-cache", "dev_artifacts", "npm cache", RISK_SAFE,
             "npm package cache — restored by a reinstall")
     if _PDATA:
         # NOT Safe: Windows uses this to repair/modify installed programs.
         add(f"{_PDATA}/package cache", "installer_cache", "Installer cache",
-            "Optional",
+            RISK_OPTIONAL,
             "Installer payloads Windows keeps to repair or modify programs — "
             "removing them means the installers are downloaded again if needed")
     if _HOME:
         add(f"{_HOME}/.nuget/packages", "dev_artifacts", "NuGet package cache",
-            "Optional", "NuGet packages — restored on the next build")
+            RISK_OPTIONAL, "NuGet packages — restored on the next build")
         add(f"{_HOME}/.m2/repository", "dev_artifacts", "Maven repository",
-            "Optional", "Maven artifacts — re-downloaded on the next build")
+            RISK_OPTIONAL, "Maven artifacts — re-downloaded on the next build")
         add(f"{_HOME}/.gradle/caches", "dev_artifacts", "Gradle cache",
-            "Optional", "Gradle build cache — rebuilt on the next build")
+            RISK_OPTIONAL, "Gradle build cache — rebuilt on the next build")
         add(f"{_HOME}/.cargo/registry", "dev_artifacts", "Cargo registry cache",
-            "Optional", "Rust crate cache — re-downloaded on the next build")
+            RISK_OPTIONAL, "Rust crate cache — re-downloaded on the next build")
 
     # Vendor folders Windows installs on its own. The user never chose these,
     # and removing them breaks OS features, so they are Protected rather than
     # presented as a large deletable "Microsoft" folder.
     for pf in ("c:/program files/microsoft", "c:/program files (x86)/microsoft"):
         r.append({"path": pf, "type": "application", "name": "Microsoft (Windows components)",
-                  "risk": "Protected",
+                  "risk": RISK_PROTECTED,
                   "reason": "Windows-installed components such as Edge and Copilot — "
                             "installed by Windows, not by you; removing them breaks OS features"})
     return r
@@ -120,8 +124,6 @@ def apply_known_path_rules(entities: list) -> int:
     A rule replaces the *label* of a generically-classified entity, and may
     always raise protection. It will not talk a specific classification down.
     """
-    from app.models.risk import risk_sort_index
-
     changed = 0
     for e in entities:
         rule = lookup(e.path)

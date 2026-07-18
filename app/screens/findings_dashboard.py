@@ -3439,10 +3439,16 @@ class CategoryDetailView(QFrame):
         if self._scan_state and hasattr(self._scan_state, "log_line"):
             self._scan_state.log_line.emit(f"[uninstall] {name}: {message}")
         if started:
-            # The registry snapshot is now stale — refresh it on the next scan.
+            # Both caches are now stale. The registry snapshot is obvious; the
+            # presence evidence (Start Menu, installed folders, PATH, processes)
+            # matters just as much — without clearing it, a re-scan still reports
+            # the app as installed and tells the user to KEEP the very leftovers
+            # they just uninstalled, which is the case this detection exists for.
             try:
                 from app.services.entity_detector import invalidate_installed_programs_cache
+                from app.services.app_presence import reset_cache as reset_presence_cache
                 invalidate_installed_programs_cache()
+                reset_presence_cache()
             except Exception:
                 pass
             self._show_toast(f"Uninstaller launched · {name} — re-scan to confirm removal")

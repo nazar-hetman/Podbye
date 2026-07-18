@@ -211,3 +211,35 @@ def test_strong_only_still_accepts_installed_products(sources):
                          "PATH", "running process")})
         sources[src] = {ap._norm("PyCharm Community Edition")}
         assert presence("PyCharm Community Edition", strong_only=True)[0] == PRESENT
+
+
+# ── review follow-up: cache invalidation after an uninstall ──────
+
+
+def test_reset_cache_actually_clears_the_evidence(monkeypatch):
+    calls = {"n": 0}
+
+    def counting_source():
+        calls["n"] += 1
+        return {ap._norm("Thing")}
+
+    monkeypatch.setattr(ap, "_SOURCES", (("registry", counting_source),))
+    ap.reset_cache()
+    ap.evidence()
+    ap.evidence()
+    assert calls["n"] == 1, "evidence should be cached"
+    ap.reset_cache()
+    ap.evidence()
+    assert calls["n"] == 2, "reset_cache did not clear the snapshot"
+    ap.reset_cache()
+
+
+def test_deep_uninstall_clears_the_presence_cache():
+    """Without this, a re-scan after uninstalling still reports the app as
+    installed and tells the user to KEEP the leftovers they just removed."""
+    import inspect
+    from app.screens.findings_dashboard import CategoryDetailView
+    src = inspect.getsource(CategoryDetailView._handle_deep_uninstall)
+    assert "invalidate_installed_programs_cache" in src
+    assert "reset_cache" in src, (
+        "registry cache is refreshed but app_presence evidence is not")

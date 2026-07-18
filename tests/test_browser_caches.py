@@ -112,3 +112,32 @@ def test_bytes_are_not_double_counted():
     ents = detect_entities(findings, "C:/", log_fn=lambda _m: None)
     file_bytes = sum(f.size_bytes for f in findings if not f.is_dir)
     assert sum(e.size_bytes for e in ents) <= file_bytes
+
+
+# ── review follow-ups ────────────────────────────────────────────
+
+
+def test_a_non_browser_profiles_path_is_not_called_browser_cache():
+    """Requiring only "profiles" in the path matched project folders, which
+    were then announced as browser cache with a message about passwords and
+    cookies — a claim about data that folder does not hold."""
+    deep = "C:/dev/a/b/c/d/e/profiles"
+    f = [_f(p, is_dir=True) for p in
+         ("C:/dev", "C:/dev/a", "C:/dev/a/b", "C:/dev/a/b/c",
+          "C:/dev/a/b/c/d", "C:/dev/a/b/c/d/e", deep, deep + "/Cache")]
+    f += [_f(f"{deep}/Cache/x{i}.bin", size=20 * MB, ext=".bin",
+             parent=deep + "/Cache") for i in range(6)]
+    for e in detect_entities(f, "C:/", log_fn=lambda _m: None):
+        assert "browser cache" not in e.name.lower(), (
+            f"non-browser folder labelled browser cache: {e.name!r}")
+        assert "password" not in (e.risk_reason or "").lower()
+
+
+def test_browser_cache_naming_does_not_depend_on_depth():
+    """The pass used to run after pass 1, so whichever reached a folder first
+    named it — GPUCache/ShaderCache fell through to "Known directory: ...""" 
+    ents = _entities()
+    caches = [e for e in ents if e.entity_type == "cache_folder"]
+    assert caches
+    assert all("cache ·" in e.name.lower() for e in caches), (
+        f"inconsistently named: {[e.name for e in caches]}")

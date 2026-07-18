@@ -318,18 +318,6 @@ class SettingsScreen(QWidget):
         p = get_palette()
         return f"font-size: 10px; color: {p.get('review', '#d8b46a')};"
 
-    def _about_button_qss(self, warning: bool = False) -> str:
-        p = get_palette()
-        border = p.get("review", "#d8b46a") if warning else p.get("border_hover", "#3a5648")
-        hover_bg = p.get("review_soft", "#2c2516") if warning else p.get("panel_hover", "#1d2c25")
-        hover_border = p.get("review", "#d8b46a") if warning else p.get("accent", "#7cc596")
-        text = p.get("review", "#d8b46a") if warning else p.get("text", "#d6e2da")
-        return (
-            f"QPushButton {{ padding: 4px 11px; min-height: 26px; font-size: 11px; "
-            f"border: 1px solid {border}; color: {text}; background: transparent; border-radius: 2px; }}"
-            f"QPushButton:hover {{ background: {hover_bg}; border-color: {hover_border}; }}"
-        )
-
     def _on_endpoint_mode_changed(self, _checked: bool = False):
         """Switch between the built-in local endpoint and a custom server one.
 

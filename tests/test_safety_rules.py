@@ -180,3 +180,23 @@ def test_protection_states_a_reason():
     ed._enforce_system_protection([e])
     assert e.risk == "Protected"
     assert e.risk_reason, "protected entity must explain why"
+
+
+# ── review follow-up: one source of truth for risk ───────────────
+
+
+def test_no_module_redefines_the_canonical_risk_constants():
+    """Three contradictory risk orderings once existed in this codebase.
+    Constants for risk levels belong to app/models/risk.py alone."""
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[1] / "app"
+    offenders = []
+    for path in root.rglob("*.py"):
+        if path.name == "risk.py":
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("_RISK_") and "=" in stripped and '"' in stripped:
+                offenders.append(f"{path.name}: {stripped[:60]}")
+    assert not offenders, "local risk constants shadow the canonical ones: " + "; ".join(offenders)

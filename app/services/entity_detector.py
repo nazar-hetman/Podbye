@@ -40,6 +40,8 @@ from typing import Optional
 
 from app.models.finding import Finding, _format_size
 from app.models.smart_entity import SmartEntity, ENTITY_TYPES
+from app.models.risk import RISK_PROTECTED
+from app.services.app_presence import presence as _app_presence, PRESENT as _PRESENT
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2155,11 +2157,18 @@ def _pass_browser_caches(ctx: "_DetectionContext"):
             continue
         if f.name.lower() not in _BROWSER_CACHE_DIRS:
             continue
-        # Must actually sit inside browser storage — a folder called "Cache" in
-        # a source tree is not browser data.
+        # Must actually sit inside a browser's storage. Requiring the profile
+        # container alone was not enough: any path containing "profiles" matched,
+        # so a project folder like .../profiles/Cache was announced as browser
+        # cache and told the user their "passwords, cookies, history and
+        # bookmarks are untouched" — a statement about data that folder does not
+        # hold. The browser itself must be named in the path.
+        browser_key = next((b for b in _BROWSER_KEYWORDS if b in norm), None)
+        if browser_key is None:
+            continue
         if "user data" not in norm and "profiles" not in norm:
             continue
-        browser = next((b.title() for b in _BROWSER_KEYWORDS if b in norm), "Browser")
+        browser = browser_key.title()
         # Name by location, not just the folder name: a profile holds several
         # folders literally called "Cache", and leaving them identical makes the
         # disambiguator append the same word again ("Cache (Cache)").
@@ -2405,12 +2414,11 @@ def _pass_explode_user_roots(ctx: "_DetectionContext"):
         # not registered by path: a drive-root folder naming a present
         # application IS that install, and exploding it scatters the app across
         # its own components — PyCharm losing its bundled JRE to a stray "jbr".
-        if norm.count("/") == 1:
-            from app.services.app_presence import presence, PRESENT
-            # strong_only: a PATH entry or a running process sharing a name is
-            # not enough to hide a diverse folder's contents.
-            if presence(os.path.basename(norm), strong_only=True)[0] == PRESENT:
-                continue
+        # strong_only: a PATH entry or a running process sharing a name is not
+        # enough to hide a diverse folder's contents.
+        if norm.count("/") == 1 and _app_presence(
+                os.path.basename(norm), strong_only=True)[0] == _PRESENT:
+            continue
         subdirs = [
             c for c in ctx.gather_direct(norm)
             if c.is_dir
@@ -3180,8 +3188,6 @@ def _enrich_game_saves(ctx: "_DetectionContext", entities: list):
 # servicing/component store: hand-deleting them breaks Windows features or
 # Windows Update. Deliberately narrow — Windows/Temp, Windows/Logs and the
 # Windows Update download cache stay cleanable, because they genuinely are.
-_RISK_PROTECTED = "Protected"
-
 _NEVER_CLEAN_WINDOWS_SUBTREES = {
     "systemapps",   # OS app packages (Cortana, CloudExperienceHost, …) + their assets
     "winsxs",       # component store; Microsoft: never delete by hand
@@ -3205,8 +3211,8 @@ def _enforce_system_protection(entities: list, log_fn=None) -> int:
         # parts[0]=drive, parts[1]=windows, parts[2]=subtree
         if len(parts) >= 3 and parts[1] == "windows" \
                 and parts[2] in _NEVER_CLEAN_WINDOWS_SUBTREES:
-            if e.risk != _RISK_PROTECTED:
-                e.risk = _RISK_PROTECTED
+            if e.risk != RISK_PROTECTED:
+                e.risk = RISK_PROTECTED
                 e.risk_reason = (
                     f"Windows {parts[2]} — part of the operating system; "
                     "removing it can break Windows features or updates"
@@ -3572,11 +3578,17 @@ def detect_entities(
     # Explode diverse dump roots BEFORE pass 1, otherwise generic names like
     # "documents"/"downloads" in _DIR_ENTITY_MAP get claimed as one blob first.
     _pass_explode_user_roots(ctx)
+    # Browser caches before pass 1: "Cache"/"GPUCache" are also generic names in
+    # _DIR_ENTITY_MAP, so whichever pass reached them first decided the label.
+    # That made presentation depend on how deep a profile happened to sit —
+    # most folders got "Chrome cache · Default / Cache" while ShaderCache and
+    # GPUCache fell through to a bare "Known directory: ShaderCache". Claiming
+    # them here makes the naming uniform, and the profile pass still runs later
+    # so it keeps only the irreplaceable data.
+    _pass_browser_caches(ctx)
     _pass1_known_dirs(ctx)
     _pass2_installed_apps(ctx)
     _pass2b_app_markers(ctx)
-    # Caches first, so the profile pass claims only the irreplaceable data.
-    _pass_browser_caches(ctx)
     _pass3_browser_profiles(ctx)
     _pass3b_games(ctx)
     _pass4_cache_folders(ctx)
