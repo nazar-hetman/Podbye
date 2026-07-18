@@ -109,3 +109,46 @@ def test_french_covers_the_core_ui():
     ]
     missing = [k for k in core if not _table("fr").get(k)]
     assert not missing, f"French core UI untranslated: {missing}"
+
+
+def test_no_new_untranslatable_ui_strings():
+    """A literal passed straight to a UI sink can never be translated, in any
+    language. Only the product wordmark is allowed to stay hardcoded."""
+    import re
+
+    SINKS = ("setText", "setToolTip", "setPlaceholderText", "setWindowTitle",
+             "QLabel", "QPushButton", "QCheckBox", "QRadioButton")
+    SKIP = re.compile(
+        r"^[\s\W\d_]*$|^[a-z_]+$|^\{[^}]*\}$"
+        r"|font|color|border|background|padding|margin|px|rgba|#[0-9a-fA-F]{3,8}"
+        r"|^https?:|\|/|\.json$|\.log$|\.db$|^%|^C:", re.IGNORECASE)
+    ALLOWED = {"VIGIL — LootCleaner", "VIGIL · LOCAL SYSTEM ANALYSIS"}
+
+    offenders = []
+    for path in APP.rglob("*.py"):
+        if "__pycache__" in str(path):
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = getattr(node.func, "attr", "") or getattr(node.func, "id", "")
+            if fn not in SINKS:
+                continue
+            for arg in node.args:
+                text = None
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    text = arg.value.strip()
+                elif isinstance(arg, ast.JoinedStr):
+                    lit = "".join(v.value for v in arg.values
+                                  if isinstance(v, ast.Constant)
+                                  and isinstance(v.value, str)).strip()
+                    text = lit if len(lit) >= 8 else None
+                if not text or len(text) < 3 or SKIP.search(text) or text in ALLOWED:
+                    continue
+                offenders.append(f"{path.name}:{node.lineno} {text[:50]!r}")
+    assert not offenders, (
+        "user-facing text not wrapped in tr() —\n  " + "\n  ".join(offenders))

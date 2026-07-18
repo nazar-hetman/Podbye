@@ -899,7 +899,8 @@ class QuickCleanupScreen(QWidget):
         self._sel_badge.set_badge(f"{n_sel} of {n_total} selected", "info")
         self._sel_badge.setVisible(n_total > 0)
         size_str = _format_size(total_bytes) if selected else "0 MB"
-        self._cat_summary_lbl.setText(f"// {n_sel} selected · {size_str} ready")
+        self._cat_summary_lbl.setText(tr("// {n} selected · {size} ready",
+                                         n=n_sel, size=size_str))
 
         if total_bytes >= 1_073_741_824:
             num_str, unit_str = f"{total_bytes / 1_073_741_824:.1f}", "GB"
@@ -960,7 +961,7 @@ class QuickCleanupScreen(QWidget):
             row.set_interactive(False)
 
         total_items = sum(r.category.file_count for r in selected)
-        self._progress_lbl.setText(f"Moving 0 / {total_items:,}…")
+        self._progress_lbl.setText(tr("Moving 0 / {total:,}…", total=total_items))
         self._progress_lbl.setVisible(True)
         self._wc_sub.setText(tr("// cleaning"))
 
@@ -981,9 +982,10 @@ class QuickCleanupScreen(QWidget):
     def _on_cleanup_progress(self, done: int, total: int, path: str):
         if path:
             name = os.path.basename(path) or path
-            self._progress_lbl.setText(f"Moving {done + 1} / {total:,} — {name}")
+            self._progress_lbl.setText(tr("Moving {done} / {total:,} — {name}",
+                                          done=done + 1, total=total, name=name))
         else:
-            self._progress_lbl.setText(f"Finalising… ({total:,} processed)")
+            self._progress_lbl.setText(tr("Finalising… ({n:,} processed)", n=total))
 
     def _on_cleanup_done(self, result):
         self._state = _DONE
@@ -1004,7 +1006,7 @@ class QuickCleanupScreen(QWidget):
 
         self._right_section_lbl.setText(tr("Results"))
         elapsed_str = f"{elapsed:.0f}s" if elapsed < 60 else f"{elapsed / 60:.1f}m"
-        self._wc_sub.setText(f"// done in {elapsed_str}")
+        self._wc_sub.setText(tr("// done in {elapsed}", elapsed=elapsed_str))
 
         safe_color = p.get("safe", "#7cc596")
         warn_color = p.get("review", "#d8b46a")
@@ -1119,19 +1121,18 @@ class QuickCleanupScreen(QWidget):
 
         n_cleaned = sum(1 for _, _, assessment in cat_rows if assessment.succeeded_count > 0)
         if overall.state in (STATE_PARTIAL, STATE_IN_USE):
-            self._subtitle_lbl.setText(
-                f"{n_cleaned} categories cleaned · {n_in_use} files still in use — "
-                "steps to finish are shown below"
-            )
+            self._subtitle_lbl.setText(tr(
+                "{cleaned} categories cleaned · {locked} files still in use — "
+                "steps to finish are shown below",
+                cleaned=n_cleaned, locked=n_in_use))
         elif overall.state == STATE_FAILED:
-            self._subtitle_lbl.setText(
-                f"{n_cleaned} categories cleaned · some items need attention — "
-                "details are shown below"
-            )
+            self._subtitle_lbl.setText(tr(
+                "{cleaned} categories cleaned · some items need attention — "
+                "details are shown below", cleaned=n_cleaned))
         else:
-            self._subtitle_lbl.setText(
-                f"{n_cleaned} categories cleaned · {_format_size(freed)} freed"
-            )
+            self._subtitle_lbl.setText(tr(
+                "{cleaned} categories cleaned · {size} freed",
+                cleaned=n_cleaned, size=_format_size(freed)))
         self._sel_badge.setVisible(False)
 
         # Proactively surface WHY a category didn't fully clean and HOW to fix

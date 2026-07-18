@@ -855,7 +855,8 @@ class HistoryScreen(QWidget):
         hidden = total - self._MAX_VISIBLE_ROWS
         if hidden <= 0:
             return None
-        lbl = QLabel(f"Showing latest {self._MAX_VISIBLE_ROWS} {noun}; {hidden} older hidden.")
+        lbl = QLabel(tr("Showing latest {n} {noun}; {hidden} older hidden.",
+                        n=self._MAX_VISIBLE_ROWS, noun=noun, hidden=hidden))
         lbl.setObjectName("Muted")
         lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 9px;")
         return lbl
@@ -903,10 +904,12 @@ class HistoryScreen(QWidget):
         from app.state.session_store import load_summary
         s = load_summary()
         lbl = QLabel(
-            f"{_format_size(s.get('total_recovered_bytes', 0))} freed"
-            f"  ·  {s.get('cleanup_sessions', 0)} cleanups"
-            f"  ·  {_format_size(s.get('total_scanned_bytes', 0))} scanned"
-            f"  ·  {s.get('analyze_sessions', 0)} scans"
+            tr("{freed} freed  ·  {cleanups} cleanups  ·  {scanned} scanned"
+               "  ·  {scans} scans",
+               freed=_format_size(s.get('total_recovered_bytes', 0)),
+               cleanups=s.get('cleanup_sessions', 0),
+               scanned=_format_size(s.get('total_scanned_bytes', 0)),
+               scans=s.get('analyze_sessions', 0))
         )
         lbl.setObjectName("Muted")
         lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 10px;")

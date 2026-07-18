@@ -869,9 +869,10 @@ class HomeScreen(QWidget):
         unit    = "entities" if self._scan_state.has_entities else "items"
 
         self._live_target_lbl.setText(tr("Target: {target}", target=target))
-        self._live_stats_lbl.setText(
-            f"{count:,} {unit} · {size} · {mode} mode · {_duration_str(elapsed)}"
-        )
+        self._live_stats_lbl.setText(tr(
+            "{count:,} {unit} · {size} · {mode} mode · {duration}",
+            count=count, unit=unit, size=size, mode=mode,
+            duration=_duration_str(elapsed)))
 
     # ─── Signal handlers ─────────────────────────────────────
 

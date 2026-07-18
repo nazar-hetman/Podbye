@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QFrame, QVBoxLayout, QLabel, QPlainTextEdit
 from PySide6.QtCore import Qt, QTimer
+from app.i18n import tr
 
 # Maximum lines retained in the feed before old ones are discarded
 _MAX_LINES = 1000
@@ -27,7 +28,7 @@ class OperatorFeed(QFrame):
         outer.setSpacing(0)
 
         if show_header:
-            header = QLabel("  OPERATOR FEED")
+            header = QLabel("  " + tr("OPERATOR FEED"))
             header.setObjectName("SectionHeader")
             header.setFixedHeight(28)
             header.setStyleSheet(

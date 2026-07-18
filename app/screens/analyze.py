@@ -214,6 +214,27 @@ class AnalyzeScreen(QWidget):
 
     def set_scan_state(self, scan_state):
         self._scan_state = scan_state
+        self._restore_view_from_state()
+
+    def _restore_view_from_state(self):
+        """Render results the shared state already holds.
+
+        Changing the UI language rebuilds every screen, so a fresh Analyze
+        screen is handed a ScanState that still contains a finished scan. The
+        table is only filled by live scan signals, so without this the screen
+        came up blank while Findings — which re-reads the state when shown —
+        still listed everything, exactly as if the results had been lost.
+        """
+        state = self._scan_state
+        if state is None or state.is_running or not state.total_count:
+            return
+        self._update_partial_table()
+        self._refresh_header_meta()
+        self._refresh_idle_telemetry()
+        # Reflect the finished run rather than leaving the idle placeholder.
+        if state.entity_count:
+            self._pf_sub.setText(tr("// Semantic grouping complete"))
+        self._set_badge(tr("Complete"), "completed")
 
     def _apply_mode_combo_style(self):
         from app.themes.theme_manager import get_palette
@@ -1534,9 +1555,10 @@ class AnalyzeScreen(QWidget):
         summary = self._scan_state.category_summary()
 
         if mode == "smart" and entity_count > 0:
-            self._pf_count.setText(
-                f"{entity_count} entities · {self._scan_state.total_count:,} raw items · {self._scan_state.total_size_str}"
-            )
+            self._pf_count.setText(tr(
+                "{entities} entities · {raw:,} raw items · {size}",
+                entities=entity_count, raw=self._scan_state.total_count,
+                size=self._scan_state.total_size_str))
             self._pf_sub.setText(tr("// Semantic grouping complete"))
         else:
             self._pf_count.setText(f"{self._scan_state.total_count:,} items · {self._scan_state.total_size_str}")

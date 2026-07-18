@@ -244,7 +244,7 @@ class SettingsScreen(QWidget):
                 self._model_combo.setCurrentIndex(0)
             finally:
                 self._model_combo.blockSignals(False)
-            self._conn_status_lbl.setText("saved · not verified")
+            self._conn_status_lbl.setText(tr("saved · not verified"))
             self._conn_status_lbl.setStyleSheet(
                 f"font-family: 'JetBrains Mono'; font-size: 11px; color: {get_palette().get('review', '#d8b46a')};"
             )
@@ -782,7 +782,7 @@ class SettingsScreen(QWidget):
         self._timeout_slider.setValue(180)
         self._timeout_slider.setFixedWidth(200)
         self._timeout_slider.setFixedHeight(20)
-        self._timeout_val = QLabel("180 s")
+        self._timeout_val = QLabel(tr("{value} s", value=180))
         self._timeout_val.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 12px;")
         self._timeout_val.setFixedWidth(64)
         self._timeout_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -1054,7 +1054,7 @@ class SettingsScreen(QWidget):
         """Test Ollama connection in background thread."""
         self._btn_test.setEnabled(False)
         self._btn_refresh_models.setEnabled(False)
-        self._conn_status_lbl.setText("testing…")
+        self._conn_status_lbl.setText(tr("testing…"))
         self._conn_status_lbl.setStyleSheet(f"font-family: 'JetBrains Mono'; font-size: 11px; color: {get_palette().get('review', '#d8b46a')};")
 
         endpoint = self._endpoint_input.text().strip()

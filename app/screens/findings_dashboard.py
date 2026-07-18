@@ -1270,7 +1270,7 @@ class StorageOverviewWidget(QFrame):
         """Rebuild from fresh category data dict."""
         total_bytes = sum(d["size_bytes"] for d in category_data.values() if d["size_bytes"] > 0)
         self._total_bytes = total_bytes
-        self._total_lbl.setText(f"// {_format_size(total_bytes)} total")
+        self._total_lbl.setText(tr("// {size} total", size=_format_size(total_bytes)))
 
         if total_bytes == 0:
             return
@@ -2392,7 +2392,8 @@ class _PreallocDetailPanel(QWidget):
 
         if is_duplicate:
             locations = _duplicate_locations(entity)
-            self._dup_meta.setText(f"// {len(locations) or _duplicate_copy_count(entity)} copies")
+            self._dup_meta.setText(tr("// {n} copies",
+                                      n=len(locations) or _duplicate_copy_count(entity)))
             self._dup_text.setPlainText(_duplicate_locations_text(entity))
             self._dup_section.setVisible(True)
         else:
@@ -3100,7 +3101,8 @@ class CategoryDetailView(QFrame):
         )
 
         total_size = sum(e.get("size_bytes", 0) for e in entities)
-        self._stats_lbl.setText(f"// {len(entities)} entities · {_format_size(total_size)}")
+        self._stats_lbl.setText(tr("// {n} entities · {size}",
+                                   n=len(entities), size=_format_size(total_size)))
 
         ai_analyzed = sum(1 for e in entities if e.get("ai_status") in ("ready", "done"))
         ai_pending = sum(1 for e in entities if e.get("ai_status") in ("pending", "analyzing"))
@@ -3194,7 +3196,8 @@ class CategoryDetailView(QFrame):
         show_footer = has_search or has_filter or visible != total
         self._footer_lbl.setVisible(show_footer)
         if show_footer:
-            self._footer_lbl.setText(f"Showing {visible:,} of {total:,} entities")
+            self._footer_lbl.setText(tr("Showing {visible:,} of {total:,} entities",
+                                        visible=visible, total=total))
 
     def _refresh_risk_chip_styles(self):
         """Uniform industrial chips — active shows the muted status accent,
@@ -3485,7 +3488,7 @@ class CategoryDetailView(QFrame):
         recreating the whole list, which is what made filter clicks janky.
         """
         visible = self._proxy.rowCount()
-        self._list_count_lbl.setText(f"// {visible:,} visible")
+        self._list_count_lbl.setText(tr("// {n:,} visible", n=visible))
         self._row_widgets.clear()
 
         if visible == 0:

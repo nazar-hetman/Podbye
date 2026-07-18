@@ -221,7 +221,8 @@ class CleanupConfirmDialog(QDialog):
             dot = QLabel("●")
             dot.setStyleSheet(f"color: {color}; font-size: 10px;")
             row.addWidget(dot)
-            lbl = QLabel(f"{label} — {len(bucket)} item(s) · {_format_size(sz)}")
+            lbl = QLabel(tr("{label} — {n} item(s) · {size}",
+                            label=label, n=len(bucket), size=_format_size(sz)))
             lbl.setStyleSheet("font-size: 12px;")
             if label == "Protected":
                 lbl.setStyleSheet(
@@ -235,10 +236,9 @@ class CleanupConfirmDialog(QDialog):
 
         # ── Protected exclusion note ──────────────────────────────
         if self._protected:
-            prot_lbl = QLabel(
-                f"⚠  {len(self._protected)} protected item(s) will be skipped — "
-                "system-critical paths are never deleted."
-            )
+            prot_lbl = QLabel(tr(
+                "⚠  {n} protected item(s) will be skipped — system-critical "
+                "paths are never deleted.", n=len(self._protected)))
             prot_lbl.setStyleSheet(
                 f"font-size: 11px; color: {_risk_fg('Protected')}; padding: 6px 0;"
             )
@@ -247,10 +247,10 @@ class CleanupConfirmDialog(QDialog):
             root.addSpacing(6)
 
         if self._manual_review:
-            manual_lbl = QLabel(
-                f"{len(self._manual_review)} duplicate group(s) need manual review. "
-                "No cleanup target was queued because explicit removable duplicate files were not captured."
-            )
+            manual_lbl = QLabel(tr(
+                "{n} duplicate group(s) need manual review. No cleanup target "
+                "was queued because explicit removable duplicate files were not "
+                "captured.", n=len(self._manual_review)))
             manual_lbl.setStyleSheet(
                 f"font-size: 11px; color: {_risk_fg('Review')}; padding: 6px 0;"
             )
@@ -271,15 +271,16 @@ class CleanupConfirmDialog(QDialog):
 
             _pal = get_palette()
             _cloud_color = _pal.get("optional", "#6e93a8")
-            cloud_hdr = QLabel(f"☁  Cloud-synced items ({provider_str})")
+            cloud_hdr = QLabel(tr("☁  Cloud-synced items ({provider})",
+                                  provider=provider_str))
             cloud_hdr.setStyleSheet(
                 f"font-size: 12px; font-weight: bold; color: {_cloud_color};")
             cloud_layout.addWidget(cloud_hdr)
 
-            cloud_warn = QLabel(
-                f"{len(self._cloud)} item(s) are inside a cloud-sync folder. "
-                "Deletion will propagate to your cloud account and all synced devices."
-            )
+            cloud_warn = QLabel(tr(
+                "{n} item(s) are inside a cloud-sync folder. Deletion will "
+                "propagate to your cloud account and all synced devices.",
+                n=len(self._cloud)))
             cloud_warn.setStyleSheet(f"font-size: 11px; color: {_pal.get('text_dim', '#8a9b8f')};")
             cloud_warn.setWordWrap(True)
             cloud_layout.addWidget(cloud_warn)
@@ -325,7 +326,8 @@ class CleanupConfirmDialog(QDialog):
                 c_layout.addWidget(row_lbl)
 
             if len(self._review_targets) > 50:
-                more_lbl = QLabel(f"  … and {len(self._review_targets) - 50} more")
+                more_lbl = QLabel(tr("  … and {n} more",
+                                     n=len(self._review_targets) - 50))
                 more_lbl.setObjectName("Dim")
                 more_lbl.setStyleSheet("font-size: 10px;")
                 c_layout.addWidget(more_lbl)
@@ -454,7 +456,7 @@ class CleanupConfirmDialog(QDialog):
 
         # Show progress area
         self._progress_frame.setVisible(True)
-        self._progress_lbl.setText(f"Moving 0 / {len(self._armed)}…")
+        self._progress_lbl.setText(tr("Moving 0 / {total}…", total=len(self._armed)))
 
         paths = [f["path"] for f in self._armed]
 
@@ -471,9 +473,9 @@ class CleanupConfirmDialog(QDialog):
     def _on_progress(self, done: int, total: int, path: str):
         if path:
             name = os.path.basename(path) or path
-            self._progress_lbl.setText(
-                f"Moving {done + 1} / {total} — {name}"
-            )
+            self._progress_lbl.setText(tr(
+                "Moving {done} / {total} — {name}",
+                done=done + 1, total=total, name=name))
         else:
             self._progress_lbl.setText(tr("Done — {total} item(s) processed").format(total=total))
 

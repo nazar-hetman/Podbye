@@ -1267,7 +1267,8 @@ class StartupsScreen(QWidget):
         self._row_widgets = {}
 
         if self._count_lbl is not None:
-            self._count_lbl.setText(f"// {len(self._filtered)} of {len(self._entries)} shown")
+            self._count_lbl.setText(tr("// {shown} of {total} shown",
+                                       shown=len(self._filtered), total=len(self._entries)))
 
         if not self._filtered:
             empty = QLabel(tr("No startup entries match the current filters."))
