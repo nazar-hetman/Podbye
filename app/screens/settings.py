@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt, Signal, QObject
 from app.widgets.panels import Panel, apply_tactical_label
 from app.widgets.controls import TacticalComboBox
 from app.themes.theme_manager import THEME_NAMES, THEME_KEYS, get_palette, theme_signaller
-from app.i18n import tr
+from app.i18n import tr, available_languages
 from app.services.ollama_client import LOCAL_ENDPOINT
 
 
@@ -527,7 +527,7 @@ class SettingsScreen(QWidget):
         lang_row.setContentsMargins(0, 0, 0, 0)
         lang_row.setSpacing(8)
         self._lang_combo = TacticalComboBox()
-        self._lang_combo.addItems(["English", "Ukrainian"])
+        self._lang_combo.addItems(available_languages())
         self._lang_combo.setFixedWidth(168)
         self._lang_combo.currentTextChanged.connect(lambda _: self._on_language_changed())
         self._apply_combo_style(self._lang_combo)
@@ -715,7 +715,7 @@ class SettingsScreen(QWidget):
         ai_lang_lay.setContentsMargins(0, 0, 0, 0)
         ai_lang_lay.setSpacing(4)
         self._ai_lang_combo = TacticalComboBox()
-        self._ai_lang_combo.addItems(["English", "Ukrainian"])
+        self._ai_lang_combo.addItems(available_languages())
         self._ai_lang_combo.setCurrentIndex(0)
         self._ai_lang_combo.setFixedWidth(168)
         self._apply_combo_style(self._ai_lang_combo)
