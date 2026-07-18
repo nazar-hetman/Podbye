@@ -2871,6 +2871,50 @@ _USER_CONTENT_ROOT_NAMES = {
 }
 
 
+def _enrich_support_folders(entities: list) -> int:
+    """Label dotfolder app data with what we can actually prove about its owner.
+
+    A dotfolder in the user profile is support data for some program — one rule
+    covering 34 folders / 14 GB on a real machine, including tools no curated
+    list would contain (.irizi, .nexe, .node-red).
+
+    The owner's status comes from app_presence, which reports PRESENT or
+    UNKNOWN and never "absent": .vscode and .lmstudio (5.6 GB together) look
+    orphaned to the uninstall registry yet are plainly installed. UNKNOWN is
+    surfaced as "could not confirm", never as "safe to delete".
+    """
+    from app.services.app_presence import presence, describe, PRESENT, GENERIC
+
+    changed = 0
+    for e in entities:
+        norm = e.path.replace("\\", "/").rstrip("/")
+        leaf = os.path.basename(norm)
+        if not leaf.startswith(".") or len(leaf) < 3:
+            continue
+        # Only profile-level support folders — not every dot-directory nested
+        # deep inside a project (.git objects and friends stay as they are).
+        if not _is_user_home_dir(os.path.dirname(norm).lower()):
+            continue
+        state, _source = presence(leaf)
+        owner = leaf.lstrip(".")
+
+        # A pass that already found something specific (ai_models for .ollama,
+        # dev_artifacts for .vscode) knows more than "application data" — keep
+        # its type and name, and only add what we can prove about the owner.
+        generic_type = e.entity_type in ("unknown_folder", "mixed_folder")
+        if generic_type:
+            e.entity_type = "application_data"
+            if state == GENERIC:
+                e.name = leaf
+                e.summary = f"Support folder · {leaf}"
+            else:
+                e.name = f"{owner} (app data)"
+                e.summary = f"App data · {owner}"
+        e.risk_reason = describe(leaf)
+        changed += 1
+    return changed
+
+
 def _enrich_user_content_subfolders(entities: list) -> int:
     """Name app-owned folders in Documents/Videos/Pictures/Music honestly.
 
@@ -3221,6 +3265,10 @@ def _postprocess(ctx: "_DetectionContext", t0: float) -> list:
     # Folders sitting directly in Documents/Videos/Pictures/Music are app data,
     # not unclassified piles — label them as such.
     _enrich_user_content_subfolders(entities)
+
+    # Profile dotfolders are app support data; say what we can prove about the
+    # owning program, and nothing we cannot.
+    _enrich_support_folders(entities)
 
     # Charge every byte to exactly one entity. Must run after absorption, since
     # only the entities that actually survive can hold a share of the bytes.

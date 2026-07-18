@@ -114,7 +114,7 @@ These are bugs where the UI can mislead someone into deleting the wrong thing.
 The single highest-leverage way to shrink "Unknown". Deterministic, fast, and
 testable — no AI needed. Two halves, and **the pattern half is the strong one**:
 
-- [ ] **Pattern rules (do these first — they scale).**
+- [x] **Pattern rules — dotfolder support data.** *(done)*
   A single rule — "a dotfolder in the user profile is support data for
   `<name>`" — already covers **34 folders / 14.25 GB** on this machine, and it
   works for apps no curated list would ever contain (`.irizi`, `.nexe`,
@@ -133,9 +133,20 @@ testable — no AI needed. Two halves, and **the pattern half is the strong one*
   patterns → heuristics → AI.** Rules annotate; they never overrule verified
   evidence.
 
-- [ ] **Orphaned vs active app data — SAFETY-CRITICAL, see finding below.**
-  If the owning app is installed → "Active app configuration files".
-  If genuinely absent → "Orphaned files (safe to delete if uninstalled)".
+- [x] **Owner detection — SAFETY-CRITICAL.** *(done, and deliberately limited)*
+  Built `app/services/app_presence.py`: an alias table plus five evidence
+  sources (uninstall registry, installed folders, Start Menu, PATH, running
+  processes), returning **PRESENT / UNKNOWN / GENERIC — never "absent"**.
+  → Measured on the real profile (34 dotfolders): **18 present, 9 unknown,
+  7 generic**, and *every one of the five sources was required* — `.vscode`
+  resolves only via the Start Menu, `.lmstudio` only via installed folders,
+  `.claude` only via a running process. Registry alone would have found ~4.
+  → The ~5.6 GB in `.vscode` + `.lmstudio` that the naive check called
+  "orphaned, safe to delete" is now correctly reported as installed.
+  → UNKNOWN surfaces as *"Could not confirm whether X is still installed —
+  check before removing"*. The "orphaned, safe to delete" verdict is **not**
+  implemented and should stay unimplemented: `.aws`, `.azure` and `.gemini`
+  prove absence is undetectable for pip/npm/winget tools.
 
 > **⚠ Verified risk — do not ship the naive version.**
 > Matching a dotfolder name against the uninstall registry gets it wrong most
