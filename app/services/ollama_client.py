@@ -1,7 +1,18 @@
-"""Ollama-compatible local AI client.
+"""Local AI client — Ollama, LM Studio and llama.cpp.
 
-Handles connection testing, model discovery, and prompt generation.
-No cloud. No external APIs. Local only.
+Handles connection testing, model discovery, and prompt generation for the
+three popular local runtimes. LM Studio and llama.cpp both expose an
+OpenAI-compatible HTTP API, so one extra request shape covers both.
+
+The backend is detected from the endpoint rather than configured: the user
+enters an address and it works. ``/api/tags`` identifies Ollama, ``/v1/models``
+identifies an OpenAI-compatible server.
+
+Local only, and enforced: every request refuses an endpoint that is not
+loopback or LAN, so "server" means this machine or a mini-PC on your own
+network — never a cloud API.
+
+(The module name is historical; it is no longer Ollama-specific.)
 """
 from __future__ import annotations
 
@@ -16,6 +27,57 @@ from typing import Tuple
 
 # The built-in "Local" endpoint — Ollama's default on this machine.
 LOCAL_ENDPOINT = "http://127.0.0.1:11434"
+
+# Backends. OPENAI covers LM Studio and llama.cpp (and anything else serving
+# the same routes) — they differ in packaging, not in protocol.
+BACKEND_OLLAMA = "ollama"
+BACKEND_OPENAI = "openai"
+
+BACKEND_LABELS = {
+    BACKEND_OLLAMA: "Ollama",
+    BACKEND_OPENAI: "LM Studio / llama.cpp",
+}
+
+# endpoint → backend, so a scan does not re-probe on every single request.
+_BACKEND_CACHE: dict[str, str] = {}
+
+
+def _get_json(url: str, timeout: int):
+    """GET *url* and parse JSON, or return None."""
+    try:
+        with urlopen(Request(url, method="GET"), timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+def detect_backend(endpoint: str, timeout: int = 4,
+                   force_refresh: bool = False) -> str | None:
+    """Identify which local runtime is serving *endpoint*.
+
+    Probes Ollama's native route first, then the OpenAI-compatible one, so the
+    user never has to declare which server they run. Returns None when nothing
+    answers.
+    """
+    if not is_local_endpoint(endpoint):
+        return None
+    base = endpoint.rstrip("/")
+    if not force_refresh and base in _BACKEND_CACHE:
+        return _BACKEND_CACHE[base]
+
+    backend = None
+    if isinstance(_get_json(f"{base}/api/tags", timeout), dict):
+        backend = BACKEND_OLLAMA
+    elif isinstance(_get_json(f"{base}/v1/models", timeout), dict):
+        backend = BACKEND_OPENAI
+
+    if backend:
+        _BACKEND_CACHE[base] = backend
+    return backend
+
+
+def reset_backend_cache() -> None:
+    _BACKEND_CACHE.clear()
 
 # Fallback model list if Ollama is offline
 _FALLBACK_MODELS = [
@@ -63,23 +125,12 @@ def test_connection(endpoint: str, timeout: int = 4) -> Tuple[bool, str]:
     if not is_local_endpoint(endpoint):
         return False, "refused · endpoint is not localhost or LAN"
 
-    url = endpoint.rstrip("/") + "/api/tags"
-    try:
-        req = Request(url, method="GET")
-        with urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            models = data.get("models", [])
-            count = len(models)
-            return True, f"online · {count} model{'s' if count != 1 else ''} available"
-    except HTTPError as e:
-        return False, f"offline · HTTP {e.code}"
-    except URLError as e:
-        reason = str(e.reason) if hasattr(e, 'reason') else str(e)
-        return False, f"offline · {reason}"
-    except OSError as e:
-        return False, f"offline · {e}"
-    except Exception as e:
-        return False, f"offline · {e}"
+    backend = detect_backend(endpoint, timeout=timeout, force_refresh=True)
+    if backend is None:
+        return False, "offline · no Ollama, LM Studio or llama.cpp server found"
+    count = len(list_models(endpoint, timeout=timeout))
+    label = BACKEND_LABELS.get(backend, backend)
+    return True, f"online · {label} · {count} model{'s' if count != 1 else ''} available"
 
 
 def list_models(endpoint: str, timeout: int = 4) -> list:
@@ -89,23 +140,31 @@ def list_models(endpoint: str, timeout: int = 4) -> list:
     """
     if not is_local_endpoint(endpoint):
         return []
+    base = endpoint.rstrip("/")
+    backend = detect_backend(endpoint, timeout=timeout)
 
-    url = endpoint.rstrip("/") + "/api/tags"
-    try:
-        req = Request(url, method="GET")
-        with urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            models = data.get("models", [])
-            return [
-                {
-                    "name": m.get("name", "unknown"),
-                    "size": m.get("size", 0),
-                    "modified": m.get("modified_at", ""),
-                }
-                for m in models
-            ]
-    except Exception:
-        return []
+    if backend == BACKEND_OLLAMA:
+        data = _get_json(f"{base}/api/tags", timeout) or {}
+        return [
+            {
+                "name": m.get("name", "unknown"),
+                "size": m.get("size", 0),
+                "modified": m.get("modified_at", ""),
+            }
+            for m in data.get("models", [])
+        ]
+
+    if backend == BACKEND_OPENAI:
+        # OpenAI-compatible servers list models as {"data": [{"id": ...}]} and
+        # report no size, so the UI simply shows no size for them.
+        data = _get_json(f"{base}/v1/models", timeout) or {}
+        return [
+            {"name": m.get("id", "unknown"), "size": 0, "modified": ""}
+            for m in data.get("data", [])
+            if m.get("id")
+        ]
+
+    return []
 
 
 def strip_reasoning(text: str) -> str:
@@ -124,6 +183,24 @@ def strip_reasoning(text: str) -> str:
         if "<think>" in text.lower():
             text = re.split(r"<think>", text, maxsplit=1, flags=re.IGNORECASE)[0]
     return text.strip()
+
+
+def _extract_text(body: dict, backend: str) -> str:
+    """Pull the generated text out of whichever response shape came back.
+
+    Ollama returns {"response": ...}; OpenAI-compatible servers return
+    {"choices": [{"message": {"content": ...}}]}. Some llama.cpp builds answer
+    the completions shape ({"choices": [{"text": ...}]}) even on the chat
+    route, so both are accepted.
+    """
+    if backend == BACKEND_OPENAI:
+        choices = body.get("choices") or []
+        if choices:
+            first = choices[0] or {}
+            msg = (first.get("message") or {}).get("content")
+            return (msg or first.get("text") or "").strip()
+        return ""
+    return (body.get("response") or "").strip()
 
 
 def generate(
@@ -154,14 +231,25 @@ def generate(
     if cancel_flag and cancel_flag.is_set():
         return False, "cancelled"
 
-    url = endpoint.rstrip("/") + "/api/generate"
-    body_dict = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-    }
-    if options:
-        body_dict["options"] = options
+    base = endpoint.rstrip("/")
+    backend = detect_backend(endpoint, timeout=min(timeout, 5)) or BACKEND_OLLAMA
+
+    if backend == BACKEND_OPENAI:
+        # LM Studio and llama.cpp: chat completions is the common denominator.
+        url = f"{base}/v1/chat/completions"
+        body_dict = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+        }
+        # These servers take generation settings at the top level, not nested
+        # under "options" the way Ollama does.
+        body_dict.update(options or {})
+    else:
+        url = f"{base}/api/generate"
+        body_dict = {"model": model, "prompt": prompt, "stream": False}
+        if options:
+            body_dict["options"] = options
     payload = json.dumps(body_dict).encode("utf-8")
 
     import time as _time
@@ -173,7 +261,7 @@ def generate(
             if cancel_flag and cancel_flag.is_set():
                 return False, "cancelled"
             body = json.loads(resp.read().decode("utf-8"))
-            text = strip_reasoning(body.get("response", "").strip())
+            text = strip_reasoning(_extract_text(body, backend))
             if not text:
                 return False, "empty response from model"
             return True, text

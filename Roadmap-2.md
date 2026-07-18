@@ -196,7 +196,7 @@ testable — no AI needed. Two halves, and **the pattern half is the strong one*
 > 4. **Never auto-mark large payload folders Safe.** `.ollama` is 6.8 GB of
 >    downloaded models; deleting it is a re-download decision, not a cleanup.
 
-## Phase 4 — AI backends
+## Phase 4 — AI backends ✅ (pending live check)
 
 **Scope (confirmed):** local models only, running on this machine or on a
 mini-PC / home server on the **same network**. No cloud APIs — the existing
@@ -204,15 +204,22 @@ LAN-only guard and the "no cloud processing" promise stay exactly as they are.
 The Local/Server toggle already provides the endpoint; what's left is speaking
 each backend's API.
 
-- [ ] **Support the three popular local runtimes: Ollama, LM Studio, llama.cpp.**
-  Ollama works today (`/api/generate`). LM Studio and llama.cpp both serve an
-  **OpenAI-compatible** `/v1/chat/completions`, so one extra request/response
-  shape covers both.
-  → Design note: auto-detect the backend by probing `/api/tags` (Ollama) then
-  `/v1/models` (OpenAI-compatible) so the user doesn't have to declare which
-  server they're running — it should just work after entering the address.
-  → `strip_reasoning()` already handles `<think>` output, which matters here:
-  llama.cpp and LM Studio commonly serve reasoning models.
+- [x] **Support the three popular local runtimes: Ollama, LM Studio, llama.cpp.**
+  *(implemented; awaiting a live LM Studio check)*
+  → The backend is **auto-detected**: `/api/tags` identifies Ollama, `/v1/models`
+  identifies an OpenAI-compatible server, so the user just enters an address.
+  Detection is cached per endpoint so a scan does not re-probe on every call.
+  → Generation dispatches per backend: Ollama keeps `/api/generate` with
+  settings nested under `options`; LM Studio and llama.cpp use
+  `/v1/chat/completions` with settings at the top level. Both response shapes
+  are read, including the `{"text": …}` variant some llama.cpp builds return.
+  → `strip_reasoning()` applies to both, which matters because these servers
+  commonly host reasoning models.
+  → The LAN-only guard is unchanged and covered by tests: a cloud address is
+  refused before any request is made.
+  → 17 tests cover detection, listing, generation and both response shapes
+  against a fake server. **Still to do: one live run against LM Studio's
+  server** (it was installed but its local server was not started).
 
 ## Phase 5 — Languages (last, by agreement)
 
