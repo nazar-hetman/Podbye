@@ -166,3 +166,48 @@ def test_only_profile_level_dotfolders_are_touched(sources):
     deep = _entity("C:/Users/n/projects/thing/.cache")
     assert _enrich_support_folders([deep]) == 0
     assert deep.entity_type == "unknown_folder"
+
+
+# ── matcher direction + evidence strength ────────────────────────
+
+
+def test_a_shorter_tool_name_does_not_match_a_longer_folder(sources):
+    """The folder "Archive" matched the tool "arch" — a short pool entry
+    swallowing a longer folder name. That direction is now rejected."""
+    sources["PATH"] = {ap._norm("arch")}
+    assert presence(".archive")[0] == UNKNOWN
+
+
+def test_an_extending_match_is_only_trusted_from_a_strong_source(sources):
+    """"work" matching "workfolders" has exactly the same shape as
+    "visualstudiocode" matching "visualstudiocodeuser", so it cannot be ruled
+    out structurally. Evidence strength is what separates them: from PATH it is
+    a coincidence, from an installed product it is real."""
+    sources["PATH"] = {ap._norm("workfolders")}
+    assert presence(".work")[0] == PRESENT, "permissive mode may still match"
+    assert presence(".work", strong_only=True)[0] == UNKNOWN, (
+        "a PATH coincidence must not drive a grouping decision")
+
+
+def test_a_pool_entry_extending_the_candidate_still_matches(sources):
+    """The direction we DO want: version/edition suffixes."""
+    sources["Start Menu"] = {ap._norm("Visual Studio Code (User)")}
+    assert presence(".vscode")[0] == PRESENT
+
+
+def test_strong_only_ignores_path_and_processes(sources):
+    """PATH and running processes are full of generic short names, so a
+    grouping decision must not rest on them alone."""
+    sources["PATH"] = {ap._norm("games")}
+    assert presence(".games")[0] == PRESENT
+    assert presence(".games", strong_only=True)[0] == UNKNOWN
+
+
+def test_strong_only_still_accepts_installed_products(sources):
+    for src in ap.STRONG_SOURCES:
+        sources.clear()
+        sources.update({k: set() for k in
+                        ("registry", "installed folder", "Start Menu",
+                         "PATH", "running process")})
+        sources[src] = {ap._norm("PyCharm Community Edition")}
+        assert presence("PyCharm Community Edition", strong_only=True)[0] == PRESENT

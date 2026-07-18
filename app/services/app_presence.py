@@ -165,30 +165,43 @@ def reset_cache() -> None:
     _CACHE = None
 
 
-def _matches(candidate: str, pool: set[str]) -> bool:
-    """Exact or prefix match on normalized names.
+# Sources that identify an installed product rather than merely a command that
+# happens to share a name. PATH and running processes are useful corroboration
+# but are full of generic short names, so a decision that changes how a folder
+# is grouped should not rest on them alone.
+STRONG_SOURCES = ("registry", "installed folder", "Start Menu")
 
-    Prefix (not substring) so "visualstudiocode" still matches a Start Menu
-    entry like "visualstudiocodeuser", while "cache" cannot match
-    "shadercache". A minimum length keeps two-letter fragments from matching
-    half the machine.
+
+def _matches(candidate: str, pool: set[str]) -> bool:
+    """Exact match, or a pool entry that EXTENDS the candidate.
+
+    Only that one direction. "visualstudiocode" should match a Start Menu entry
+    "visualstudiocodeuser" (a version/edition suffix), but the reverse —
+    a short pool entry matching a longer folder name — produced nonsense:
+    "archive" matched the tool "arch", and "work" matched "workfolders". That is
+    harmless when the answer is only "keep this data", but it also decides
+    whether a folder stays whole, where a wrong yes hides a diverse folder's
+    contents.
     """
     if len(candidate) < 3:
         return False
     for name in pool:
-        if not name:
+        if len(name) < 3:
             continue
-        if name == candidate or name.startswith(candidate) or candidate.startswith(name):
-            if min(len(name), len(candidate)) >= 3:
-                return True
+        if name == candidate or name.startswith(candidate):
+            return True
     return False
 
 
-def presence(folder_name: str) -> tuple[str, str]:
+def presence(folder_name: str, strong_only: bool = False) -> tuple[str, str]:
     """Return (state, evidence_label) for the app owning *folder_name*.
 
     state is PRESENT, GENERIC, or UNKNOWN — never "absent". A leading dot is
     stripped, so ".vscode" and "vscode" behave the same.
+
+    *strong_only* restricts the answer to sources that identify an installed
+    product (registry / installed folder / Start Menu). Use it where a wrong
+    "present" would change grouping rather than just wording.
     """
     raw = (folder_name or "").lstrip(".").strip()
     key = _norm(raw)
@@ -200,6 +213,8 @@ def presence(folder_name: str) -> tuple[str, str]:
     candidates = [key] + [_norm(a) for a in _ALIASES.get(raw.lower(), ())]
     ev = evidence()
     for label, _ in _SOURCES:
+        if strong_only and label not in STRONG_SOURCES:
+            continue
         pool = ev.get(label, set())
         for cand in candidates:
             if _matches(cand, pool):

@@ -2348,6 +2348,16 @@ def _pass_explode_user_roots(ctx: "_DetectionContext"):
         # lets each version/tool subfolder fragment into its own "Qt (…)".
         if norm in ctx.installed_apps or (norm + "/") in ctx.installed_apps:
             continue
+        # Same reasoning for software installed outside Program Files that is
+        # not registered by path: a drive-root folder naming a present
+        # application IS that install, and exploding it scatters the app across
+        # its own components — PyCharm losing its bundled JRE to a stray "jbr".
+        if norm.count("/") == 1:
+            from app.services.app_presence import presence, PRESENT
+            # strong_only: a PATH entry or a running process sharing a name is
+            # not enough to hide a diverse folder's contents.
+            if presence(os.path.basename(norm), strong_only=True)[0] == PRESENT:
+                continue
         subdirs = [
             c for c in ctx.gather_direct(norm)
             if c.is_dir
@@ -2909,6 +2919,42 @@ def _enrich_program_files_apps(entities: list) -> int:
     return changed
 
 
+def _enrich_drive_root_apps(entities: list) -> int:
+    """A drive-root folder that names a present application is its install dir.
+
+    Plenty of software installs outside Program Files — measured on a real
+    machine: ffmpeg 11 GB, Qt 17 GB, PyCharm 1.9 GB, Webots 1 GB, two Irizi
+    products 1.5 GB, all sitting directly under C:\\.
+
+    "Contains executables" would be a weak signal (so does a download folder).
+    Instead this asks the presence resolver whether an application of that name
+    is actually on the machine — ffmpeg answers via PATH, PyCharm via the Start
+    Menu, Irizi via the registry. No evidence, no relabel: a plain data folder
+    like C:\\symbols is left alone.
+    """
+    from app.services.app_presence import presence, PRESENT
+
+    changed = 0
+    for e in entities:
+        if e.entity_type not in ("unknown_folder", "mixed_folder"):
+            continue
+        norm = e.path.replace("\\", "/").rstrip("/").lower()
+        parts = norm.split("/")
+        if len(parts) != 2 or not parts[1]:          # <drive>/<folder> only
+            continue
+        name = os.path.basename(e.path.replace("\\", "/").rstrip("/"))
+        state, source = presence(name, strong_only=True)
+        if state != PRESENT:
+            continue
+        e.entity_type = "application"
+        e.name = name
+        e.risk_reason = (f"Installed application (found in {source}) — remove it "
+                         "through its own uninstaller, not by deleting the folder")
+        e.summary = f"Installed application · {name}"
+        changed += 1
+    return changed
+
+
 def _enrich_support_folders(entities: list) -> int:
     """Label dotfolder app data with what we can actually prove about its owner.
 
@@ -3311,6 +3357,10 @@ def _postprocess(ctx: "_DetectionContext", t0: float) -> list:
     # A top-level Program Files folder is an installed application, even when
     # the registry does not name it.
     _enrich_program_files_apps(entities)
+
+    # Software installed outside Program Files (C:\ffmpeg, C:\PyCharm …) is
+    # still an application when the presence resolver can confirm it.
+    _enrich_drive_root_apps(entities)
 
     # Curated rules for well-known Windows locations (thumbnail cache, package
     # caches, Windows-installed vendor folders). Annotates generic results and

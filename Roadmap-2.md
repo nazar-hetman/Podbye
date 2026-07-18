@@ -133,9 +133,13 @@ These are bugs where the UI can mislead someone into deleting the wrong thing.
   name it. That alone moved ~14 GB (gstreamer 4.2 GB, Fortinet 3.3 GB, SQL
   Server 2.1 GB, Razer, Google, draw.io, OpenVPN …) out of Unknown and replaced
   descriptor-noise names like "gstreamer · documents" with the real folder name.
-  → What remains is genuinely miscellaneous: loose "Misc files in …" buckets,
-  `C:\AMD` driver leftovers, and `jbr` (a JRE bundled inside PyCharm, which
-  ideally gets absorbed into its parent app).
+  → Follow-up: software installed **outside** Program Files is now recognised
+  too — a drive-root folder naming a confirmed application is that install
+  (`C:\PyCharm…` stays whole instead of shedding its bundled JRE as a stray
+  "jbr", `C:\AMD` is identified). Final measurement:
+  **63 entities / 157 MB — 99.8% of the baseline Unknown bytes classified.**
+  → What remains is genuinely miscellaneous: loose "Misc files in …" buckets in
+  Downloads/Documents/profile, and a small `bin` folder.
 
 ### Built-in knowledge base (rules + AI hybrid)
 
