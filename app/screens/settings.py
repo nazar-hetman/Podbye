@@ -753,7 +753,7 @@ class SettingsScreen(QWidget):
         ai_toggle_l = QVBoxLayout(ai_toggle_w)
         ai_toggle_l.setContentsMargins(0, 0, 0, 0)
         ai_toggle_l.setSpacing(6)
-        self._cb_findings = QCheckBox(tr("Findings"))
+        self._cb_findings = QCheckBox(tr("Explain all findings automatically"))
         self._style_checkbox(self._cb_findings)
         self._cb_findings.toggled.connect(lambda checked: self._save_value("ai_findings_enabled", checked))
         ai_toggle_l.addWidget(self._cb_findings)
@@ -765,7 +765,9 @@ class SettingsScreen(QWidget):
         self._style_checkbox(self._cb_cleanup_hints)
         self._cb_cleanup_hints.toggled.connect(lambda checked: self._save_value("ai_cleanup_hints_enabled", checked))
         ai_toggle_l.addWidget(self._cb_cleanup_hints)
-        expl_lay.addLayout(_setting_row(tr("AI explanations"), tr("Choose where local AI guidance appears."), ai_toggle_w))
+        expl_lay.addLayout(_setting_row(tr("AI explanations"), tr("Per-item \"Ask AI\" always works. Automatic explanation of every "
+               "finding is off by default — it is slow on a local model; turn it "
+               "on for long background runs."), ai_toggle_w))
 
         self._cb_risky_only = QCheckBox(tr("Enable"))
         self._style_checkbox(self._cb_risky_only)

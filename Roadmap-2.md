@@ -83,24 +83,35 @@ These are bugs where the UI can mislead someone into deleting the wrong thing.
   invite deleting live data. A test asserts this rule never claims an app is
   missing or the folder is deletable.
 
-## Phase 2 — Quick wins
+## Phase 2 — Quick wins ✅ COMPLETE
 
-- [ ] **History limit 5 → 10** for both Cleanup and Analyze sessions.
-  → One-line each: `MAX_ANALYZE_HISTORY` / `MAX_CLEANUP_HISTORY` in
-  `app/state/session_store.py`.
+- [x] **History limit 5 → 10** for both Cleanup and Analyze sessions. *(done)*
 
-- [ ] **AI off by default for bulk scanning.** Set `ai_findings_enabled` to
-  `False` so a scan never auto-queues every entity; keep global AI as an
-  opt-in for long/overnight runs.
-  → The per-item **"Ask AI" button already exists** and now shows an in-place
-  "Asking AI…" state, so only the default flip + wording is left.
+- [x] **AI off by default for bulk scanning.** *(done)* `ai_findings_enabled`
+  now defaults to `False`, so a scan never auto-queues hundreds of entities at
+  a local model. Per-item **Ask AI** still works — `explain_item` passes
+  `force=True` to bypass the toggle — and a test pins that, since without it
+  the flip would leave no way to ask about anything. The setting is relabelled
+  "Explain all findings automatically" with a note that it suits long
+  background runs.
 
-- [ ] **Deep Uninstall** — fix failures on directories with no uninstaller
-  executable (e.g. `C:\Program Files (x86)\Microsoft`). Should degrade to a
-  clear "no uninstaller found — review manually" instead of failing.
+- [x] **Deep Uninstall** — *(done)* The handler already explained "no
+  uninstaller found", but the button stayed **enabled** for every application,
+  so it was a dead end that could only ever fail. It is now enabled only when
+  an uninstall command actually exists, and otherwise carries a tooltip saying
+  to use Move to Recycle Bin instead. This matters more since the Program Files
+  rule: vendor folders like gstreamer and Fortinet are now applications with no
+  registered uninstaller.
 
-- [ ] **Analyze screen hover** — broken hover effect when navigating under
-  categories.
+- [x] **Analyze screen hover** — *(could not reproduce; pinned)* Driving real
+  mouse events through the table found correct behaviour in every case: hover,
+  moving between rows, hover while another row is selected, leaving the table,
+  and a mid-scan repopulate (the table rebuilds constantly while scanning, and
+  the highlight survives). A prior fix is visible in the code — the highlight
+  used `tint_bg`, which was almost identical to the panel background, and now
+  uses `panel_hover`. Seven regression tests lock all of it in.
+  → If it still looks wrong on your machine, say what you see and I will dig
+  again — it may be a different surface (e.g. the Findings category cards).
 
 ## Phase 3 — Categorization quality (highest user value)
 

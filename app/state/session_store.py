@@ -17,8 +17,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-MAX_ANALYZE_HISTORY = 5
-MAX_CLEANUP_HISTORY = 5
+MAX_ANALYZE_HISTORY = 10
+MAX_CLEANUP_HISTORY = 10
 
 
 def _write_json_atomic(path: Path, data: Any) -> None:

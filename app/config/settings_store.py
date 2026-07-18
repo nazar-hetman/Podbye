@@ -39,7 +39,11 @@ _DEFAULTS = {
     "ai_model": "",
     "ai_tone": "Neutral",
     "ai_length": "Standard",
-    "ai_findings_enabled": True,
+    # Bulk AI is OFF by default: a scan can produce hundreds of entities and
+    # explaining them all at once chokes a local model. Per-item "Ask AI" still
+    # works (explain_item bypasses this toggle), and this can be switched on for
+    # long background/overnight runs.
+    "ai_findings_enabled": False,
     "ai_startups_enabled": True,
     "ai_cleanup_hints_enabled": False,
     "ai_explain_risky_only": False,

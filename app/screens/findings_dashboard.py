@@ -2420,8 +2420,20 @@ class _PreallocDetailPanel(QWidget):
             allow_recycle = False
         self._btn_recycle.setVisible(allow_recycle)
         self._btn_recycle.setEnabled(allow_recycle)
+        # Only offer Deep Uninstall when an uninstaller actually exists. Plenty
+        # of Program Files folders (gstreamer, Fortinet, vendor components…)
+        # register no uninstall command, and an enabled button that can only
+        # ever answer "no uninstaller found" is a dead end. Keep it visible but
+        # disabled with the reason, and recycle stays available as the fallback.
+        can_uninstall = (is_app and has_uninstaller
+                         and self._uninstall_cb is not None)
         self._btn_uninstall.setVisible(is_app)
-        self._btn_uninstall.setEnabled(is_app and self._uninstall_cb is not None)
+        self._btn_uninstall.setEnabled(can_uninstall)
+        self._btn_uninstall.setToolTip(
+            "" if can_uninstall else
+            tr("Windows has no registered uninstaller for this application — "
+               "remove leftover files with Move to Recycle Bin instead.")
+        )
         self._btn_open.setEnabled(has_path)
         self._btn_copy.setEnabled(has_path)
         # When no whole-folder delete is offered, make Open the prominent action.
