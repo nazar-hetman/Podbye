@@ -152,3 +152,50 @@ def test_no_new_untranslatable_ui_strings():
                 offenders.append(f"{path.name}:{node.lineno} {text[:50]!r}")
     assert not offenders, (
         "user-facing text not wrapped in tr() —\n  " + "\n  ".join(offenders))
+
+
+# ── strings reached through tr(variable) ─────────────────────────
+# These live in lookup tables, so no static scan finds them — and they are the
+# most visible text in Findings. They were entirely untranslated (entity type
+# labels 0/40 in BOTH languages) while the audit still reported "100%".
+
+
+def _dynamic_tables() -> dict[str, set[str]]:
+    import app.screens.quick_cleanup as qc
+    import app.screens.settings as st
+    from app.models.findings_table_model import _HEADER_KEYS
+    from app.models.smart_entity import ENTITY_TYPES, _CATEGORY_BY_TYPE
+
+    tables = {
+        "quick cleanup explanations":
+            set(qc._EXPLANATIONS.values()) | {qc._EXPLANATION_FALLBACK},
+        "categories": set(_CATEGORY_BY_TYPE.values()),
+        "entity type labels": set(ENTITY_TYPES.values()),
+        "table headers": {k for k in _HEADER_KEYS if k},
+    }
+    subs = getattr(st, "_SECTION_SUBS", None)
+    if isinstance(subs, dict):
+        tables["settings sections"] = set(subs.values())
+    return tables
+
+
+@pytest.mark.parametrize("code", ["uk", "fr"])
+def test_dynamic_lookup_tables_are_fully_translated(code):
+    table = _table(code)
+    missing = {}
+    for name, keys in _dynamic_tables().items():
+        gap = sorted(k for k in keys if not table.get(k))
+        if gap:
+            missing[name] = gap
+    assert not missing, (
+        f"{code}: lookup-table text with no translation — "
+        + "; ".join(f"{n} ({len(v)}): {v[0][:40]!r}" for n, v in missing.items()))
+
+
+def test_every_entity_type_label_is_translatable():
+    """The TYPE field in the inspector renders one of these for every entity."""
+    from app.models.smart_entity import ENTITY_TYPES
+    for code in ("uk", "fr"):
+        table = _table(code)
+        missing = [v for v in ENTITY_TYPES.values() if not table.get(v)]
+        assert not missing, f"{code}: untranslated entity types: {missing[:4]}"
