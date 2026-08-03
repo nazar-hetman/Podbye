@@ -15,7 +15,7 @@ import re
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QScrollArea, QWidget, QCheckBox,
+    QFrame, QScrollArea, QWidget, QCheckBox, QProgressBar,
 )
 
 from app.models.finding import _format_size
@@ -26,6 +26,20 @@ from app.i18n import tr
 from app.themes.theme_manager import get_palette
 from app.services.cleanup_engine import CleanupWorker
 from app.services.cleanup_result_classifier import assess_cleanup_counts
+
+
+def _elide_middle(text: str, limit: int) -> str:
+    """Shorten *text* from the middle, keeping both ends readable.
+
+    File names collide at the front (setup-1.exe, setup-2.exe) and carry their
+    extension at the back, so trimming either end alone loses the part that
+    tells two items apart.
+    """
+    if limit <= 1 or len(text) <= limit:
+        return text
+    keep = limit - 1
+    head = (keep + 1) // 2
+    return text[:head] + "…" + text[len(text) - (keep - head):]
 
 
 def _is_drive_root_path(path: str) -> bool:
@@ -364,6 +378,25 @@ class CleanupConfirmDialog(QDialog):
         )
         prog_layout.addWidget(self._progress_lbl)
 
+        # A moving bar, because the item counter alone does not move. Recycling
+        # one large folder is a single item, so the counter sat at "1 / 1" for
+        # the whole operation while the dialog refused to close — indis-
+        # tinguishable from a hang, which is exactly how it was reported.
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setTextVisible(False)
+        self._progress_bar.setFixedHeight(6)
+        prog_layout.addWidget(self._progress_bar)
+
+        # The item currently being moved. With one entry per line the label
+        # above can stay a stable "Moving 3 of 12", and this shows the movement.
+        self._progress_path_lbl = QLabel("")
+        self._progress_path_lbl.setObjectName("Dim")
+        self._progress_path_lbl.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 10px;"
+        )
+        self._progress_path_lbl.setWordWrap(False)
+        prog_layout.addWidget(self._progress_path_lbl)
+
         self._result_lbl = QLabel("")
         self._result_lbl.setStyleSheet("font-size: 12px; font-weight: bold;")
         self._result_lbl.setWordWrap(True)
@@ -430,6 +463,9 @@ class CleanupConfirmDialog(QDialog):
         if self._worker and self._worker.isRunning():
             self._worker.cancel()
             self._btn_cancel.setEnabled(False)
+            # Cancellation takes effect between items, so the item in flight
+            # still has to finish — keep the bar sweeping until it does.
+            self._progress_bar.setRange(0, 0)
             self._progress_lbl.setText(tr("Cancelling…"))
             return
         self.reject()
@@ -454,9 +490,17 @@ class CleanupConfirmDialog(QDialog):
         if self._cloud_cb:
             self._cloud_cb.setEnabled(False)
 
-        # Show progress area
+        # Show progress area. A single item gets an indeterminate bar: there is
+        # no meaningful fraction to show, and one big folder is precisely the
+        # case where a static "1 / 1" looked frozen.
+        total = len(self._armed)
         self._progress_frame.setVisible(True)
-        self._progress_lbl.setText(tr("Moving 0 / {total}…", total=len(self._armed)))
+        self._progress_bar.setRange(0, 0 if total <= 1 else total)
+        self._progress_bar.setValue(0)
+        self._progress_path_lbl.setText("")
+        self._progress_lbl.setText(
+            tr("Moving to the Recycle Bin…") if total <= 1
+            else tr("Moving 0 / {total}…", total=total))
 
         paths = [f["path"] for f in self._armed]
 
@@ -471,13 +515,29 @@ class CleanupConfirmDialog(QDialog):
         self._worker.start()
 
     def _on_progress(self, done: int, total: int, path: str):
+        """Worker progress: *done* items finished, *path* is the one starting now.
+
+        The count used to be reported as ``done + 1``, which announced an item
+        as moved before the move was attempted — so the last line the user saw
+        on a failure named the item that had actually succeeded.
+        """
         if path:
-            name = os.path.basename(path) or path
-            self._progress_lbl.setText(tr(
-                "Moving {done} / {total} — {name}",
-                done=done + 1, total=total, name=name))
+            if total > 1:
+                self._progress_bar.setValue(done)
+                self._progress_lbl.setText(tr(
+                    "Moving {done} / {total}…", done=done, total=total))
+            self._progress_path_lbl.setText(
+                _elide_middle(os.path.basename(path) or path, 52))
         else:
-            self._progress_lbl.setText(tr("Done — {total} item(s) processed").format(total=total))
+            if total > 1:
+                self._progress_bar.setRange(0, total)
+                self._progress_bar.setValue(total)
+            else:
+                self._progress_bar.setRange(0, 1)
+                self._progress_bar.setValue(1)
+            self._progress_path_lbl.setText("")
+            self._progress_lbl.setText(
+                tr("Done — {total} item(s) processed", total=total))
 
     def _on_finished(self, result):
         self._result = result
@@ -514,6 +574,10 @@ class CleanupConfirmDialog(QDialog):
         self._result_lbl.setText("\n".join(parts))
         self._result_lbl.setVisible(True)
         self._progress_lbl.setVisible(False)
+        # The bar is finished with too — leaving an indeterminate one sweeping
+        # under the result text reads as "still working".
+        self._progress_bar.setVisible(False)
+        self._progress_path_lbl.setVisible(False)
 
         armed = getattr(self, "_armed", self._armed_targets())
 

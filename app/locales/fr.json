@@ -391,6 +391,7 @@
   "Only used if the local model stops responding. Normal explanations wait until the model finishes.": "Utilisé uniquement si le modèle local cesse de répondre. Les explications normales attendent la fin du modèle.",
   "Open Analyze →": "Ouvrir Analyser →",
   "Open Findings": "Ouvrir les résultats",
+  "Opening session…": "Ouverture de la session…",
   "Open History": "Ouvrir l'historique",
   "Open Task Manager ↗": "Gestionnaire des tâches ↗",
   "Open findings": "Ouvrir les résultats",
@@ -802,5 +803,14 @@
   "⚠  {n} protected item(s) will be skipped — system-critical paths are never deleted.": "⚠  {n} élément(s) protégé(s) seront ignorés — les chemins critiques du système ne sont jamais supprimés.",
   "✓  {moved:,} moved · {failed:,} unexpected": "✓  {moved:,} déplacés · {failed:,} inattendus",
   "✓  {moved:,} moved · {locked:,} locked": "✓  {moved:,} déplacés · {locked:,} verrouillés",
-  "✓  {n:,} moved": "✓  {n:,} déplacés"
+  "✓  {n:,} moved": "✓  {n:,} déplacés",
+  "THAT'S ME": "C'EST MOI",
+  "Recommendation: this is Vigil — the app doing the cleaning. You can remove it whenever you like, but it would be good to let it finish the job first. 🙂": "Recommandation : voici Vigil — l'application qui fait le ménage. Vous pouvez la supprimer quand vous voulez, mais mieux vaut la laisser finir son travail d'abord. 🙂",
+  "Vigil's own files: the app, your settings, and the scan history this screen is showing. Vigil will not clean itself up.": "Les fichiers de Vigil : l'application, vos paramètres et l'historique des analyses affiché ici. Vigil ne se nettoie pas lui-même.",
+  "Desktop": "Bureau",
+  "Moving to the Recycle Bin…": "Déplacement vers la corbeille…",
+  "Moving {done} / {total}…": "Déplacement {done} / {total}…",
+  "Databases": "Bases de données",
+  "Saves": "Sauvegardes de jeux",
+  "choose individual files": "choisir des fichiers individuels"
 }

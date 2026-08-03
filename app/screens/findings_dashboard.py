@@ -105,6 +105,12 @@ _CATEGORY_COLOR_PARENT = {
     "Audio": "Media",
     "Creative Projects": "Media",
     "Installers": "Applications",
+    # Split out of the old "Databases & Saves"; both keep its slate blue.
+    "Databases": "Databases & Saves",
+    "Saves": "Databases & Saves",
+    # Location categories — user content, so they read like the profile.
+    "Downloads": "User Profile",
+    "Desktop": "User Profile",
 }
 
 
@@ -479,6 +485,21 @@ def _entity_importance_text(entity: dict) -> str:
     return "Low — generally safe to regenerate"
 
 
+def _entity_file_group_size(entity: dict) -> int:
+    """How many individual files this entity stands for, if it is a group.
+
+    Loose buckets ("Loose archives in Downloads"), archive groups and installer
+    groups carry the exact file list they were built from, and each of those
+    files can be kept or recycled on its own. A folder-backed entity — an app, a
+    game, a download kept whole — carries no list, because its meaning is the
+    folder rather than the files inside it, however many there are.
+
+    Reading the stored list costs nothing; the alternative signal, counting the
+    folder, would mean a disk walk per visible row.
+    """
+    return len([p for p in (entity.get("removable_file_paths") or []) if p])
+
+
 def _entity_contains_text(entity: dict) -> str:
     if entity.get("entity_type") == "duplicate_group":
         return _duplicate_subtitle(entity)
@@ -492,6 +513,11 @@ def _entity_contains_text(entity: dict) -> str:
     label = entity.get("entity_type_label") or entity.get("semantic_label") or ""
     if label:
         parts.append(label)
+    # Say so when the row stands for a list rather than a folder. Without this
+    # "Loose archives in Downloads" looks like one indivisible thing, and the
+    # per-file view — which is what a group row is for — goes unnoticed.
+    if _entity_file_group_size(entity) >= 2:
+        parts.append(tr("choose individual files"))
     return " · ".join(parts) if parts else "Contents not summarized"
 
 
@@ -653,6 +679,16 @@ def _finding_recommendation(entity: dict) -> tuple[str, str, str, str]:
     accent_risk = p.get("risk", "#d68a78")
     accent_info = p.get("accent", "#7ab8d4")
 
+    if entity.get("is_self"):
+        return (
+            tr("THAT'S ME"),
+            tr("Recommendation: this is Vigil — the app doing the cleaning. You can "
+               "remove it whenever you like, but it would be good to let it finish "
+               "the job first. 🙂"),
+            tr("Vigil's own files: the app, your settings, and the scan history "
+               "this screen is showing. Vigil will not clean itself up."),
+            accent_info,
+        )
     if risk == "Protected":
         return (
             tr("PROTECTED"),
@@ -1891,6 +1927,18 @@ class _PreallocDetailPanel(QWidget):
         self._tabs.setTabVisible(1, True)
         self._tabs.setTabText(1, tr("Files ({n})").format(n=len(paths)))
         self._render_files_page()
+
+        # Open on the list for entities whose meaning *is* the list. A loose
+        # bucket's Information tab can say little beyond which folder the files
+        # were found in, while the per-file view is the reason the row exists —
+        # and it was a click away with nothing pointing at it.
+        #
+        # A folder-backed entity (a photo library, an app) keeps Information:
+        # there the folder is the subject and the file list is a detail.
+        if _entity_file_group_size(entity) >= 2:
+            self._tabs.setCurrentIndex(1)
+        elif self._tabs.currentIndex() == 1:
+            self._tabs.setCurrentIndex(0)
 
     def _file_page_count(self) -> int:
         return max(1, (len(self._all_file_paths) + self._FILES_PER_PAGE - 1)

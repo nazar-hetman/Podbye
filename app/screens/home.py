@@ -883,8 +883,17 @@ class HomeScreen(QWidget):
         self._live_poll.stop()
         QTimer.singleShot(300, self._rebuild_dynamic)
 
+    def _load_busy(self, fn):
+        """Read a session off the UI thread — see BusyDialog for why.
+
+        A completed C:/ scan is a multi-hundred-MB snapshot; reading it inline
+        froze the window for long enough to look like a crash.
+        """
+        from app.widgets.progress import run_busy
+        return run_busy(self, tr("Opening session…"), fn)
+
     def _on_resume_clicked(self, data: dict):
-        full = load_session()
+        full = self._load_busy(load_session)
         if full:
             self.resume_requested.emit(full)
 
@@ -896,13 +905,13 @@ class HomeScreen(QWidget):
         self.stop_requested.emit()
 
     def _on_open_findings(self, session_data: dict):
-        full = load_session()
+        full = self._load_busy(load_session)
         if full:
             self.open_findings_requested.emit(full)
             self.navigate_to.emit("Findings")
 
     def _open_history_session(self, session_id: str):
-        session = load_session_by_id(session_id)
+        session = self._load_busy(lambda: load_session_by_id(session_id))
         if session:
             self.open_findings_requested.emit(session)
             self.navigate_to.emit("Findings")

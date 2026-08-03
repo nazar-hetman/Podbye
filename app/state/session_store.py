@@ -20,6 +20,23 @@ from typing import Any
 MAX_ANALYZE_HISTORY = 10
 MAX_CLEANUP_HISTORY = 10
 
+# Above this size a session is read with _read_skipping_findings() instead of
+# json.load(). Sessions written before Vigil stopped persisting raw findings
+# hold ~1.6M of them in one 1.7 GB array; parsing that allocates gigabytes and
+# blocks for minutes. Anything under the threshold parses in well under a
+# second, so the plain loader stays in charge of the common case.
+_SKIP_FINDINGS_ABOVE_BYTES = 32 * 1024 * 1024
+
+# Session files are always written by _write_json_atomic with indent=2, so a
+# top-level array closes on a line of exactly two spaces + "]". JSON escapes
+# newlines inside strings, so this byte sequence can never occur in data.
+_TOP_LEVEL_ARRAY_END = b"\n  ]"
+_FINDINGS_KEY = b'"findings":'
+# The keys written before "findings" are all scalars/small dicts. If we have not
+# found the key within this much of the file, the layout is not what we expect.
+_MAX_FINDINGS_KEY_OFFSET = 8 * 1024 * 1024
+_READ_CHUNK = 8 * 1024 * 1024
+
 
 def _write_json_atomic(path: Path, data: Any) -> None:
     """Serialize *data* to *path* so readers only ever see a complete file.
@@ -86,6 +103,82 @@ def _cleanup_record_path(timestamp: int) -> Path:
     return _sessions_dir() / f"cleanup_{timestamp}.json"
 
 
+# ── Crash-leftover sweep ─────────────────────────────────────────
+
+# How long a stray file must sit untouched before the sweep will take it.
+# Another Vigil instance may be writing right now; a live temp file is seconds
+# old, and append_to_history writes session_<id>.json a moment before it adds
+# the matching history record.
+_STALE_AFTER_SECONDS = 60 * 60
+
+
+def sweep_orphaned_files(now: float | None = None) -> tuple[int, int]:
+    """Delete files in the sessions directory that nothing can ever reach.
+
+    Returns ``(files_removed, bytes_reclaimed)``.
+
+    Two kinds accumulate, neither covered by MAX_ANALYZE_HISTORY:
+
+    * ``.<name>.<rand>.tmp`` — _write_json_atomic unlinks its temp file in a
+      finally block, which does not run when the process is killed rather than
+      raising. Measured on a real profile: 2.80 GB in two such files, one of
+      them a 2.8 GB last_run.json left by a single kill.
+    * ``session_<id>.json`` with no record in history.json — the index is what
+      History reads and what pruning walks, so a file it does not name can
+      never be opened, listed, or evicted. Measured: 839 MB in one file.
+
+    Together that was 3.55 GB on a 6.9 GB sessions folder. Fresh files are
+    always left alone, so a concurrent instance is never disturbed.
+    """
+    now = time.time() if now is None else now
+    sess_dir = _sessions_dir()
+    if not sess_dir.is_dir():
+        return 0, 0
+
+    # None means "the index could not be trusted". load_history() reports a
+    # corrupt or missing file as an empty list, which is indistinguishable from
+    # a profile with no sessions — acting on that would delete every session
+    # file the moment history.json got truncated. Temp files are unambiguous
+    # garbage either way, so only the session sweep waits for a good index.
+    known: set | None = None
+    hist_path = _history_path()
+    if hist_path.is_file():
+        try:
+            with open(hist_path, "r", encoding="utf-8") as fh:
+                records = json.load(fh)
+            if isinstance(records, list):
+                known = {r.get("session_id", "") for r in records
+                         if isinstance(r, dict)}
+        except (json.JSONDecodeError, OSError, ValueError):
+            known = None
+
+    removed = reclaimed = 0
+    for entry in sess_dir.iterdir():
+        try:
+            if not entry.is_file():
+                continue
+            name = entry.name
+            if name.endswith(".tmp") and name.startswith("."):
+                pass
+            elif name.startswith("session_") and name.endswith(".json"):
+                if known is None:
+                    continue
+                if name[len("session_"):-len(".json")] in known:
+                    continue
+            else:
+                continue
+            stat = entry.stat()
+            if now - stat.st_mtime < _STALE_AFTER_SECONDS:
+                continue
+            size = stat.st_size
+            entry.unlink()
+        except OSError:
+            continue
+        removed += 1
+        reclaimed += size
+    return removed, reclaimed
+
+
 # ── Public API ───────────────────────────────────────────────────
 
 def save_session(data: dict) -> bool:
@@ -100,19 +193,90 @@ def save_session(data: dict) -> bool:
         return False
 
 
-def load_session() -> dict | None:
-    """Load last_run.json. Returns dict or None if missing/corrupt."""
-    path = _last_run_path()
+def _read_skipping_findings(path: Path) -> dict | None:
+    """Parse a session file with its top-level "findings" array replaced by [].
+
+    A full C:/ scan produced by an older build stores ~1.6M raw findings in a
+    1.7 GB file. json.load() on that allocates gigabytes and blocks the caller
+    for minutes — that is what froze the app when the user reopened a big scan.
+
+    Nothing on screen needs the raw array: Findings renders entities, and new
+    sessions no longer persist findings for a large scan at all. So the array is
+    skipped at the byte level. We keep the (small) text before it, seek past the
+    array without decoding a single entry, keep the text after it, and parse the
+    result. Peak memory tracks the entities, not the file.
+
+    Returns None when the file does not have the expected shape; the caller
+    decides whether falling back to a full parse is affordable.
+    """
+    with open(path, "rb") as f:
+        head = b""
+        while True:
+            chunk = f.read(_READ_CHUNK)
+            if not chunk:
+                return None
+            head += chunk
+            key_at = head.find(_FINDINGS_KEY)
+            if key_at != -1:
+                break
+            if len(head) > _MAX_FINDINGS_KEY_OFFSET:
+                return None
+
+        before = head[:key_at]
+        window = head[key_at + len(_FINDINGS_KEY):]
+
+        # An empty array is written inline as "[]", so there is no multi-line
+        # block to skip — and searching for a closing bracket would run on into
+        # the next top-level array and corrupt the document.
+        if window.lstrip()[:2] == b"[]":
+            tail = window
+        else:
+            overlap = len(_TOP_LEVEL_ARRAY_END) - 1
+            while True:
+                end_at = window.find(_TOP_LEVEL_ARRAY_END)
+                if end_at != -1:
+                    # Drop the array body; keep "[]" plus everything after it.
+                    tail = b" []" + window[end_at + len(_TOP_LEVEL_ARRAY_END):]
+                    break
+                chunk = f.read(_READ_CHUNK)
+                if not chunk:
+                    return None
+                window = window[-overlap:] + chunk
+        tail += f.read()
+
+    try:
+        data = json.loads((before + _FINDINGS_KEY + tail).decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _load_session_file(path: Path) -> dict | None:
+    """Load a session snapshot from *path*, without freezing on legacy files."""
     if not path.exists():
         return None
     try:
+        if path.stat().st_size > _SKIP_FINDINGS_ABOVE_BYTES:
+            data = _read_skipping_findings(path)
+            if data is not None:
+                data["findings_omitted"] = True
+                return data
+            # Unexpected layout — every file this app writes matches the fast
+            # path, so this is a last resort. A full parse is slow and hungry,
+            # but callers run this off the UI thread behind BusyDialog, so it
+            # costs the user time rather than a frozen window.
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
             return data
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError, MemoryError):
         pass
     return None
+
+
+def load_session() -> dict | None:
+    """Load last_run.json. Returns dict or None if missing/corrupt."""
+    return _load_session_file(_last_run_path())
 
 
 def load_session_summary() -> dict | None:
@@ -425,17 +589,7 @@ def load_cleanup_records() -> list[dict]:
 
 def load_session_by_id(session_id: str) -> dict | None:
     """Load full session data by id. Returns None if missing/corrupt."""
-    path = _session_file_path(session_id)
-    if not path.exists():
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            return data
-    except (json.JSONDecodeError, OSError):
-        pass
-    return None
+    return _load_session_file(_session_file_path(session_id))
 
 
 def delete_session_from_history(session_id: str) -> bool:

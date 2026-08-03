@@ -1,4 +1,4 @@
-"""Vigil / LootCleaner — Main application entry point."""
+"""Vigil — Main application entry point."""
 
 import sys
 import os
@@ -66,7 +66,7 @@ class VigilWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("VIGIL — LootCleaner")
+        self.setWindowTitle("VIGIL")
         self.setMinimumSize(1100, 700)
         self.resize(1440, 900)
         self._current_theme = "forest"
@@ -80,6 +80,7 @@ class VigilWindow(QMainWindow):
         self._pending_lang = None       # deferred UI language (set mid-analysis)
         self._settings_store = SettingsStore()
         init_language(self._settings_store)
+        self._sweep_session_leftovers()
         self._scan_state = ScanState(self)
         self._scan_state.set_settings_store(self._settings_store)
         self._ai_explainer = AIExplainer(self._settings_store, parent=self)
@@ -89,6 +90,22 @@ class VigilWindow(QMainWindow):
         self._navigate("Home")
         saved_theme = self._settings_store.get("theme", "forest")
         self._apply_theme(saved_theme)
+
+    def _sweep_session_leftovers(self):
+        """Reclaim crash leftovers in the sessions folder, once per launch.
+
+        Vigil protects its own data folder from cleanup, so nothing else will
+        ever reclaim these. Unlinking is O(1) whatever the file size, and only
+        files older than an hour are touched, so this is safe on the UI thread.
+        """
+        try:
+            from app.state.session_store import sweep_orphaned_files
+            removed, reclaimed = sweep_orphaned_files()
+            if removed:
+                logging.info("[session] swept %d leftover file(s), %.1f MB reclaimed",
+                             removed, reclaimed / (1024 * 1024))
+        except Exception:
+            logging.exception("[session] leftover sweep failed")
 
     def _build_ui(self):
         """Build (or rebuild) the entire UI. Safe to call again for language changes."""
@@ -556,7 +573,7 @@ def main():
         try:
             import ctypes
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                "Vigil.LootCleaner.App"
+                "Vigil.App"
             )
         except Exception:
             pass

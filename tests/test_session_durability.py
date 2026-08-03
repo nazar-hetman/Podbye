@@ -132,10 +132,18 @@ def test_background_save_survives_concurrent_finding_ingest(sessions_dir):
         for _ in range(5):
             st._save_session_background("running", lightweight=True)
             time.sleep(0.02)
-        assert st.wait_for_saves(timeout=30.0), "background saves did not finish"
     finally:
+        # Stop ingesting before draining. The race under test happens while a
+        # save is running, and the five saves above cover it; keeping the churn
+        # thread allocating through the drain only adds GIL and GC contention.
+        # That contention is what made this fail once the whole suite grew past
+        # ~515 tests — proven with a file of 100 `assert i == i` tests, which
+        # reproduced it exactly. A faulthandler dump showed the save thread
+        # parked in json.dump on a snapshot that serialises in 6 ms standalone.
         stop.set()
         t.join(timeout=5)
+
+    assert st.wait_for_saves(timeout=30.0), "background saves did not finish"
 
     loaded = session_store.load_session()
     assert loaded is not None, "concurrent ingest silently killed every autosave"

@@ -11,12 +11,12 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QEvent
-from PySide6.QtGui import QColor, QBrush
+from PySide6.QtGui import QColor
 
 from app.widgets.panels import Panel
 from app.widgets.panels import apply_tactical_label
 from app.widgets.controls import TacticalComboBox
-from app.widgets.tables import create_table, set_row
+from app.widgets.tables import create_table, set_row, RowHighlightDelegate
 from app.widgets.feeds import OperatorFeed
 from app.models.finding import _format_size
 from app.i18n import tr
@@ -544,6 +544,10 @@ class AnalyzeScreen(QWidget):
             "QTableWidget::item:selected { background: transparent; }"
             "QTableWidget::item:focus { outline: none; }"
         )
+        # Row hover/selection has to be painted by a delegate: the theme styles
+        # QTableWidget::item, which makes item.setBackground() a no-op.
+        self._pf_delegate = RowHighlightDelegate(self._pf_row_color, self._pf_table)
+        self._pf_table.setItemDelegate(self._pf_delegate)
         self._pf_table.viewport().installEventFilter(self)
         self._pf_table.cellEntered.connect(self._on_partial_cell_hover)
         self._pf_table.cellClicked.connect(self._on_category_row_clicked)
@@ -749,37 +753,26 @@ class AnalyzeScreen(QWidget):
             self._hover_row = row
             self._refresh_partial_table_row_styles()
 
+    def _pf_row_color(self, row: int):
+        """Background for one category row, or None to leave it untinted.
+
+        Read by RowHighlightDelegate on every repaint, so hover and the clicked
+        row survive the table being rebuilt underneath them mid-scan.
+        """
+        from app.themes.theme_manager import get_palette
+        p = get_palette()
+        if row == self._selected_pf_row:
+            return QColor(p.get("accent_soft", "#1b2e22"))
+        if row == self._hover_row:
+            # panel_hover is a visibly distinct surface; tint_bg was so close to
+            # the panel background that the highlight was imperceptible.
+            return QColor(p.get("panel_hover", "#1d2c25"))
+        return None
+
     def _refresh_partial_table_row_styles(self):
         if not hasattr(self, "_pf_table") or self._pf_table is None:
             return
-        from app.themes.theme_manager import get_palette
-        p = get_palette()
-        # panel_hover is a visibly distinct surface; tint_bg was so close to the
-        # panel background that the hover highlight was imperceptible.
-        hover_brush = QBrush(QColor(p.get("panel_hover", "#1d2c25")))
-        selected_brush = QBrush(QColor(p.get("accent_soft", "#1b2e22")))
-        transparent = QBrush(Qt.transparent)
-
-        for row in range(self._pf_table.rowCount()):
-            if row == self._selected_pf_row:
-                brush = selected_brush
-            elif row == self._hover_row:
-                brush = hover_brush
-            else:
-                brush = transparent
-
-            # Also tint the vertical header section so the hover reads as one
-            # continuous row surface across the whole table width.
-            vh_item = self._pf_table.verticalHeaderItem(row)
-            if vh_item is None:
-                from PySide6.QtWidgets import QTableWidgetItem
-                vh_item = QTableWidgetItem("")
-                self._pf_table.setVerticalHeaderItem(row, vh_item)
-            vh_item.setBackground(brush)
-            for col in range(self._pf_table.columnCount()):
-                item = self._pf_table.item(row, col)
-                if item is not None:
-                    item.setBackground(brush)
+        self._pf_table.viewport().update()
 
     # ─── Actions ─────────────────────────────────────────────
 

@@ -1,13 +1,15 @@
-"""Partial-findings hover on the Analyze screen.
+"""Category-row hover on the Analyze screen.
 
-The reported hover bug could not be reproduced — a prior fix is visible in the
-code (the highlight used tint_bg, which was nearly identical to the panel
-background, and now uses panel_hover). These tests pin every case that was
-checked so it cannot silently regress again.
+These tests render the table and read pixels. That is deliberate: the previous
+version of this file asserted QTableWidgetItem.background(), which passed while
+the highlight was invisible on screen. The theme styles QTableWidget::item, and
+once any QSS rule targets ::item Qt's stylesheet style paints the item panel
+itself and ignores the model's brush entirely — so the model was tinted and
+nothing was ever drawn. Only a rendered pixel proves the user can see it.
 """
 import pytest
 from PySide6.QtCore import QEvent, QPointF, Qt
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtGui import QImage, QMouseEvent
 from PySide6.QtWidgets import QTableWidgetItem
 
 from app.config.settings_store import SettingsStore
@@ -33,12 +35,26 @@ def screen(qapp):
         for c in range(t.columnCount()):
             t.setItem(r, c, QTableWidgetItem(f"cat{r}"))
     qapp.processEvents()
-    return s, st, qapp
+    yield s, st, qapp
+    # Each test builds a whole AnalyzeScreen; leaking them exhausts Qt's
+    # window/GDI resources part-way through the file and the process dies with
+    # an access violation rather than a test failure.
+    s.close()
+    s.deleteLater()
+    qapp.processEvents()
 
 
-def _bg(table, row):
-    item = table.item(row, 0)
-    return item.background().color().name().lower() if item else None
+_UNPAINTED = "#000000"   # the fill colour of the blank render target
+
+
+def _painted(screen_, row, col=0):
+    """Colour actually drawn behind a cell."""
+    table = screen_._pf_table
+    img = QImage(table.viewport().size(), QImage.Format_ARGB32)
+    img.fill(Qt.black)
+    table.viewport().render(img)
+    rect = table.visualItemRect(table.item(row, col))
+    return img.pixelColor(rect.center()).name().lower()
 
 
 def _hover_colour():
@@ -49,8 +65,8 @@ def _selected_colour():
     return get_palette().get("accent_soft").lower()
 
 
-def _move_to(app, screen, row):
-    table = screen._pf_table
+def _move_to(app, screen_, row):
+    table = screen_._pf_table
     rect = table.visualItemRect(table.item(row, 0))
     ev = QMouseEvent(QEvent.MouseMove, QPointF(rect.center()),
                      Qt.NoButton, Qt.NoButton, Qt.NoModifier)
@@ -61,15 +77,23 @@ def _move_to(app, screen, row):
 def test_hovering_a_row_highlights_it(screen):
     s, _, app = screen
     _move_to(app, s, 2)
-    assert _bg(s._pf_table, 2) == _hover_colour()
+    assert _painted(s, 2) == _hover_colour()
+
+
+def test_the_whole_row_is_highlighted_not_just_the_cell(screen):
+    """A per-cell highlight is what Qt gives for free, and it reads as a bug."""
+    s, _, app = screen
+    _move_to(app, s, 2)
+    last_col = s._pf_table.columnCount() - 1
+    assert _painted(s, 2, last_col) == _hover_colour()
 
 
 def test_moving_away_clears_the_previous_row(screen):
     s, _, app = screen
     _move_to(app, s, 2)
     _move_to(app, s, 0)
-    assert _bg(s._pf_table, 0) == _hover_colour()
-    assert _bg(s._pf_table, 2) != _hover_colour()
+    assert _painted(s, 0) == _hover_colour()
+    assert _painted(s, 2) == _UNPAINTED
 
 
 def test_leaving_the_table_clears_the_hover(screen):
@@ -77,7 +101,7 @@ def test_leaving_the_table_clears_the_hover(screen):
     _move_to(app, s, 1)
     app.sendEvent(s._pf_table.viewport(), QEvent(QEvent.Leave))
     app.processEvents()
-    assert _bg(s._pf_table, 1) != _hover_colour()
+    assert _painted(s, 1) == _UNPAINTED
 
 
 def test_hover_works_while_another_row_is_selected(screen):
@@ -85,8 +109,8 @@ def test_hover_works_while_another_row_is_selected(screen):
     s._on_category_row_clicked(1, 0)
     app.processEvents()
     _move_to(app, s, 3)
-    assert _bg(s._pf_table, 1) == _selected_colour(), "selection lost"
-    assert _bg(s._pf_table, 3) == _hover_colour(), "hover lost while selected"
+    assert _painted(s, 1) == _selected_colour(), "selection lost"
+    assert _painted(s, 3) == _hover_colour(), "hover lost while selected"
 
 
 def test_selection_survives_leaving_the_table(screen):
@@ -95,7 +119,7 @@ def test_selection_survives_leaving_the_table(screen):
     _move_to(app, s, 3)
     app.sendEvent(s._pf_table.viewport(), QEvent(QEvent.Leave))
     app.processEvents()
-    assert _bg(s._pf_table, 1) == _selected_colour()
+    assert _painted(s, 1) == _selected_colour()
 
 
 def test_hover_survives_a_mid_scan_table_refresh(screen):
@@ -111,7 +135,7 @@ def test_hover_survives_a_mid_scan_table_refresh(screen):
     s._hover_row = 0
     s._refresh_partial_table_row_styles()
     app.processEvents()
-    assert _bg(s._pf_table, 0) == _hover_colour()
+    assert _painted(s, 0) == _hover_colour()
 
     st.add_findings([
         Finding(path=f"C:/y/g{i}.tmp", name=f"g{i}.tmp", is_dir=False,
@@ -119,7 +143,7 @@ def test_hover_survives_a_mid_scan_table_refresh(screen):
                 parent="C:/y") for i in range(10)])
     s._update_partial_table()
     app.processEvents()
-    assert _bg(s._pf_table, 0) == _hover_colour(), "refresh wiped the hover"
+    assert _painted(s, 0) == _hover_colour(), "refresh wiped the hover"
 
 
 def test_hover_highlight_is_distinguishable_from_the_panel():

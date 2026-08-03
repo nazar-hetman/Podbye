@@ -1194,6 +1194,20 @@ class ScanState(QObject):
             except (KeyError, TypeError):
                 continue
 
+        # A large scan does not persist its raw findings (see _build_snapshot),
+        # so the aggregates the loop above would have accumulated are empty.
+        # Seed them from the snapshot's own totals instead — without this the
+        # restored session reports "0 B" scanned and an empty category table.
+        if not self._findings and data.get("scanned_count"):
+            self._total_size = int(data.get("total_size", 0) or 0)
+            for cat, info in (data.get("category_totals") or {}).items():
+                if isinstance(info, dict):
+                    self._cat_counts[cat] = int(info.get("count", 0) or 0)
+                    self._cat_sizes[cat] = int(info.get("size_bytes", 0) or 0)
+            for risk, count in (data.get("risk_totals") or {}).items():
+                if isinstance(count, (int, float)):
+                    self._risk_counts[risk] = int(count)
+
         # Record baseline so a continuation scan can detect "no new files"
         # and skip redundant entity re-detection (see set_running / _reuse_restored_entities).
         self._resume_baseline_count = len(self._findings)

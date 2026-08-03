@@ -235,7 +235,7 @@
   "Duplicate File Group": "Група файлів-дублікатів",
   "Duplicates": "Дублікати",
   "Duration: {duration}": "Тривалість: {duration}",
-  "ELAPSED": "ПРОЙШЛО",
+  "ELAPSED": "МИНУЛО",
   "ENABLED": "УВІМКНЕНО",
   "ENTITIES CREATED": "СТВОРЕНО СУТНОСТЕЙ",
   "ENTITY INSPECTION": "ІНСПЕКЦІЯ СУТНОСТІ",
@@ -425,6 +425,7 @@
   "Only used if the local model stops responding. Normal explanations wait until the model finishes.": "Використовується лише якщо локальна модель перестає відповідати. Нормальні пояснення чекають до завершення роботи моделі.",
   "Open Analyze →": "Відкрити Аналіз →",
   "Open Findings": "Відкрити знахідки",
+  "Opening session…": "Відкриття сесії…",
   "Open History": "Відкрити Історію",
   "Open Task Manager ↗": "Відкрити Диспетчер завдань ↗",
   "Open findings": "Відкрити знахідки",
@@ -894,5 +895,14 @@
   "✓  {moved:,} moved · {failed:,} unexpected": "✓  переміщено: {moved:,} · неочікуваних: {failed:,}",
   "✓  {moved:,} moved · {locked:,} locked": "✓  переміщено: {moved:,} · зайнято: {locked:,}",
   "✓  {n:,} moved": "✓  переміщено: {n:,}",
-  "✗  {count} failed (file in use or permission denied)": "✗  {count} помилок (файл зайнятий або відмовлено в доступі)"
+  "✗  {count} failed (file in use or permission denied)": "✗  {count} помилок (файл зайнятий або відмовлено в доступі)",
+  "THAT'S ME": "ЦЕ Я",
+  "Recommendation: this is Vigil — the app doing the cleaning. You can remove it whenever you like, but it would be good to let it finish the job first. 🙂": "Рекомендація: це Vigil — застосунок, який робить прибирання. Ви можете видалити його будь-коли, але краще спочатку дати йому завершити роботу. 🙂",
+  "Vigil's own files: the app, your settings, and the scan history this screen is showing. Vigil will not clean itself up.": "Власні файли Vigil: сам застосунок, ваші налаштування та історія сканувань, яку показує цей екран. Vigil не прибирає сам себе.",
+  "Desktop": "Робочий стіл",
+  "Moving to the Recycle Bin…": "Переміщення до кошика…",
+  "Moving {done} / {total}…": "Переміщення {done} / {total}…",
+  "Databases": "Бази даних",
+  "Saves": "Збереження ігор",
+  "choose individual files": "можна обрати окремі файли"
 }

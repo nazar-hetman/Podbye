@@ -262,7 +262,12 @@ _DOC_EXTS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
              ".txt", ".md", ".csv", ".rtf", ".odt", ".ods", ".epub"}
 _ARCHIVE_EXTS = {".zip", ".rar", ".7z", ".tar", ".gz", ".iso", ".bz2", ".xz",
                  ".tgz", ".tar.gz", ".tar.bz2", ".tar.xz", ".cab"}
-_INSTALLER_EXTS = {".exe", ".msi", ".msix", ".appx", ".dmg"}
+# A .msi/.msix/.appx/.dmg IS an installer — the extension says so on its own.
+# A .exe is just an executable, and an installed program's folder is mostly
+# .exe files, so ".exe" alone must never classify anything as an installer;
+# see _looks_like_installer_file for the filename evidence that does.
+_INSTALLER_PACKAGE_EXTS = {".msi", ".msix", ".appx", ".dmg"}
+_INSTALLER_EXTS = _INSTALLER_PACKAGE_EXTS | {".exe"}
 _MODEL_EXTS = {".gguf", ".bin", ".safetensors", ".pt", ".pth", ".onnx",
                ".ckpt", ".h5", ".tflite", ".ggml"}
 _BACKUP_EXTS = {".bak", ".old", ".backup", ".orig", ".swp", ".sav"}
@@ -687,7 +692,9 @@ def _ext_group(ext: str) -> str:
     if e in _AUDIO_EXTS:     return "audio"
     if e in _DOC_EXTS:       return "documents"
     if e in _ARCHIVE_EXTS:   return "archives"
-    if e in _INSTALLER_EXTS: return "installers"
+    if e in _INSTALLER_PACKAGE_EXTS: return "installers"
+    # A folder full of .exe files is a program, not a pile of installers.
+    if e == ".exe":          return "programs"
     if e in _MODEL_EXTS:     return "AI models"
     if e in _DATABASE_EXTS:  return "databases"
     if e in _LOG_EXTS or e in _BACKUP_EXTS: return "logs & backups"
@@ -779,37 +786,82 @@ def _is_program_files_path(norm_path: str) -> bool:
     return len(parts) >= 2 and parts[1] in _INSTALL_ROOT_NAMES
 
 
-def _find_related_app(db_path: str, db_name: str, installed_apps: dict) -> str:
-    """Try to find an installed application related to a detached database file.
+# Path segments that describe structure, not identity. "local" is a substring of
+# "LocalSend version 1.17.0" — which is how every database under AppData\Local
+# came to be labelled as LocalSend's.
+_GENERIC_PATH_SEGMENTS = {
+    "users", "user", "appdata", "local", "locallow", "roaming", "temp", "tmp",
+    "data", "settings", "config", "cache", "caches", "default", "profile",
+    "profiles", "windows", "microsoft", "programdata", "program files",
+    "program files (x86)", "common", "shared", "documents", "desktop",
+    "downloads", "application", "applications", "bin", "lib", "share",
+    "database", "databases", "storage", "state", "logs", "backup", "files",
+}
 
-    Compares the database path components and file stem against known installed
-    application names.  Returns a display hint such as
-    'Likely database for Irizi Focus F' or '' if nothing matches.
+_MIN_APP_TOKEN = 4
+
+
+def _app_name_head(app_name: str) -> str:
+    """The identifying first word of an application's registry name.
+
+    "LocalSend version 1.17.0" → "localsend"; "PyCharm Community Edition
+    2024.1" → "pycharm". Registry names carry editions and versions that never
+    appear in a path, so matching the whole string finds nothing and matching
+    any substring of it finds everything.
+    """
+    head = app_name.strip().lower().split()[0] if app_name.strip() else ""
+    return head.strip("-_.()[]")
+
+
+def _find_related_app(db_path: str, db_name: str, installed_apps: dict) -> str:
+    """Name the app a detached database belongs to — only when it is provable.
+
+    A database nobody can attribute is fine; one attributed to the *wrong*
+    application is worse than one attributed to none, because the label is what
+    the user acts on. Measured on a real profile, the old rule accepted a path
+    segment that was merely a substring of an app's name, so the segment "Local"
+    in AppData\\Local matched "LocalSend version 1.17.0" and Ollama's,
+    FastStone's and NVIDIA's databases were each announced as LocalSend's. A
+    Claude scratch folder was reported as "CPUID CPU-Z 2.17". Which app won even
+    changed between runs, because the first match in registry order took it.
+
+    Now a path segment has to *be* the app's name or start with it, generic
+    structural segments are ignored, and the longest match wins so the answer no
+    longer depends on dictionary order.
 
     installed_apps: dict returned by _get_installed_programs() — keys are
     normalised install paths, values are {'name': ..., 'publisher': ..., ...}
-
-    Strategy (in priority order):
-    1. Any path segment matches an installed app name (case-insensitive contains)
-    2. DB file stem matches an installed app name
     """
     norm_db = db_path.replace("\\", "/").lower()
-    db_stem = os.path.splitext(db_name)[0].lower()
-    path_parts = norm_db.split("/")
+    parts = norm_db.split("/")[:-1]          # directories only, not the file
+    # Drop the username: it is not evidence, and it can collide with an app.
+    if len(parts) > 2 and parts[1] in _USER_CONTAINER_NAMES:
+        parts = parts[:2] + parts[3:]
+    segments = [p for p in parts
+                if len(p) >= _MIN_APP_TOKEN and p not in _GENERIC_PATH_SEGMENTS]
+    db_stem = os.path.splitext(db_name)[0].lower().strip("-_. ")
 
+    matches = []
     for app_info in installed_apps.values():
         app_name = app_info.get("name", "") if isinstance(app_info, dict) else ""
         if not app_name:
             continue
-        app_lower = app_name.lower()
-        # Segment match: e.g. path contains "irizi focus f"
-        # Require at least 5 chars to avoid matching common short words
-        if any(app_lower in part or part in app_lower for part in path_parts if len(part) >= 5):
-            return f"Likely database for {app_name}"
-        # Stem match: e.g. "irizi focus.db" vs "Irizi Focus F"
-        if db_stem and (db_stem in app_lower or app_lower.startswith(db_stem)):
-            return f"Likely database for {app_name}"
-    return ""
+        head = _app_name_head(app_name)
+        if len(head) < _MIN_APP_TOKEN or head in _GENERIC_PATH_SEGMENTS:
+            continue
+        # A folder named after the app, or after the app plus a version suffix
+        # ("PyCharmCE2024.1"). Never the other way round — that is the bug.
+        if any(seg == head or seg.startswith(head) for seg in segments) \
+                or (db_stem and db_stem.startswith(head)):
+            matches.append((head, app_name))
+
+    if not matches:
+        return ""
+    # Longest head first, then alphabetical. The tie-break matters: a vendor
+    # shipping a dozen products (NVIDIA) would otherwise name the same folder
+    # differently from one run to the next, on registry order alone.
+    matches.sort(key=lambda m: (-len(m[0]), m[1]))
+    return f"Likely database for {matches[0][1]}"
 
 
 def _is_container_path(norm_path: str) -> bool:
@@ -848,6 +900,59 @@ def _is_appdata_packages_path(norm_path: str) -> bool:
     """Detect the UWP/sandboxed app package container (AppData/Local/Packages)."""
     parts = norm_path.rstrip("/").split("/")
     return len(parts) >= 5 and parts[-3:] == ["appdata", "local", "packages"]
+
+
+# The three fixed subdivisions of a Windows profile's AppData.
+_APPDATA_ROOT_CHILDREN = {"local", "locallow", "roaming"}
+# ...and containers one level below them that hold one folder PER APPLICATION.
+# Local/Programs is where per-user installs land — the profile's own equivalent
+# of Program Files. (Local/Packages has its own pass, _pass_appdata_packages.)
+_APPDATA_APP_CONTAINERS = {("local", "programs")}
+
+
+def _is_appdata_container_dir(norm_path: str) -> bool:
+    """True for C:/Users/<user>/AppData and the per-app containers inside it.
+
+    Matches AppData itself, its Local / LocalLow / Roaming children, and
+    Local/Programs. These are pure structure: one folder per application,
+    hundreds of them, spanning caches, saved logins, licences and game data all
+    at once. Shown as a single entity, AppData is a 60 GB row the user cannot
+    act on — deleting it is never the answer — and it double-counts every
+    per-app entity detected underneath it. So they are claimed as structural
+    nodes and never become entities themselves, exactly like C:/Users and
+    AppData/Local/Packages.
+
+    Depth-aware, so a stray "AppData" folder inside an application's own install
+    tree is left alone and still classifies normally.
+    """
+    parts = norm_path.rstrip("/").split("/")
+    if len(parts) < 4 or parts[1] not in _USER_CONTAINER_NAMES:
+        return False
+    if parts[3] != "appdata":
+        return False
+    if len(parts) == 4:
+        return True
+    if len(parts) == 5:
+        return parts[4] in _APPDATA_ROOT_CHILDREN
+    if len(parts) == 6:
+        return (parts[4], parts[5]) in _APPDATA_APP_CONTAINERS
+    return False
+
+
+def _is_install_root_child(norm_path: str) -> bool:
+    """True for the per-application folders inside an install root.
+
+    Two shapes: C:/Program Files/<app> and C:/Users/<u>/AppData/Local/Programs/
+    <app>, the per-user equivalent. Exact depth only, so components nested
+    deeper stay owned by the application above them.
+    """
+    parts = norm_path.rstrip("/").split("/")
+    if len(parts) == 3 and parts[1] in _INSTALL_ROOT_NAMES:
+        return True
+    return (len(parts) == 7
+            and parts[1] in _USER_CONTAINER_NAMES
+            and parts[3] == "appdata"
+            and (parts[4], parts[5]) in _APPDATA_APP_CONTAINERS)
 
 
 # ── UWP package-family-name → friendly app name ──────────────────
@@ -962,6 +1067,13 @@ def _safety_correct_entity_type(path: str, entity_type: str) -> tuple[str, str]:
         return "development_environment", "Development environment — review only"
     if _nvidia_update_cache_root(norm_path):
         return "installer_cache", "NVIDIA update/cache staging — review only"
+    # An install root's per-app folder is the installed program itself. Reading
+    # its executables as "installers" made Vigil offer to recycle the program
+    # directory of Microsoft OneDrive and Ollama.
+    if entity_type in ("installer", "installer_group") \
+            and _is_install_root_child(norm_path):
+        return "application", ("Installed application — remove it through its own "
+                               "uninstaller, not by deleting the folder")
     return entity_type, ""
 
 
@@ -975,6 +1087,54 @@ def _is_download_root(path: str) -> bool:
     """True when *path* is a Downloads folder (the user's or any other)."""
     return os.path.basename(path.replace("\\", "/").rstrip("/")).lower() \
         in _DOWNLOAD_ROOT_NAMES
+
+
+# Folders where "where is it" is a more useful answer than "what is it", mapped
+# to the category the user sees. A dump folder holds unrelated things by
+# definition, so classifying its contents by type scatters one folder across the
+# whole chip bar and no view ever shows the folder itself.
+#
+# Documents is deliberately NOT here: "Documents" is already a *type* category
+# (document_folder — a folder of documents, anywhere on disk), so adding it as a
+# location would merge two different meanings into one chip. That needs the type
+# category renamed first, which is a separate call.
+_ORIGIN_ROOT_NAMES = {
+    "downloads": "Downloads",
+    "download": "Downloads",
+    "desktop": "Desktop",
+}
+
+
+def _origin_root_of(norm_path: str) -> tuple[str, str]:
+    """The user dump folder containing *norm_path*, as (root, category label).
+
+    Deliberately stricter than _is_download_root, which accepts any folder with
+    the name. Only C:/Users/<user>/<folder> and one sitting at a drive root
+    count — an application's internal "downloads" staging folder is not the
+    user's Downloads, and sweeping its contents into that view would be worse
+    than the fragmentation this fixes. Seven such folders exist on the reporting
+    machine.
+
+    Matches the root itself too. The loose-file buckets ("Loose archives in
+    Downloads", "Misc files in Downloads") are rooted at the folder rather than
+    inside it, and they are most of what was going astray.
+    """
+    parts = norm_path.rstrip("/").split("/")
+    for i, part in enumerate(parts):
+        label = _ORIGIN_ROOT_NAMES.get(part)
+        if label is None:
+            continue
+        if i == 1:                                        # c:/downloads/…
+            return "/".join(parts[:i + 1]), label
+        if i == 3 and parts[1] in _USER_CONTAINER_NAMES:  # c:/users/<u>/desktop/…
+            return "/".join(parts[:i + 1]), label
+    return "", ""
+
+
+def _download_root_of(norm_path: str) -> str:
+    """The user's Downloads folder containing *norm_path*, or ''."""
+    root, label = _origin_root_of(norm_path)
+    return root if label == "Downloads" else ""
 
 
 _MULTIPURPOSE_ROOT_NAMES = {
@@ -1271,6 +1431,41 @@ def _find_owning_app(path: str, app_paths: dict[str, dict]) -> tuple[str, dict]:
                 best_depth = depth_diff
     
     return best_match, best_info
+
+
+# Filename evidence that a .exe distributes software rather than being it.
+# Word-boundary anchored: "OneDriveStandaloneUpdater.exe" must NOT match on
+# "Updater" — camelCase inside a program name is not installer intent.
+_INSTALLER_NAME_RE = re.compile(
+    r'(?:^|[-_.\s(])(setup|install|installer|update[rs]?|patch|'
+    r'redist|vcredist|webinstaller|bootstrapper)(?:$|[-_.\s)0-9])',
+    re.IGNORECASE,
+)
+# How downloaded installers are published: vlc-3.0.20-win64.exe,
+# python-3.11.5-amd64.exe, node-v20.11.0-x64.exe.
+_INSTALLER_VERSION_RE = re.compile(r'[-_]v?\d+[._]\d+', re.IGNORECASE)
+_INSTALLER_ARCH_RE = re.compile(
+    r'[-_.](x64|x86|amd64|arm64|win32|win64|windows)$', re.IGNORECASE)
+
+
+def _looks_like_installer_file(filename: str, ext: str = "") -> bool:
+    """True when a file installs software, rather than merely being executable.
+
+    The distinction the extension cannot make. Measured on a real machine,
+    treating every .exe as an installer classified C:/Program Files/Microsoft
+    OneDrive (3 of 5 files .exe) and AppData/Local/Programs/Ollama (3 of 6) as
+    installer collections — recycle-able, at Optional risk. Both are installed
+    software, and neither carries any installer evidence in its filenames.
+    """
+    e = (ext or os.path.splitext(filename)[1]).lower()
+    if e in _INSTALLER_PACKAGE_EXTS:
+        return True
+    if e != ".exe":
+        return False
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    return bool(_INSTALLER_NAME_RE.search(stem)
+                or _INSTALLER_VERSION_RE.search(stem)
+                or _INSTALLER_ARCH_RE.search(stem))
 
 
 def _installer_display_name(filename: str) -> str:
@@ -1623,6 +1818,50 @@ def _phase1_discovery(ctx: "_DetectionContext", extra_pats: tuple):
     t_p1_elapsed = int((_time.time() - t_p1_start) * 1000)
     ctx.log(f"[smart] phase 1: discovery — found {p1_roots_found} entity "
             f"roots · {t_p1_elapsed}ms")
+
+
+def _pass_self(ctx: "_DetectionContext"):
+    """Vigil's own folders, claimed first and marked protected.
+
+    Runs before every other pass so nothing else can classify them. Left to the
+    generic passes, %APPDATA%/Vigil/logs reads as a log folder and
+    %APPDATA%/Vigil/cache as a cache folder — Safe, recycle-able — which let
+    Vigil offer to delete the session store holding the results on screen.
+
+    The wording lives in the UI, not here: the entity carries is_self and the
+    dashboard phrases it in the user's language.
+    """
+    from app.services.self_paths import self_roots
+
+    roots = self_roots()
+    if not roots:
+        return
+    ctx.log("[smart] pass 0a: protecting Vigil's own folders...")
+    found = 0
+    for f in ctx.all_dirs:
+        norm = f.path.replace("\\", "/").lower().rstrip("/")
+        if norm in ctx.claimed_paths or norm not in roots:
+            continue
+        children = ctx.sample(norm)
+        is_data = norm == _norm_self_data_dir()
+        ent = _build_entity(
+            ctx, f.path,
+            "Vigil (app data)" if is_data else "Vigil",
+            "protected_system", children,
+            "Vigil's own data — settings, scan history and logs"
+            if is_data else "Vigil itself — the app doing the cleaning",
+        )
+        ent.is_self = True
+        fc = ctx.claim(norm)
+        ctx.emit_entity(ent, fc)
+        found += 1
+    if found:
+        ctx.log(f"[smart]   → protected {found} of Vigil's own folder(s)")
+
+
+def _norm_self_data_dir() -> str:
+    from app.services.self_paths import data_dir
+    return data_dir()
 
 
 def _pass0_update_caches(ctx: "_DetectionContext"):
@@ -2136,6 +2375,57 @@ _BROWSER_CACHE_DIRS = {
     "cachestorage", "scriptcache",
 }
 
+# ── Electron code cache ──────────────────────────────────────────
+# Every Electron app embeds Chromium, so every one of them keeps a folder
+# literally named "chrome" at CachedData/<build-hash>/chrome — V8's compiled-JS
+# cache, keyed by app build. Reported from a real scan: ten of these under
+# Windsurf and seven under VS Code, each announced as "Chrome Data" in Browser
+# Data with the promise that passwords and bookmarks were untouched. They hold
+# no browsing data at all, and the path is unreadable:
+#   AppData/Roaming/Windsurf/CachedData/abcd9c86…/chrome
+# One row per app, named after the app that owns it, says what it is.
+_ELECTRON_CACHE_DIR = "cacheddata"
+
+# Folder name → product name, where they differ. Anything else uses its folder
+# name, which is already the product name for Windsurf, Cursor, Slack, …
+_ELECTRON_APP_NAMES = {
+    "code": "VS Code",
+    "code - insiders": "VS Code Insiders",
+    "code - oss": "VS Code OSS",
+    "vscodium": "VSCodium",
+}
+
+
+def _pass_electron_code_cache(ctx: "_DetectionContext"):
+    """Collapse an Electron app's per-build code cache into one entity."""
+    ctx.log("[smart] pre-pass: collapsing Electron code caches...")
+    found = 0
+    for f in ctx.all_dirs:
+        norm = f.path.replace("\\", "/").lower().rstrip("/")
+        if norm in ctx.claimed_paths or f.name.lower() != _ELECTRON_CACHE_DIR:
+            continue
+        # Build folders are content-addressed hashes. Requiring them keeps a
+        # folder that merely happens to be called "CachedData" out of this.
+        builds = [c for c in ctx.children_index.get(norm, [])
+                  if c.is_dir and _HEX_BLOB_RE.match(c.name)]
+        if not builds:
+            continue
+
+        owner = os.path.basename(os.path.dirname(norm))
+        app = _ELECTRON_APP_NAMES.get(owner, "") or _qualify_folder_name(
+            os.path.basename(os.path.dirname(f.path.replace("\\", "/"))), f.path)
+        ent = _build_entity(
+            ctx, f.path, f"{app} · code cache", "cache_folder", ctx.sample(norm),
+            f"Compiled-code cache for {app}, one copy per version it has run "
+            f"({len(builds)} kept, only the current one is used). {app} rebuilds "
+            "it on the next start — this is not browsing data.",
+        )
+        fc = ctx.claim(norm)
+        ctx.emit_entity(ent, fc)
+        found += 1
+    if found:
+        ctx.log(f"[smart]   → collapsed {found} Electron code cache(s)")
+
 
 def _pass_browser_caches(ctx: "_DetectionContext"):
     """Split regenerable caches out of browser profiles.
@@ -2187,34 +2477,78 @@ def _pass_browser_caches(ctx: "_DetectionContext"):
         ctx.log(f"[smart]   → separated {found} browser cache folder(s)")
 
 
+# The containers a browser creates for its profiles, and the files it keeps
+# inside one. Either is proof; the browser's *name* is not.
+_BROWSER_PROFILE_CONTAINERS = {"user data", "profiles"}
+_BROWSER_PROFILE_MARKERS = {
+    "preferences", "secure preferences", "local state", "bookmarks",
+    "cookies", "history", "login data", "web data", "favicons",
+    "places.sqlite", "prefs.js", "logins.json", "key4.db", "cert9.db",
+}
+
+
+def _browser_from_path(norm_path: str) -> str:
+    """The browser named by a whole segment of *norm_path*, or ''.
+
+    Segment-exact, never substring. "EdgeJourneys" and "EdgeEDrop" (Copilot's
+    own data folders) and "chrome-extension_…​.indexeddb.leveldb" (one extension's
+    IndexedDB store) all contain a browser's name without being one, and each
+    was listed as its own 0.0 MB "Edge Data" / "Chrome Data" row.
+
+    Deepest segment wins, so .../Google/Chrome/User Data reports Chrome.
+    """
+    for part in reversed(norm_path.rstrip("/").split("/")):
+        if part in _BROWSER_KEYWORDS:
+            return part
+    return ""
+
+
+def _has_browser_profile_evidence(norm_path: str, direct_children: list) -> bool:
+    """Does this folder actually hold a browser profile?
+
+    Requiring only a browser keyword in the path was not enough. Every Electron
+    app has a folder named "chrome" (see _pass_electron_code_cache), and the
+    context gate accepted a bare "appdata" or "roaming" anywhere in the path —
+    so AppData/Roaming/Windsurf/CachedData/<hash>/chrome was reported as
+    "Chrome Data" at Review, telling the user their passwords, cookies, history
+    and bookmarks lived there. They did not.
+
+    Three ways to prove it: the folder sits inside a profile container, it holds
+    one, or its own files are the ones a browser writes into a profile.
+    """
+    p = norm_path.rstrip("/") + "/"
+    if any(f"/{c}/" in p for c in _BROWSER_PROFILE_CONTAINERS):
+        return True
+    names = {c.name.lower() for c in direct_children}
+    if names & _BROWSER_PROFILE_CONTAINERS:
+        return True
+    return bool(names & _BROWSER_PROFILE_MARKERS)
+
+
 def _pass3_browser_profiles(ctx: "_DetectionContext"):
-    """Pass 3 - browser profile/data folders, by path keyword + context."""
+    """Pass 3 - browser profile/data folders, by profile evidence + naming."""
     ctx.log("[smart] pass 3: detecting browser profiles...")
-    ctx.confidence = 0.8  # browser keyword + profile-storage context
+    ctx.confidence = 0.8  # browser name + profile-storage evidence
     pass_entities = 0
-    for f in ctx.all_dirs:
+    # Shallowest first, exactly as pass 1 does: a profile tree must be claimed
+    # by its root before its insides can become entities of their own. In scan
+    # order, leaves won — "Copilot/User Data/Default/EdgeJourneys" and
+    # "…/EdgeEDrop" were listed as separate 0.0 MB "Edge Data" rows instead of
+    # staying inside the one profile they belong to.
+    for f in sorted(ctx.all_dirs,
+                    key=lambda d: d.path.replace("\\", "/").count("/")):
         ctx.processed_candidates += 1
         norm_path = f.path.replace("\\", "/").lower()
         if norm_path in ctx.claimed_paths:
             continue
 
         lower_name = f.name.lower()
-        # Require path context to avoid false positives: a folder named
-        # "chrome" in a CSS project must not become a browser profile.
-        _BROWSER_CONTEXT_HINTS = {"appdata", "user data", "application support",
-                                  "roaming", "localappdata", "profiles", "mozilla"}
-        path_has_browser_context = any(h in norm_path for h in _BROWSER_CONTEXT_HINTS)
-
-        if path_has_browser_context and (
-            lower_name in _BROWSER_KEYWORDS
-            or any(bk in norm_path for bk in _BROWSER_KEYWORDS)
-        ):
+        browser = _browser_from_path(norm_path)
+        if browser and _has_browser_profile_evidence(
+                norm_path, ctx.children_index.get(norm_path.rstrip("/"), [])):
             children = ctx.sample(norm_path)
             if children:
-                browser_label = lower_name.title() if lower_name in _BROWSER_KEYWORDS else next(
-                    (k.title() for k in _BROWSER_KEYWORDS if k in norm_path),
-                    lower_name.title(),
-                )
+                browser_label = browser.title()
                 ent = _build_entity(ctx, f.path, f"{browser_label} Data",
                                     "browser_profile", children,
                                     f"Browser profile path: {lower_name}")
@@ -2682,7 +3016,7 @@ def _pass8_loose_files(ctx: "_DetectionContext"):
             _buckets["media_collection"].append(f)
         elif ext in _DOC_EXTS:
             _buckets["document_folder"].append(f)
-        elif ext in _ARCHIVE_EXTS or ext in _INSTALLER_EXTS:
+        elif ext in _ARCHIVE_EXTS or _looks_like_installer_file(f.name, ext):
             _buckets["archive_group"].append(f)
         elif ext in _DATABASE_EXTS:
             _buckets["database"].append(f)
@@ -2758,9 +3092,9 @@ def _pass8_loose_files(ctx: "_DetectionContext"):
             # Installer files get individual named entities; remaining
             # archives stay grouped in one entity.
             inst_files = [f for f in bucket_files
-                          if f.extension.lower() in _INSTALLER_EXTS]
+                          if _looks_like_installer_file(f.name, f.extension)]
             arch_files = [f for f in bucket_files
-                          if f.extension.lower() not in _INSTALLER_EXTS]
+                          if not _looks_like_installer_file(f.name, f.extension)]
 
             for inst in inst_files:
                 product = _installer_display_name(inst.name)
@@ -2942,8 +3276,18 @@ _USER_CONTENT_ROOT_NAMES = {
 }
 
 
+# Classifications weak enough that "sits in an install root" outranks them.
+# installer_group is here because a program directory is mostly executables:
+# on extension alone Microsoft OneDrive and Ollama both read as installer
+# collections, which put an installed app in Installers at recycle-able risk.
+# application_data is here because a direct child of an install root IS the
+# program — Ollama landed there and read as "Application Data".
+_INSTALL_ROOT_OVERRIDABLE = ("unknown_folder", "mixed_folder",
+                             "installer_group", "installer", "application_data")
+
+
 def _enrich_program_files_apps(entities: list) -> int:
-    """A top-level folder in Program Files is an installed application.
+    """A top-level folder in an install root is an installed application.
 
     Plenty of real installs never match the uninstall registry by folder name —
     they register under a product name, ship as components, or don't register at
@@ -2952,31 +3296,60 @@ def _enrich_program_files_apps(entities: list) -> int:
     "Fortinet · installers and logs & backups", "Razer · code & config and
     images", plus Microsoft SQL Server, Google, draw.io, OpenVPN and others.
 
-    Being a direct child of Program Files is strong evidence on its own, so
-    these become applications with their plain folder name. Only generic
-    classifications are replaced — anything a pass identified specifically
-    (a game, a dev environment) keeps its answer.
+    Covers both install roots: C:/Program Files/<app> and the per-user
+    equivalent C:/Users/<u>/AppData/Local/Programs/<app>. Being a direct child
+    of one is strong evidence on its own, so these become applications with
+    their plain folder name. Only generic classifications are replaced —
+    anything a pass identified specifically (a game, a dev environment) keeps
+    its answer.
     """
     changed = 0
     for e in entities:
-        if e.entity_type not in ("unknown_folder", "mixed_folder"):
+        if e.entity_type not in _INSTALL_ROOT_OVERRIDABLE:
             continue
         norm = e.path.replace("\\", "/").rstrip("/").lower()
-        parts = norm.split("/")
-        # drive / "program files" / <app>  — exactly depth 2, so components
-        # nested deeper stay owned by their parent application.
-        if len(parts) != 3 or parts[1] not in _INSTALL_ROOT_NAMES:
+        if not _is_install_root_child(norm):
             continue
         name = os.path.basename(e.path.replace("\\", "/").rstrip("/"))
         if not name:
             continue
+        where = norm.split("/")[1]
+        where = "Program Files" if where in _INSTALL_ROOT_NAMES else "Programs"
         e.entity_type = "application"
         e.name = name
-        e.risk_reason = (f"Installed application in {parts[1].title()} — "
+        e.risk_reason = (f"Installed application in {where} — "
                          "remove it through its own uninstaller, not by "
                          "deleting the folder")
         e.summary = f"Installed application · {name}"
         changed += 1
+    return changed
+
+
+def _enrich_place_origin(entities: list) -> int:
+    """Everything in a dump folder is filed under that folder, whatever it is.
+
+    Reported from a full C:/ scan: "odd that we have downloads section - and
+    also showing files from downloads in other section". Both were true.
+    _pass_downloads claims each subfolder as a download_item (category
+    Downloads), and the loose files left behind then fall through the type
+    bucketer — archives to Archives, .exe/.msi to Installers, everything else to
+    Unknown. Measured on the reporting machine: Downloads spread over six
+    categories, Desktop over four (0.41 GB of it filed as "Unknown", on a folder
+    whose contents the user can literally see).
+
+    The underlying mix-up is one axis answering two questions. Archives /
+    Installers / Images answer "what is it"; Downloads and Desktop answer "where
+    is it". Location wins where a location was meant, and nothing else changes:
+    entity_type still drives risk, actionability and the detail panel, so an
+    installer sitting in Downloads is still an installer.
+    """
+    changed = 0
+    for e in entities:
+        norm = e.path.replace("\\", "/").rstrip("/").lower()
+        _root, label = _origin_root_of(norm)
+        if label:
+            e.origin = label
+            changed += 1
     return changed
 
 
@@ -3427,6 +3800,10 @@ def _postprocess(ctx: "_DetectionContext", t0: float) -> list:
     from app.services.known_paths import apply_known_path_rules
     apply_known_path_rules(entities)
 
+    # Downloads and Desktop are places, not content types — file their contents
+    # under them instead of scattering each folder across the whole chip bar.
+    _enrich_place_origin(entities)
+
     # Charge every byte to exactly one entity. Must run after absorption, since
     # only the entities that actually survive can hold a share of the bytes.
     _enforce_disjoint_sizes(ctx, entities, log_fn)
@@ -3563,12 +3940,18 @@ def detect_entities(
     # PHASE 2 -- assignment (classify everything not yet claimed).
     log_fn("[smart] phase 2: assignment — running semantic classification "
            "pipeline")
-    # Treat user-profile containers (C:/Users) as structural nodes only.
+    # Treat pure structure (C:/Users, AppData and its Local/LocalLow/Roaming)
+    # as nodes only: claimed so no pass turns them into one unactionable blob,
+    # but never emitted, so their per-application children are classified on
+    # their own. Anything loose directly inside them still lands in a pass-8
+    # bucket, so nothing goes missing.
     for f in ctx.all_dirs:
         norm_path = f.path.replace("\\", "/").lower().rstrip("/")
-        if _is_user_container_dir(norm_path):
+        if _is_user_container_dir(norm_path) or _is_appdata_container_dir(norm_path):
             ctx.claimed_paths.add(norm_path)
 
+    # Vigil's own folders first — nothing else may classify them.
+    _pass_self(ctx)
     _pass0_update_caches(ctx)
     _pass_appdata_packages(ctx)
     _pass_game_save_engines(ctx)
@@ -3585,6 +3968,8 @@ def detect_entities(
     # GPUCache fell through to a bare "Known directory: ShaderCache". Claiming
     # them here makes the naming uniform, and the profile pass still runs later
     # so it keeps only the irreplaceable data.
+    # Before both: an Electron app's CachedData/<hash>/chrome is not a browser.
+    _pass_electron_code_cache(ctx)
     _pass_browser_caches(ctx)
     _pass1_known_dirs(ctx)
     _pass2_installed_apps(ctx)
@@ -3669,8 +4054,14 @@ def _build_entity(
         # Walk the full subtree only for the types that need it — cleanup must
         # target every matching file, not just the ones in the capped sample.
         pool = ctx.subtree_files(norm_path) if subtree_backed else files
-        wanted = _ARCHIVE_EXTS if entity_type == "archive_group" else _INSTALLER_EXTS
-        removable = [c.path for c in pool if (c.extension or "").lower() in wanted]
+        if entity_type == "archive_group":
+            removable = [c.path for c in pool
+                         if (c.extension or "").lower() in _ARCHIVE_EXTS]
+        else:
+            # Only genuine installers, so recycling an installer group never
+            # sweeps up a program executable that happens to sit alongside.
+            removable = [c.path for c in pool
+                         if _looks_like_installer_file(c.name, c.extension)]
 
     return SmartEntity(
         path=path,
@@ -3768,8 +4159,12 @@ def _classify_by_content(children: list[Finding]):
     if _ratio(_ARCHIVE_EXTS) > 0.5:
         return "archive_group"
     
-    # Installers
-    if _ratio(_INSTALLER_EXTS) > 0.4:
+    # Installers — counted per file, not per extension: an .exe only counts
+    # when its name shows installer intent (_looks_like_installer_file), so a
+    # folder of program executables is not read as a pile of installers.
+    installer_like = sum(1 for f in files
+                         if _looks_like_installer_file(f.name, f.extension))
+    if installer_like / total > 0.4:
         return "installer_group"
     
     # Databases

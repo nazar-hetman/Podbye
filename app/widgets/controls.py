@@ -68,16 +68,29 @@ class TacticalComboBox(QComboBox):
     _DROP_W = 18
 
     def __init__(self, parent=None):
+        self._arrow = None      # set before base init: see _set_arrow_open()
         super().__init__(parent)
         self._arrow = _DropdownArrow(self)
         self._arrow.raise_()
 
+    def _set_arrow_open(self, is_open: bool):
+        """Flip the painted arrow, tolerating a half-built widget.
+
+        showPopup/hidePopup are Qt virtuals, and Qt calls hidePopup() from
+        inside QComboBox's own constructor — before the line below that creates
+        the arrow has run. Reaching for the attribute there raised
+        AttributeError straight out of the C++ override, which surfaces as an
+        access violation rather than a Python traceback.
+        """
+        if self._arrow is not None:
+            self._arrow.set_open(is_open)
+
     def showPopup(self):
-        self._arrow.set_open(True)
+        self._set_arrow_open(True)
         super().showPopup()
 
     def hidePopup(self):
-        self._arrow.set_open(False)
+        self._set_arrow_open(False)
         super().hidePopup()
 
     def apply_reference_style(self, palette: dict[str, str], *, compact: bool = False):

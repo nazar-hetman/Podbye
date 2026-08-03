@@ -44,7 +44,11 @@ def _is_protected_for_delete(path: str) -> bool:
     for part in norm.split("/"):
         if part in _PROTECTED_SEGMENTS:
             return True
-    return False
+    # Vigil's own install and data folders. The detector already marks these
+    # protected; this is the backstop, so a stale entity from an older session
+    # can never delete the app or the session store out from under a live run.
+    from app.services.self_paths import is_self_path
+    return is_self_path(norm)
 
 
 # ── Result dataclass ─────────────────────────────────────────────

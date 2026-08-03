@@ -17,61 +17,21 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QMessageBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QSizePolicy, QStyle, QStyledItemDelegate, QApplication, QStyleOptionViewItem,
+    QSizePolicy,
 )
 from PySide6.QtCore import Qt, Signal, QObject, QEvent
 from PySide6.QtGui import QColor, QBrush, QFontMetrics
 
-
-class _HoverRowDelegate(QStyledItemDelegate):
-    """Whole-row hover via painter.fillRect — the only QSS-safe approach.
-
-    Three obstacles block simpler methods when QSS is active:
-      1. item.setBackground()  — ignored by Qt's QSS proxy.
-      2. backgroundBrush       — ignored by QStyleSheetStyle.
-      3. State_MouseOver       — causes the platform style to repaint the single
-                                 cell directly under the cursor with its own
-                                 highlight on top of our fill, making that cell
-                                 look different from the rest of the hovered row.
-
-    Fix: strip State_MouseOver in initStyleOption so the platform style treats
-    all hovered-row cells the same, fillRect our colour before drawControl, and
-    set backgroundBrush=NoBrush so drawControl paints no background at all.
-    """
-
-    def __init__(self, hover_filter, parent=None):
-        super().__init__(parent)
-        self._filter = hover_filter
-
-    def initStyleOption(self, option, index):
-        super().initStyleOption(option, index)
-        if (index.row() == self._filter._row
-                and not (option.state & QStyle.State_Selected)):
-            # Remove the per-cell MouseOver flag so the platform style doesn't
-            # overdraw the cell under the cursor with its own single-cell
-            # highlight, which would make that cell look different from the rest
-            # of the row. (Operate on the flag enum directly — it is not int().)
-            option.state &= ~QStyle.State_MouseOver
-
-    def paint(self, painter, option, index):
-        opt = QStyleOptionViewItem(option)
-        self.initStyleOption(opt, index)
-        if (index.row() == self._filter._row
-                and not (opt.state & QStyle.State_Selected)):
-            painter.fillRect(opt.rect, self._filter._color)
-            opt.backgroundBrush = QBrush()  # NoBrush — prevent platform background
-        w = opt.widget
-        (w.style() if w else QApplication.style()).drawControl(
-            QStyle.CE_ItemViewItem, opt, painter, w
-        )
+from app.widgets.tables import RowHighlightDelegate
 
 
 class _RowHoverFilter(QObject):
     """Track the hovered row and repaint via delegate + cell-widget stylesheets.
 
-    Two-part approach required because QSS makes item.setBackground() a no-op:
-      _HoverRowDelegate.initStyleOption  — covers QTableWidgetItem cells
-      _sync_widget_bgs                   — covers cell widgets (e.g. MODE badge)
+    Two-part approach required because QSS makes item.setBackground() a no-op
+    (see RowHighlightDelegate):
+      RowHighlightDelegate — covers QTableWidgetItem cells
+      _sync_widget_bgs     — covers cell widgets (e.g. MODE badge)
     """
 
     def __init__(self, table: "QTableWidget", color: QColor):
@@ -80,7 +40,9 @@ class _RowHoverFilter(QObject):
         self._color = color
         self._row = -1
         table.viewport().installEventFilter(self)
-        self._delegate = _HoverRowDelegate(self, table)
+        self._delegate = RowHighlightDelegate(
+            lambda row: self._color if row == self._row else None, table
+        )
         table.setItemDelegate(self._delegate)
 
     def eventFilter(self, obj, event):
@@ -1187,7 +1149,11 @@ class HistoryScreen(QWidget):
 
     def _open_findings(self, session_id: str):
         from app.state.session_store import load_session_by_id
-        data = load_session_by_id(session_id)
+        from app.widgets.progress import run_busy
+        # Off the UI thread: a completed drive scan is a multi-hundred-MB
+        # snapshot, and reading it inline froze the window (see BusyDialog).
+        data = run_busy(self, tr("Opening session…"),
+                        lambda: load_session_by_id(session_id))
         if not data:
             QMessageBox.warning(self, tr("Not found"), tr("Full session data is unavailable."))
             return
