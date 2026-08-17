@@ -45,7 +45,11 @@ a = Analysis(
     pathex=["."],
     binaries=[],
     datas=datas,
-    hiddenimports=["win32com", "win32com.client"],
+    # pywin32 is OPTIONAL: startup_detector tries win32com for exact .lnk
+    # resolution and falls back to binary MS-SHLLINK parsing without it.
+    # Listing it as a hidden import made every build log an ERROR for a
+    # dependency the app is designed to work without.
+    hiddenimports=[],
     hookspath=[],
     runtime_hooks=[],
     excludes=["tkinter", "matplotlib", "numpy", "PySide6.QtQuick",
