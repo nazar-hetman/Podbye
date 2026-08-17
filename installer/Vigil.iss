@@ -13,7 +13,7 @@
 ; "improve" this by compressing them into the installer executable itself.
 
 #define AppName        "Vigil"
-#define AppVersion     "1.0.0-beta.2"
+#define AppVersion     "1.0.0-beta.3"
 #define AppPublisher   "Nazar Getman"
 #define AppExeName     "Vigil.exe"
 #define SourceDir      "..\dist\Vigil"

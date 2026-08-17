@@ -6,8 +6,8 @@ for a new release.
 """
 from __future__ import annotations
 
-__version__ = "1.0.0-beta.2"
-BUILD = "2026.07"
+__version__ = "1.0.0-beta.3"
+BUILD = "2026.08"
 
 
 def short_version() -> str:

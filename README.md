@@ -8,7 +8,7 @@ what is safe to remove and why. It runs entirely on your machine.
 > **Beta.** It works and it is careful, but it is early. Back up anything you
 > cannot lose, as you would with any tool that touches your files.
 
-<!-- Add a screenshot here before publishing: docs/screenshot.png -->
+![Vigil — the Findings screen, showing what each folder is and why](docs/screenshot.png)
 
 ---
 
@@ -134,8 +134,9 @@ and three fonts under the SIL Open Font License. Those licenses grant you
 rights that Vigil's own license cannot restrict. See
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
-If Vigil saved you some disk space and you'd like to say thanks, there's a
-Buy Me a Coffee link. Entirely optional; nothing is gated behind it.
+If Vigil saved you some disk space and you'd like to say thanks:
+**[Buy me a coffee](https://buymeacoffee.com/CHANGE-ME)**. Entirely optional —
+nothing is gated behind it, and nothing ever will be.
 
 ---
 
