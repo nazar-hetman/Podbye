@@ -226,6 +226,7 @@
   "Connection": "З'єднання",
   "Connection mode": "Режим підключення",
   "Content analysis": "Аналіз вмісту",
+  "Content analysis of the files inside": "Аналіз вмісту файлів усередині",
   "Contents not summarized": "Вміст не підсумовано",
   "Controls how much the model writes per finding.": "Визначає, скільки пише модель для кожної знахідки.",
   "Copied": "Скопійовано",

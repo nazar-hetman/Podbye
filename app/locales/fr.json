@@ -210,6 +210,7 @@
   "Connection": "Connexion",
   "Connection mode": "Mode de connexion",
   "Content analysis": "Analyse du contenu",
+  "Content analysis of the files inside": "Analyse du contenu des fichiers à l'intérieur",
   "Contents not summarized": "Contenu non résumé",
   "Controls how much the model writes per finding.": "Détermine la longueur du texte généré par résultat.",
   "Copied": "Copié",

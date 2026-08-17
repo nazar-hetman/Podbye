@@ -224,3 +224,58 @@ def test_confidence_scores_are_graded():
     assert unknown.confidence_score == 0.2  # weakest signal
     # the unknown sweep must never out-rank a structural detection
     assert unknown.confidence_score < by_type["node_modules"].confidence_score
+
+
+# ── content one level down ────────────────────────────────────────
+
+
+def test_a_folder_whose_content_sits_in_subfolders_is_classified():
+    """Classification only ever looked at a folder's DIRECT files, so a folder
+    holding nothing but subfolders was handed an empty list and fell through
+    to Unknown. That is how people organise almost everything — Videos/2024/,
+    Music/Artist/Album/, one subfolder per survey flight — and on a real scan
+    it was 83 rows and 420 GB, the largest category by size, all unlabelled.
+    """
+    import os
+    from app.models.finding import Finding
+    from app.services.entity_detector import detect_entities
+    from app.models.smart_entity import _CATEGORY_BY_TYPE
+
+    findings = []
+
+    def add(path, is_dir, ext="", size=0):
+        findings.append(Finding(
+            path=path, name=os.path.basename(path) or path, is_dir=is_dir,
+            size_bytes=size, extension=ext, modified=1.0, accessed=1.0,
+            parent=os.path.dirname(path)))
+
+    # A photo library with NO files at its own level.
+    add(r"D:\Trip", True)
+    for day in ("Day1", "Day2"):
+        add(rf"D:\Trip\{day}", True)
+        for i in range(40):
+            add(rf"D:\Trip\{day}\IMG_{i:04}.jpg", False, ".jpg", 5 * 1024 ** 2)
+
+    entities = detect_entities(findings, "D:/")
+    assert entities, "nothing detected at all"
+    categories = {_CATEGORY_BY_TYPE.get(e.entity_type, "Unknown") for e in entities}
+    assert categories != {"Unknown"}, (
+        f"a folder of photos one level down stayed Unknown: "
+        f"{[(e.entity_type, e.path) for e in entities]}")
+    assert "Images" in categories
+
+
+def test_direct_files_still_win_over_the_subfolder_sample():
+    """The recursive look is a fallback, not an override — a folder with its
+    own content must still be classified on that content."""
+    import os
+    from app.models.finding import Finding
+    from app.services.entity_detector import _classify_by_content
+
+    def f(name, ext):
+        return Finding(path=rf"D:\x\{name}", name=name, is_dir=False,
+                       size_bytes=1024, extension=ext, modified=1.0,
+                       accessed=1.0, parent=r"D:\x")
+
+    direct = [f(f"a{i}.jpg", ".jpg") for i in range(10)]
+    assert _classify_by_content(direct) == "photo_collection"

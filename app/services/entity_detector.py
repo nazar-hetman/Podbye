@@ -2998,6 +2998,26 @@ def _pass7_sweep(ctx: "_DetectionContext"):
             etype = "unknown_folder"
             fallback_reason = "name suggested media, but the files did not confirm it"
 
+        # Last resort before "Unknown": look at what is actually inside.
+        #
+        # Content classification only ever saw a folder's DIRECT files, so a
+        # folder holding nothing but subfolders was handed an empty list and
+        # fell through to Unknown. That is how people organise almost
+        # everything — Videos/2024/, Music/Artist/Album/, one subfolder per
+        # survey flight — and on a real scan it was 83 rows and 420 GB, the
+        # largest category by size, none of it labelled.
+        #
+        # Deliberately last: every name-based rule above is better evidence
+        # than an extension count. "Application Support/WidgetApp/config.db"
+        # is application data because of where it lives, not a database
+        # because of what is in it.
+        if etype in (None, "unknown_folder") and not direct_files:
+            descendant_files = [c for c in descendants if not c.is_dir]
+            recursive_type = _classify_by_content(descendant_files) if descendant_files else None
+            if recursive_type:
+                etype = recursive_type
+                fallback_reason = Reason("Content analysis of the files inside")
+
         # Asset gate: an image folder that is really app/UI content (icons,
         # sprites, web graphics) is app data, not a personal photo library.
         if etype in _USER_IMAGE_MEDIA_TYPES and _looks_like_app_assets(
