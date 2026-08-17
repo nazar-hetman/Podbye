@@ -86,8 +86,19 @@ jobs:
       - name: Build installer
         shell: pwsh
         run: |
-          # Inno Setup ships on the windows-latest image.
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\Vigil.iss
+          # Inno Setup ships on the windows-latest image (6.7.1 at time of
+          # writing). Resolve it rather than hardcoding the path, so a runner
+          # image update that moves or renames it fails loudly here instead of
+          # producing a release with no installer in it.
+          $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) {
+            $iscc = Get-ChildItem "C:\Program Files (x86)\Inno Setup*\ISCC.exe" `
+                      -ErrorAction SilentlyContinue | Select-Object -First 1 -Expand FullName
+          }
+          if (-not $iscc) { throw "Inno Setup (ISCC.exe) not found on this runner." }
+          Write-Host "Using $iscc"
+          & $iscc installer\Vigil.iss
+          if ($LASTEXITCODE -ne 0) { throw "installer compile failed ($LASTEXITCODE)" }
           Get-ChildItem installer\Output
 
       - name: Checksums
