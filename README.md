@@ -1,0 +1,167 @@
+# Vigil
+
+**Find out where your disk space actually went — without sending anything anywhere.**
+
+Vigil scans your drives, works out what each folder actually *is*, and tells you
+what is safe to remove and why. It runs entirely on your machine.
+
+> **Beta.** It works and it is careful, but it is early. Back up anything you
+> cannot lose, as you would with any tool that touches your files.
+
+<!-- Add a screenshot here before publishing: docs/screenshot.png -->
+
+---
+
+## Why another disk cleaner
+
+Most cleaners ask you to trust them. Vigil is built so you don't have to.
+
+**It never deletes permanently.** Every cleanup is a move to the Recycle Bin.
+If Vigil gets something wrong, you get it back. Emptying the bin stays your
+own, separate decision — and Vigil shows you how much is sitting in there,
+because moving files to the bin doesn't free space until you empty it.
+
+**It works entirely offline.** No telemetry, no analytics, no crash uploads,
+no account. Nothing about your disk leaves your machine. That isn't a promise
+in a privacy policy — it's enforced by a test that fails the build if any part
+of the app so much as imports a networking library.
+
+**It explains itself.** Every finding says why it was classified the way it
+was: *"Known directory: node_modules"*, *"Installed application in Program
+Files — remove it through its own uninstaller"*. If you disagree, you can
+browse by folder instead and decide for yourself.
+
+**It refuses to touch what matters.** System-critical paths are marked
+Protected and cannot be selected for cleanup, ever.
+
+**Optional local AI.** If you run [Ollama](https://ollama.com) or LM Studio,
+Vigil can ask it to explain a finding in plain language. It only ever talks to
+your own machine or your LAN — a public address is rejected outright. Leave it
+off and everything else still works.
+
+---
+
+## Install
+
+### The easy way
+
+Download the latest release, unzip it anywhere, run `Vigil.exe`.
+
+**[Download the latest release](../../releases/latest)**
+
+Windows will show *"Windows protected your PC"* the first time. The build is
+not code-signed yet (certificates cost money this project doesn't have).
+Click **More info → Run anyway**. If you would rather verify first, every
+release ships a `SHA256SUMS.txt`, and the binaries are built by GitHub Actions
+from the public source — the build log is on the Actions tab.
+
+### From source
+
+```bash
+git clone <this repo>
+cd Vigil
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python -m app.main
+```
+
+Python 3.12+, Windows.
+
+---
+
+## What it does
+
+- **Analyze** — scan a drive or folder. Results are grouped by what things
+  are: applications, caches, dev artifacts, media, installers, duplicates.
+- **Findings** — the detail. Filter by risk, sort by size or by what's safest
+  to clean first, roll everything an app owns into one row, or drop into a
+  plain folder tree when a label looks wrong.
+- **Quick Cleanup** — the obvious wins (temp files, browser caches, thumbnail
+  cache) with no thinking required.
+- **Startups** — what launches with Windows, and whether you need it.
+- **History** — what you cleaned, when, and how much came back.
+
+Interface available in English, Ukrainian and French.
+
+---
+
+## Is it safe?
+
+The honest answer, in order of how much it should reassure you:
+
+1. Nothing is ever deleted permanently — it goes to the Recycle Bin.
+2. Protected paths cannot be selected. Not "are discouraged" — cannot.
+3. Cleanup targets are expanded to concrete files first, so a group row can
+   never resolve to a drive root.
+4. Files in use simply fail to move and stay where they are; Vigil tells you
+   which ones and why.
+5. The source is public, and there are 1000+ tests. Most of them exist because
+   something went wrong once and shouldn't again.
+
+It is still beta software that moves your files. Treat it accordingly.
+
+---
+
+## Privacy
+
+Vigil collects nothing, sends nothing and phones home never. There is no
+analytics SDK in the dependency list and no code path that could add one
+quietly — `tests/test_offline_guarantee.py` fails the build if a module
+outside the AI client imports networking, if a telemetry package appears in
+`requirements.txt`, or if the AI endpoint stops being restricted to your own
+machine and LAN.
+
+Scan results are stored locally in `%APPDATA%\Vigil` so you can reopen them.
+Delete that folder and Vigil forgets everything.
+
+---
+
+## License
+
+**Source-available, free for non-commercial use** —
+[PolyForm Noncommercial 1.0.0](LICENSE).
+
+Use it, change it, share it, learn from it, for anything that isn't commercial.
+Selling it, or building it into a paid product or service, is not covered.
+
+To be precise about a term people care about: this is *not* "open source" in
+the OSI sense, because that definition does not allow restricting commercial
+use. The source is public and you are free to do almost anything with it — but
+calling it open source would be inaccurate, so I don't.
+
+Vigil bundles Qt (via PySide6) under the LGPL v3, psutil under BSD-3-Clause,
+and three fonts under the SIL Open Font License. Those licenses grant you
+rights that Vigil's own license cannot restrict. See
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+If Vigil saved you some disk space and you'd like to say thanks, there's a
+Buy Me a Coffee link. Entirely optional; nothing is gated behind it.
+
+---
+
+## For developers
+
+- [DEVELOPMENT.md](DEVELOPMENT.md) — architecture and current status
+- [SEMANTIC_PIPELINE.md](SEMANTIC_PIPELINE.md) — how classification works
+- [BUILD.md](BUILD.md) — building, and why the build is a folder rather than
+  one file (it's an LGPL requirement, please don't "fix" it)
+- [DECISIONS.md](DECISIONS.md) — why things are the way they are
+
+```bash
+.venv\Scripts\python -m pytest -q      # 1000+ tests, ~2 minutes
+```
+
+Contributions are welcome. Note that contributed code is licensed under the
+same noncommercial terms — if that's a problem for you, say so before you
+start and we'll work it out.
+
+---
+
+## Known limitations
+
+- Windows only. Nothing is deliberately Windows-locked, but it is not tested
+  elsewhere and several features (registry, Recycle Bin, startup entries) are
+  Windows-specific.
+- Not code-signed, so SmartScreen will warn on first run.
+- A first full scan of a large drive takes a few minutes.
+- Classification is good, not perfect. That's what the by-folder view is for.
