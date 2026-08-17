@@ -46,6 +46,7 @@
   "// {n} operations · {size} freed": "// {n} операцій · {size} звільнено",
   "// {n} selected · {size} ready": "// вибрано: {n} · готово {size}",
   "// {n} sessions · {size} scanned": "// {n} сесій · {size} проаналізовано",
+  "// {shown:,} rows · {total:,} items": "// рядків: {shown:,} · елем.: {total:,}",
   "// {shown} of {total} shown": "// показано {shown} з {total}",
   "// {size} across {n:,} items": "// {size} у {n:,} елем.",
   "// {size} total": "// разом {size}",

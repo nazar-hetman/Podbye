@@ -39,6 +39,7 @@
   "// {n} operations · {size} freed": "// {n} opérations · {size} libérés",
   "// {n} selected · {size} ready": "// {n} sélectionnés · {size} prêts",
   "// {n} sessions · {size} scanned": "// {n} sessions · {size} analysés",
+  "// {shown:,} rows · {total:,} items": "// {shown:,} lignes · {total:,} éléments",
   "// {shown} of {total} shown": "// {shown} sur {total} affichés",
   "// {size} across {n:,} items": "// {size} sur {n:,} éléments",
   "// {size} total": "// {size} au total",

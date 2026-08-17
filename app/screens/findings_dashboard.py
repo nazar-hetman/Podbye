@@ -2817,11 +2817,14 @@ class FindingsEntityRow(QFrame):
         # Expand/collapse affordance — only shown on a group header row.
         self._group: dict | None = None
         self._depth: int = 0
+        # Always present, never hidden: hiding it collapsed the column and
+        # pushed ungrouped rows 22px left of grouped ones, which read as
+        # broken alignment rather than hierarchy. Blank text reserves the
+        # space instead.
         self._chevron = QLabel("")
-        self._chevron.setFixedWidth(10)
+        self._chevron.setFixedWidth(14)
         self._chevron.setAlignment(Qt.AlignCenter)
-        self._chevron.setStyleSheet("font-size: 9px; background: transparent;")
-        self._chevron.setVisible(False)
+        self._chevron.setCursor(Qt.PointingHandCursor)
         layout.addWidget(self._chevron, alignment=Qt.AlignVCenter)
 
         center = QVBoxLayout()
@@ -2954,12 +2957,20 @@ class FindingsEntityRow(QFrame):
         depth = getattr(self, "_depth", 0)
         lay = self.layout()
         lay.setContentsMargins(12 + depth * 22, 8, 14, 8)
+        accent = get_palette().get("accent", "#7cc596")
         if group is None:
-            self._chevron.setVisible(False)
             self._chevron.setText("")
+            self._chevron.setToolTip("")
             return
-        self._chevron.setVisible(True)
-        self._chevron.setText("▾" if group.get("expanded") else "▸")
+        # Large enough and coloured enough to read as a control. At 9px in the
+        # body colour it was a speck, and the one affordance the whole
+        # grouping feature depends on went unnoticed.
+        # U+25BC/U+25B6, not the "small triangle" pair U+25BE/U+25B8: the
+        # small variants render at roughly half height whatever the font size,
+        # which is why the affordance stayed invisible after being enlarged.
+        self._chevron.setStyleSheet(
+            f"font-size: 10px; color: {accent}; background: transparent;")
+        self._chevron.setText("▼" if group.get("expanded") else "▶")
         self._chevron.setToolTip(
             tr("Hide the {n} items inside", n=group.get("count", 0))
             if group.get("expanded")
@@ -4076,8 +4087,16 @@ class CategoryDetailView(QFrame):
         recreating the whole list, which is what made filter clicks janky.
         """
         visible = self._proxy.rowCount()
-        self._list_count_lbl.setText(tr("// {n:,} visible", n=visible))
         self._row_widgets.clear()
+
+        # Count the ROWS on screen, not the entities behind them. Grouping
+        # folds 9 findings into 3 rows, and a header reading "9 visible" above
+        # 3 rows just looks wrong.
+        rows = list(self._display_rows())
+        shown = len(rows)
+        self._list_count_lbl.setText(
+            tr("// {n:,} visible", n=shown) if shown == visible
+            else tr("// {shown:,} rows · {total:,} items", shown=shown, total=visible))
 
         if visible == 0:
             for row in self._row_pool:
@@ -4092,7 +4111,7 @@ class CategoryDetailView(QFrame):
 
         selected_visible = False
         idx = 0
-        for sr, entity, depth, group in self._display_rows():
+        for sr, entity, depth, group in rows:
             checked = (self._model.is_checked(sr) if sr >= 0
                        else self._group_fully_checked(group))
             if idx < len(self._row_pool):
