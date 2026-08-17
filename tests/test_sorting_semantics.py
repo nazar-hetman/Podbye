@@ -145,7 +145,7 @@ def test_format_size_never_renders_a_full_next_unit(size_bytes, expected):
 
 def test_format_size_never_emits_1024_of_any_unit():
     """Sweep the boundaries: no output should ever read '1024 <unit>'."""
-    for scale in (1024, 1024 ** 2, 1024 ** 3):
+    for scale in (1024, 1024 ** 2, 1024 ** 3, 1024 ** 4, 1024 ** 5):
         for delta in range(-3, 4):
             out = _format_size(scale + delta)
             assert not out.startswith("1024 "), f"{scale + delta} -> {out!r}"
@@ -171,3 +171,71 @@ def test_restore_from_session_preserves_modified():
     restored = st.findings[0]
     assert restored.modified == pytest.approx(original.modified)
     assert restored.cache_key == original.cache_key, "AI cache key changed on resume"
+
+
+# ── every advertised sort must actually sort ─────────────────────
+# The trap this guards: a sort key reaches the dropdown but lessThan() has no
+# branch for it, so it falls through to the default (size descending) and is
+# indistinguishable from "Largest first". A screen-local copy of the key list
+# had drifted from the proxy's in exactly this way, listing a "Safe cleanup"
+# and a "Last accessed" that were never implemented.
+
+# For each key: the field it claims to order by, and whether the winning row
+# is the one with the LOWER value of that field.
+_SORT_FIELD = {
+    "largest":      ("size_bytes", False),
+    "smallest":     ("size_bytes", True),
+    "reclaimable":  ("reclaimable_bytes", False),
+    "last_access":  ("accessed", True),
+    "oldest":       ("modified", True),
+}
+
+
+@pytest.mark.parametrize("key", [k for k, _ in FindingsFilterProxy.SORT_KEYS])
+def test_every_offered_sort_key_has_a_real_branch(key):
+    """Two rows differing ONLY in this sort's field must come out in its order.
+
+    Size is held equal, so a key that silently falls through to the size
+    default cannot pass by accident.
+    """
+    from PySide6.QtCore import Qt
+
+    base = dict(size_bytes=100, reclaimable_bytes=10, risk=RISK_REVIEW,
+                accessed=5000.0, modified=5000.0, ai_status="none")
+
+    if key == "risk":
+        lo = dict(base, name="lo", risk=RISK_SAFE)
+        hi = dict(base, name="hi", risk=RISK_PROTECTED)
+        expected_first = "lo"          # Safe is the most actionable
+    elif key == "safe_cleanup":
+        lo = dict(base, name="lo", risk=RISK_SAFE)
+        hi = dict(base, name="hi", risk=RISK_PROTECTED)
+        expected_first = "lo"          # Protected cannot be cleaned at all
+    elif key == "ai_analyzed":
+        lo = dict(base, name="lo", ai_status="ready")
+        hi = dict(base, name="hi", ai_status="none")
+        expected_first = "lo"
+    else:
+        field, lower_wins = _SORT_FIELD[key]
+        lo = dict(base, name="lo", **{field: 1.0})
+        hi = dict(base, name="hi", **{field: 9000.0})
+        expected_first = "lo" if lower_wins else "hi"
+
+    model = FindingsTableModel()
+    model.set_entities([hi, lo])       # deliberately the wrong way round
+    proxy = FindingsFilterProxy()
+    proxy.setSourceModel(model)
+    proxy.set_sort_key(key)
+    proxy.sort(0, Qt.AscendingOrder)
+
+    order = [proxy.data(proxy.index(r, 0), Qt.UserRole)["name"]
+             for r in range(proxy.rowCount())]
+    assert order[0] == expected_first, (
+        f"sort {key!r} did not order by its own criterion (got {order}) — "
+        f"it is probably falling through to the size default")
+
+
+def test_the_screen_offers_exactly_the_keys_the_proxy_implements():
+    """One list, not two. The duplicate in findings_dashboard drifted."""
+    from app.screens.findings_dashboard import SORT_OPTIONS
+    assert list(SORT_OPTIONS) == list(FindingsFilterProxy.SORT_KEYS)

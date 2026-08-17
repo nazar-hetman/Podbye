@@ -100,6 +100,15 @@ _EXPECTED_RULES = {
 }
 
 
+# The `category_label` / `retry_label` values call sites pass in. They reach
+# tr() through a variable, so no static scan over tr() literals finds them —
+# listed here so the translation-coverage test can.
+CALLER_LABELS = (
+    "This category", "Cleanup run", "Selected items",
+    "Quick Cleanup", "the cleanup",
+)
+
+
 def _fallback_expected_rule() -> dict:
     return {
         "intro": "Some files are still being used by Windows or another app.",
@@ -127,8 +136,13 @@ def assess_cleanup_counts(
     ``retry_label`` names the action the user should repeat to finish the
     cleanup (e.g. "Quick Cleanup" or "the cleanup"). It keeps the guidance
     accurate regardless of which flow triggered the cleanup.
+
+    Both labels are English keys and are translated here, not by the caller —
+    every call site passed a raw literal, so a Ukrainian user was told to
+    "запустити «the cleanup» ще раз".
     """
-    label = category_label or tr("This category")
+    label = tr(category_label) if category_label else tr("This category")
+    retry_label = tr(retry_label)
 
     if succeeded_count == 0 and in_use_count == 0 and failed_count == 0 and skipped_count == 0:
         return CleanupAssessment(

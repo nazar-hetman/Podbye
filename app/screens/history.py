@@ -11,7 +11,6 @@ from __future__ import annotations
 import datetime
 import os
 import time
-from collections import Counter
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -20,9 +19,9 @@ from PySide6.QtWidgets import (
     QSizePolicy,
 )
 from PySide6.QtCore import Qt, Signal, QObject, QEvent
-from PySide6.QtGui import QColor, QBrush, QFontMetrics
+from PySide6.QtGui import QColor, QBrush
 
-from app.widgets.tables import RowHighlightDelegate
+from app.widgets.tables import RowHighlightDelegate, install_header_fit
 
 
 class _RowHoverFilter(QObject):
@@ -92,13 +91,9 @@ from app.themes.theme_manager import get_palette
 from app.models.finding import _format_size
 from app.models.risk import normalized_risk_totals
 from app.i18n import tr
-from app.services.cleanup_result_classifier import (
-    STATE_FAILED,
-    STATE_IN_USE,
-    STATE_PARTIAL,
-    assess_cleanup_counts,
-)
+from app.services.cleanup_result_classifier import assess_cleanup_counts
 from app.widgets.panels import apply_tactical_label
+from app.widgets.controls import ElidedLabel
 
 
 # ── Helpers ───────────────────────────────────────────────────────
@@ -111,11 +106,11 @@ def _format_when(ts: float) -> str:
     days_ago = (now - ts) / 86400
     dt = datetime.datetime.fromtimestamp(ts)
     if days_ago < 1:
-        return f"Today {dt.strftime('%H:%M')}"
+        return tr("Today {time}", time=dt.strftime('%H:%M'))
     if days_ago < 2:
-        return f"Yesterday {dt.strftime('%H:%M')}"
+        return tr("Yesterday {time}", time=dt.strftime('%H:%M'))
     if days_ago < 7:
-        return f"{int(days_ago)}d ago"
+        return tr("{n}d ago", n=int(days_ago))
     return dt.strftime("%Y-%m-%d")
 
 
@@ -177,16 +172,6 @@ def _category_totals_top(category_totals: dict, limit: int = 3) -> list[tuple[st
     return rows[:limit]
 
 
-def _category_totals_outcome(category_totals: dict) -> str:
-    parts = []
-    for cat, count, size in _category_totals_top(category_totals):
-        if size:
-            parts.append(f"{cat} {_format_size(size)}")
-        else:
-            parts.append(f"{cat} {count}")
-    return ", ".join(parts) if parts else "No categories recorded"
-
-
 def _item_size_bytes(item: dict) -> int:
     for key in ("reclaimable_bytes", "size_bytes", "bytes", "size"):
         value = item.get(key)
@@ -209,14 +194,6 @@ def _cleanup_top_categories(items: list, limit: int = 3) -> list[tuple[str, int,
     ]
     rows.sort(key=lambda row: (row[2], row[1]), reverse=True)
     return rows[:limit]
-
-
-def _cleanup_categories_outcome(items: list) -> str:
-    parts = []
-    for label, count, size in _cleanup_top_categories(items):
-        suffix = _format_size(size) if size else f"{count} items"
-        parts.append(f"{label} {suffix}")
-    return ", ".join(parts) if parts else "No cleaned categories recorded"
 
 
 def _attention_count(risk_totals: dict) -> int:
@@ -252,6 +229,8 @@ def _freed_for_session(session_id: str) -> tuple[int, int]:
 
 
 def _impact_label(size_bytes: int, *, attention_count: int = 0, found_count: int = 0) -> str:
+    """Canonical impact key. Call ``tr()`` on it before showing it — it stayed
+    English next to translated eyebrows in every non-English build."""
     if size_bytes >= 10 * 1024 ** 3 or attention_count >= 100:
         return "High"
     if size_bytes >= 1024 ** 3 or attention_count >= 10 or found_count >= 100:
@@ -294,55 +273,44 @@ def _muted_line(text: str, p: dict) -> QLabel:
     return lbl
 
 
+# Path fragment → the human name for what lives there. Kept as a module
+# constant so the translation-coverage test can reach the values: they are
+# looked up by variable, which no static scan over tr() calls would find.
+CLEANUP_TARGET_LABELS = [
+    ("thumbcache", "Windows thumbnail database"),
+    ("softwaredistribution", "Windows update cache"),
+    ("google/chrome", "Chrome cache"),
+    ("microsoft/edge", "Edge cache"),
+    ("mozilla/firefox", "Firefox cache"),
+    ("appdata/local/temp", "User temporary files"),
+    ("/temp/", "Temporary files"),
+]
+
+
 def _cleanup_target_label(item: dict) -> str:
     path = item.get("path", "") or ""
     category = item.get("category", "") or ""
     name = item.get("name", "") or ""
     lowered = path.lower().replace("\\", "/")
-    known_labels = [
-        ("thumbcache", "Windows thumbnail database"),
-        ("softwaredistribution", "Windows update cache"),
-        ("google/chrome", "Chrome cache"),
-        ("microsoft/edge", "Edge cache"),
-        ("mozilla/firefox", "Firefox cache"),
-        ("appdata/local/temp", "User temporary files"),
-        ("/temp/", "Temporary files"),
-    ]
-    for token, label in known_labels:
+    for token, label in CLEANUP_TARGET_LABELS:
         if token in lowered:
-            return label
+            return tr(label)
     if category and category != name:
-        return category
+        return tr(category)
     if path:
         return os.path.basename(path.rstrip("/\\")) or path
-    return name or category or "—"
+    if name:
+        return name
+    return tr(category) if category else "—"
 
 
 # ── Shared small widgets ──────────────────────────────────────────
 
 
-class _Elided(QLabel):
-    """QLabel that elides with '…' when its column is too narrow."""
-
-    def __init__(self, text: str = "", parent=None):
-        super().__init__(parent)
-        self._full = text
-        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        self.setToolTip(text)
-        super().setText(text)
-
-    def set_full_text(self, text: str):
-        self._full = text
-        self.setToolTip(text)
-        self._elide()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._elide()
-
-    def _elide(self):
-        fm = self.fontMetrics()
-        super().setText(fm.elidedText(self._full, Qt.ElideRight, max(1, self.width() - 2)))
+# The screens that needed this each grew their own version; the shared one is
+# in app.widgets.controls now. Kept as an alias so this module's call sites
+# keep reading the way they did.
+_Elided = ElidedLabel
 
 
 def _kv(key: str, val: str, p: dict, *, val_size: int = 12,
@@ -367,6 +335,53 @@ def _kv(key: str, val: str, p: dict, *, val_size: int = 12,
         v.setWordWrap(True)
     col.addWidget(v)
     return col
+
+
+def _eyebrow(text: str, p: dict) -> QLabel:
+    """The silkscreen section marker above a block inside a detail panel."""
+    lbl = QLabel(text)
+    lbl.setStyleSheet(
+        "font-family: 'Silkscreen', 'JetBrains Mono'; font-size: 8px; "
+        f"letter-spacing: 1px; color: {p.get('text_faint', '#57685e')};"
+    )
+    return lbl
+
+
+def _breakdown_rows(layout: QVBoxLayout, rows: list[tuple[str, int, int]],
+                    p: dict, empty_text: str):
+    """The '▪ label ………… size' list both detail panels end with.
+
+    Each panel used to head this block with a comma-joined repeat of the very
+    same figures. That line wrapped to two lines in translated builds, pushing
+    the rest of the panel out of view, and said nothing the rows below it did
+    not already say.
+    """
+    faint = p.get("text_faint", "#57685e")
+    if not rows:
+        layout.addWidget(_muted_line(empty_text, p))
+        return
+    for label, count, size in rows:
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        dot = QLabel("▪")
+        dot.setFixedWidth(10)
+        dot.setStyleSheet(f"color: {faint}; font-size: 8px;")
+        row.addWidget(dot)
+        name = _Elided(label)
+        name.setStyleSheet(
+            f"font-family: 'JetBrains Mono'; font-size: 10px; "
+            f"color: {p.get('text', '#d6e2da')};"
+        )
+        row.addWidget(name, stretch=1)
+        cnt = QLabel(_format_size(size) if size else f"{count:,}")
+        cnt.setFixedWidth(72)
+        cnt.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        cnt.setStyleSheet(
+            f"font-family: 'JetBrains Mono'; font-size: 10px; color: {faint};"
+        )
+        row.addWidget(cnt)
+        layout.addLayout(row)
 
 
 class _DistBar(QFrame):
@@ -423,7 +438,6 @@ class CleanupRecordDetail(QFrame):
         super().__init__(parent)
         self.setObjectName("PanelAlt")
         p = get_palette()
-        faint = p.get("text_faint", "#57685e")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 9, 12, 10)
         layout.setSpacing(6)
@@ -454,10 +468,10 @@ class CleanupRecordDetail(QFrame):
         stats.setSpacing(18)
         _bold_keys = (tr("IMPACT"), tr("CLEANED"))
         for lbl, val, col in [
-            (tr("IMPACT"), impact, _impact_color(impact, p)),
+            (tr("IMPACT"), tr(impact), _impact_color(impact, p)),
             (tr("CLEANED"), _format_size(freed), p.get("safe", "#7aa88a")),
             (tr("ITEMS"), f"{succeeded:,}", ""),
-            (tr("ATTENTION"), f"{total_exceptions:,}" if total_exceptions else "None",
+            (tr("ATTENTION"), f"{total_exceptions:,}" if total_exceptions else tr("None"),
              p.get("review", "#c7a66c") if total_exceptions else ""),
         ]:
             stats.addLayout(_kv(lbl, val, p, val_size=11,
@@ -482,13 +496,14 @@ class CleanupRecordDetail(QFrame):
         # ── Non-zero exceptions only ───────────────────────────────
         exceptions = []
         if in_use:
-            exceptions.append(f"{in_use:,} in use")
+            exceptions.append(tr("{n:,} in use", n=in_use))
         if failed:
-            exceptions.append(f"{failed:,} failed")
+            exceptions.append(tr("{n:,} failed", n=failed))
         if skipped:
-            exceptions.append(f"{skipped:,} protected skipped")
+            exceptions.append(tr("{n:,} protected skipped", n=skipped))
         if exceptions:
-            exc = QLabel("Still requires attention: " + " · ".join(exceptions))
+            exc = QLabel(tr("Still requires attention: {details}",
+                            details=" · ".join(exceptions)))
             exc.setWordWrap(True)
             exc.setStyleSheet(
                 f"font-family: 'JetBrains Mono'; font-size: 10px; "
@@ -497,39 +512,9 @@ class CleanupRecordDetail(QFrame):
             layout.addWidget(exc)
 
         # ── Targets — grouped, structured preview ─────────────────
-        groups = _cleanup_top_categories(items, self._MAX_GROUPS)
-        thdr = QLabel(f"{tr('TOP CLEANED')} · {_cleanup_categories_outcome(items)}")
-        thdr.setWordWrap(True)  # long category lists would otherwise clip off-panel
-        thdr.setToolTip(thdr.text())
-        thdr.setStyleSheet(
-            "font-family: 'Silkscreen', 'JetBrains Mono'; font-size: 8px; "
-            f"letter-spacing: 1px; color: {faint};"
-        )
-        layout.addWidget(thdr)
-
-        for label, count, size in groups:
-            row = QHBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(8)
-            dot = QLabel("▪")
-            dot.setFixedWidth(10)
-            dot.setStyleSheet(f"color: {faint}; font-size: 8px;")
-            row.addWidget(dot)
-            name = _Elided(label)
-            name.setStyleSheet(
-                f"font-family: 'JetBrains Mono'; font-size: 10px; "
-                f"color: {p.get('text', '#d6e2da')};"
-            )
-            row.addWidget(name, stretch=1)
-            detail = _format_size(size) if size else f"{count}"
-            cnt = QLabel(detail)
-            cnt.setFixedWidth(72)
-            cnt.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            cnt.setStyleSheet(
-                f"font-family: 'JetBrains Mono'; font-size: 10px; color: {faint};"
-            )
-            row.addWidget(cnt)
-            layout.addLayout(row)
+        layout.addWidget(_eyebrow(tr("TOP CLEANED"), p))
+        _breakdown_rows(layout, _cleanup_top_categories(items, self._MAX_GROUPS),
+                        p, tr("No cleaned categories recorded"))
 
 
 class SessionDetail(QFrame):
@@ -578,7 +563,7 @@ class SessionDetail(QFrame):
         # back by session_id). Only shown once something has been cleaned.
         freed_bytes, freed_items = _freed_for_session(record.get("session_id", ""))
         rows = [
-            (tr("IMPACT"), impact, _impact_color(impact, p)),
+            (tr("IMPACT"), tr(impact), _impact_color(impact, p)),
             (tr("RECLAIMABLE"), reclaimable_text,
              p.get("safe", "#7aa88a") if reclaimable else ""),
         ]
@@ -588,7 +573,7 @@ class SessionDetail(QFrame):
                          p.get("safe", "#7aa88a")))
         rows += [
             (tr("FOUND"), items_val, ""),
-            (tr("REVIEW"), f"{attention:,}" if attention else "None",
+            (tr("REVIEW"), f"{attention:,}" if attention else tr("None"),
              p.get("review", "#c7a66c") if attention else ""),
             (tr("DURATION"), _format_duration(duration), ""),
         ]
@@ -602,15 +587,16 @@ class SessionDetail(QFrame):
             f"{tr('scanned')} {_format_size(record.get('total_size', 0))}", p))
 
         # ── What was found ────────────────────────────────────────
-        dk = QLabel(f"{tr('TOP FINDINGS')} · {_category_totals_outcome(record.get('category_totals', {}))}")
-        dk.setWordWrap(True)  # long category lists would otherwise clip off-panel
-        dk.setToolTip(dk.text())
-        dk.setStyleSheet(
-            "font-family: 'Silkscreen', 'JetBrains Mono'; font-size: 8px; "
-            f"letter-spacing: 1px; color: {p.get('text_faint', '#57685e')};"
-        )
-        layout.addWidget(dk)
+        # Same eyebrow + '▪ label … size' shape as the cleanup panel, so the
+        # two halves of the screen read as one design.
+        layout.addWidget(_eyebrow(tr("TOP FINDINGS"), p))
+        _breakdown_rows(
+            layout,
+            [(tr(cat), count, size)
+             for cat, count, size in _category_totals_top(record.get("category_totals", {}))],
+            p, tr("No categories recorded"))
 
+        layout.addSpacing(2)
         bar = _DistBar(safe_pct, review_pct, risk_pct)
         layout.addWidget(bar)
         attention_parts = []
@@ -618,12 +604,13 @@ class SessionDetail(QFrame):
         protected_count = int(risk_totals.get("Protected", 0) or 0)
         optional_count = int(risk_totals.get("Optional", 0) or 0)
         if review_count:
-            attention_parts.append(f"{review_count:,} review")
+            attention_parts.append(tr("{n:,} review", n=review_count))
         if protected_count:
-            attention_parts.append(f"{protected_count:,} protected")
+            attention_parts.append(tr("{n:,} protected", n=protected_count))
         if optional_count:
-            attention_parts.append(f"{optional_count:,} optional")
-        attention_text = " · ".join(attention_parts) if attention_parts else "No review-required items recorded"
+            attention_parts.append(tr("{n:,} optional", n=optional_count))
+        attention_text = (" · ".join(attention_parts) if attention_parts
+                          else tr("No review-required items recorded"))
         dtext = QLabel(attention_text)
         dtext.setStyleSheet(
             f"font-family: 'JetBrains Mono'; font-size: 10px; "
@@ -658,7 +645,13 @@ class HistoryScreen(QWidget):
     rerun_requested = Signal(str)           # target path
 
     _MAX_VISIBLE_ROWS = 5
-    _DETAIL_SLOT_HEIGHT = 178
+    _outer = None       # so an early resizeEvent has something to test
+    _is_stacked = None
+    # Below this content width the two workspaces stack instead of sitting
+    # side by side. A session panel needs its four fixed columns (380px) plus
+    # a readable TARGET column plus panel chrome — about 560px — and there are
+    # two of them, a 10px gap and 36px of screen margin.
+    _STACK_BELOW = 1160
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -678,6 +671,7 @@ class HistoryScreen(QWidget):
         self._sess_detail_area: QVBoxLayout | None = None
         self._sess_detail_widget: QWidget | None = None
         self._sess_detail_spacer = None
+        self._is_stacked: bool = self._stacked_layout()
 
         self._outer = QVBoxLayout(self)
         self._outer.setContentsMargins(0, 0, 0, 0)
@@ -702,7 +696,31 @@ class HistoryScreen(QWidget):
         from app.state.session_store import load_history, load_cleanup_records
         self._sessions = load_history()
         self._cleanup_records = load_cleanup_records()
+        self._reset_panel_state()
+        self._build_content()
 
+    # ── Responsive layout ─────────────────────────────────────────
+
+    def _stacked_layout(self) -> bool:
+        return self.width() < self._STACK_BELOW
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Rebuild only when the arrangement actually flips, not on every pixel
+        # of a drag. Qt can deliver a resize before __init__ has finished, so
+        # do nothing until there is a content layout to rebuild into.
+        if getattr(self, "_outer", None) is None:
+            return
+        if self._stacked_layout() != self._is_stacked:
+            self._reset_panel_state()
+            self._build_content()
+        else:
+            # Width changes how the wrapping text inside a panel lays out, so
+            # the taller of the two can swap over as the window is dragged.
+            self._sync_detail_heights()
+
+    def _reset_panel_state(self):
+        """Forget the widgets _build_content is about to replace."""
         self._cleanup_expanded_row = -1
         self._cleanup_table = None
         self._cleanup_detail_area = None
@@ -713,8 +731,6 @@ class HistoryScreen(QWidget):
         self._sess_detail_area = None
         self._sess_detail_widget = None
         self._sess_detail_spacer = None
-
-        self._build_content()
 
     # ── Styling helpers ───────────────────────────────────────────
 
@@ -778,7 +794,11 @@ class HistoryScreen(QWidget):
         v.addStretch()
         return w
 
-    def _new_table(self, headers: list) -> QTableWidget:
+    def _new_table(self, headers: list, alignments: list) -> QTableWidget:
+        """`alignments` is one Qt alignment per column, matching how that
+        column's cells are drawn. Qt centres header text by default, which put
+        every heading adrift of the values under it — WHEN sat mid-column above
+        left-aligned timestamps, FREED mid-column above right-aligned sizes."""
         t = QTableWidget()
         # Mouse tracking is required so the viewport event filter receives
         # MouseMove events while no button is pressed (and so any
@@ -800,9 +820,16 @@ class HistoryScreen(QWidget):
         t.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         t.setStyleSheet(self._table_qss())
         t.horizontalHeader().setMinimumSectionSize(26)
+        for col, align in enumerate(alignments):
+            item = t.horizontalHeaderItem(col)
+            if item is not None:
+                item.setTextAlignment(align | Qt.AlignVCenter)
         # Whole-row hover. Filter is parented to the table so it dies with it.
         hover_color = QColor(get_palette().get("panel_hover", "#1d2c25"))
         t._row_hover_filter = _RowHoverFilter(t, hover_color)
+        # Widths below are chosen against the English headings; this widens
+        # any column a translated heading would not fit in.
+        install_header_fit(t)
         return t
 
     def _cap_table_height(self, table: QTableWidget):
@@ -814,11 +841,13 @@ class HistoryScreen(QWidget):
         table.setFixedHeight(header_h + visible * row_h + frame_h + 1)
 
     def _limited_history_note(self, total: int, noun: str) -> QLabel | None:
+        """`noun` is an English key — it is translated here, not by the caller,
+        which used to hand a raw English word into a translated sentence."""
         hidden = total - self._MAX_VISIBLE_ROWS
         if hidden <= 0:
             return None
         lbl = QLabel(tr("Showing latest {n} {noun}; {hidden} older hidden.",
-                        n=self._MAX_VISIBLE_ROWS, noun=noun, hidden=hidden))
+                        n=self._MAX_VISIBLE_ROWS, noun=tr(noun), hidden=hidden))
         lbl.setObjectName("Muted")
         lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 9px;")
         return lbl
@@ -828,8 +857,15 @@ class HistoryScreen(QWidget):
     def _build_content(self):
         while self._outer.count():
             item = self._outer.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            widget = item.widget()
+            if widget is not None:
+                # Hide first. deleteLater() only queues the delete, so the
+                # outgoing screen stayed a visible child and painted over the
+                # rebuilt one — History rebuilds on every navigation here.
+                # hide(), not setParent(None): unparenting would promote it to
+                # a top-level window, which shows up as a blank frame.
+                widget.hide()
+                widget.deleteLater()
 
         content = QWidget()
         root = QVBoxLayout(content)
@@ -845,11 +881,24 @@ class HistoryScreen(QWidget):
         topbar.addWidget(self._summary_label())
         root.addLayout(topbar)
 
-        # ── Dual workspaces — equal weight, side by side ──────────
-        workspaces = QHBoxLayout()
-        workspaces.setSpacing(10)
-        workspaces.addWidget(self._build_cleanup_workspace(), stretch=1, alignment=Qt.AlignTop)
-        workspaces.addWidget(self._build_sessions_workspace(), stretch=1, alignment=Qt.AlignTop)
+        # ── Dual workspaces — equal weight ────────────────────────
+        # Side by side when there is room, stacked when there is not. Each
+        # panel carries a four-column table, and two of them abreast in the
+        # 1100px minimum window left the stretch column 15px wide: the TARGET
+        # heading and every path under it collapsed to a single letter.
+        if self._stacked_layout():
+            workspaces = QVBoxLayout()
+            workspaces.setSpacing(10)
+            workspaces.addWidget(self._build_cleanup_workspace())
+            workspaces.addWidget(self._build_sessions_workspace())
+        else:
+            workspaces = QHBoxLayout()
+            workspaces.setSpacing(10)
+            workspaces.addWidget(self._build_cleanup_workspace(),
+                                 stretch=1, alignment=Qt.AlignTop)
+            workspaces.addWidget(self._build_sessions_workspace(),
+                                 stretch=1, alignment=Qt.AlignTop)
+        self._is_stacked = self._stacked_layout()
         root.addLayout(workspaces, stretch=0)
         root.addStretch(1)
 
@@ -891,10 +940,8 @@ class HistoryScreen(QWidget):
 
         total_freed = sum(r.get("total_bytes_freed", 0) for r in records)
         if records:
-            subtitle = (
-                f"// {len(records)} operation{'s' if len(records) != 1 else ''}"
-                f" · {_format_size(total_freed)} freed"
-            )
+            subtitle = tr("// {n} operations · {size} freed",
+                          n=len(records), size=_format_size(total_freed))
         else:
             subtitle = tr("// no cleanup operations yet")
         v.addLayout(self._section_header(tr("CLEANUP SESSIONS"), subtitle))
@@ -907,7 +954,9 @@ class HistoryScreen(QWidget):
             return frame
 
         # Table — WHEN / MODE / FREED / ITEMS
-        table = self._new_table([tr("WHEN"), tr("MODE"), tr("FREED"), tr("ITEMS")])
+        table = self._new_table(
+            [tr("WHEN"), tr("MODE"), tr("FREED"), tr("ITEMS")],
+            [Qt.AlignLeft, Qt.AlignHCenter, Qt.AlignRight, Qt.AlignRight])
         hdr = table.horizontalHeader()
         for col, w in ((1, 116), (2, 100), (3, 78)):
             hdr.setSectionResizeMode(col, QHeaderView.Fixed)
@@ -956,7 +1005,6 @@ class HistoryScreen(QWidget):
     # ── Sessions workspace ────────────────────────────────────────
 
     def _build_sessions_workspace(self) -> QFrame:
-        p = get_palette()
         sessions = self._sessions
         frame = QFrame()
         frame.setObjectName("Panel")
@@ -967,10 +1015,8 @@ class HistoryScreen(QWidget):
 
         if sessions:
             total_size = sum(s.get("total_size", 0) for s in sessions)
-            subtitle = (
-                f"// {len(sessions)} session{'s' if len(sessions) != 1 else ''}"
-                f" · {_format_size(total_size)} scanned"
-            )
+            subtitle = tr("// {n} sessions · {size} scanned",
+                          n=len(sessions), size=_format_size(total_size))
         else:
             subtitle = tr("// no scan sessions yet")
         v.addLayout(self._section_header(tr("ANALYZE SESSIONS"), subtitle))
@@ -983,7 +1029,9 @@ class HistoryScreen(QWidget):
             return frame
 
         # Table — WHEN / TARGET / MODE / ITEMS
-        table = self._new_table([tr("WHEN"), tr("TARGET"), tr("MODE"), tr("ITEMS")])
+        table = self._new_table(
+            [tr("WHEN"), tr("TARGET"), tr("MODE"), tr("ITEMS")],
+            [Qt.AlignLeft, Qt.AlignLeft, Qt.AlignLeft, Qt.AlignRight])
         hdr = table.horizontalHeader()
         # ITEMS holds a formatted count plus an optional "(partial)" tag; give it
         # room so it isn't clipped to "26182 …". TARGET (Stretch) absorbs the space.
@@ -1037,8 +1085,12 @@ class HistoryScreen(QWidget):
         p = get_palette()
         host = QFrame()
         host.setObjectName("PanelAlt")
-        host.setFixedHeight(self._DETAIL_SLOT_HEIGHT)
-        host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        # No committed height. A cleanup record carries a variable number of
+        # category rows and a wrapping status note, and a fixed 178px slot cut
+        # the metrics eyebrows off the top and the last rows off the bottom —
+        # the panel needs 195-310px depending on the record. The screen is
+        # inside a QScrollArea, so growing is free.
+        host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         host.setStyleSheet(
             f"QFrame#PanelAlt {{ background: {p.get('panel_alt', '#18241e')}; "
             f"border: 1px solid {p.get('border', '#213028')}; }}"
@@ -1055,6 +1107,7 @@ class HistoryScreen(QWidget):
         layout = host.layout()
         if current_widget is not None:
             layout.removeWidget(current_widget)
+            current_widget.hide()   # removeWidget alone leaves it drawn
             current_widget.deleteLater()
         layout.addWidget(widget)
         host.setVisible(True)
@@ -1066,6 +1119,7 @@ class HistoryScreen(QWidget):
         layout = host.layout()
         if current_widget is not None:
             layout.removeWidget(current_widget)
+            current_widget.hide()   # removeWidget alone leaves it drawn
             current_widget.deleteLater()
         host.setVisible(False)
 
@@ -1111,6 +1165,7 @@ class HistoryScreen(QWidget):
                 self._cleanup_detail_widget,
                 widget,
             )
+        self._sync_detail_heights()
 
     # ── Session row interactions ──────────────────────────────────
 
@@ -1144,6 +1199,36 @@ class HistoryScreen(QWidget):
                 self._sess_detail_widget,
                 widget,
             )
+        self._sync_detail_heights()
+
+    def _sync_detail_heights(self):
+        """Both open panels take the taller one's height.
+
+        Side by side, two explanation panels of different heights leave a
+        ragged bottom edge and read as one being unfinished — the cleanup
+        panel runs to ~300px and the scan panel to ~245px purely because of
+        how many category rows each happens to have. Matching them is only
+        meaningful when they sit next to each other; stacked, it would add
+        dead space under the shorter one for no gain.
+        """
+        # Keyed on "has a detail widget", not isVisible(): _build_content()
+        # adds the new content widget to the layout but nothing is shown until
+        # the event loop runs, so both panels still reported isVisible() False
+        # at the moment the row was expanded and the sync did nothing.
+        pairs = ((self._cleanup_detail_area, self._cleanup_detail_widget),
+                 (self._sess_detail_area, self._sess_detail_widget))
+        areas = [area for area, widget in pairs
+                 if area is not None and widget is not None]
+        for area in areas:
+            area.setMinimumHeight(0)
+        if self._is_stacked or len(areas) < 2:
+            return
+        for area in areas:
+            if area.layout() is not None:
+                area.layout().activate()
+        tallest = max(area.sizeHint().height() for area in areas)
+        for area in areas:
+            area.setMinimumHeight(tallest)
 
     # ── Actions ───────────────────────────────────────────────────
 

@@ -35,6 +35,20 @@ _SKIP_DIRS = {
     "$recycle.bin", "system volume information", ".git",
 }
 
+# Per-folder metadata the OS writes and rewrites on its own. These are a few
+# hundred bytes each, cannot be meaningfully deleted (Windows recreates them),
+# and are never what a user is looking for — but they count as files, so an
+# otherwise-empty C:/Users/<u>/Videos was reported as a "Videos / Movies"
+# collection on the strength of its desktop.ini, and C:/Users/<u>/Saved Games
+# holds nothing else at all.
+_OS_METADATA_FILES = {
+    "desktop.ini",      # folder icon / localized name (Windows)
+    "thumbs.db",        # Explorer thumbnail cache (Windows)
+    "ehthumbs.db",
+    ".ds_store",        # Finder folder state (macOS, common on shared drives)
+    "icon\r",           # macOS custom folder icon
+}
+
 # Reason codes for structured skipped entries
 SKIP_REASON_PERMISSION  = "Permission denied"
 SKIP_REASON_LOCKED      = "Locked by system"
@@ -227,6 +241,8 @@ class ScanWorker(QThread):
                         else:
                             if is_link:
                                 self._skipped_symlinks += 1
+                                continue
+                            if entry.name.lower() in _OS_METADATA_FILES:
                                 continue
                             finding = self._finding_from_entry(entry, is_dir=False)
                             if finding:

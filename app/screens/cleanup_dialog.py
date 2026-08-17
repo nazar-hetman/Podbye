@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QFrame, QScrollArea, QWidget, QCheckBox, QProgressBar,
 )
 
+from app.widgets.controls import ElidedLabel, TacticalCheckBox
 from app.models.finding import _format_size
 from app.models.risk import (
     is_protected, normalize_risk, risk_fg as _risk_fg,
@@ -202,12 +203,12 @@ class CleanupConfirmDialog(QDialog):
         root.setSpacing(0)
 
         # ── Header ───────────────────────────────────────────────
-        header_lbl = QLabel(tr("Move to Recycle Bin"))
-        header_lbl.setStyleSheet(
+        self._header_lbl = QLabel(tr("Move to Recycle Bin"))
+        self._header_lbl.setStyleSheet(
             "font-family: 'JetBrains Mono'; font-size: 15px; font-weight: bold; "
             "letter-spacing: 1px; margin-bottom: 4px;"
         )
-        root.addWidget(header_lbl)
+        root.addWidget(self._header_lbl)
 
         self._sub_lbl = QLabel("")
         self._sub_lbl.setObjectName("Dim")
@@ -285,7 +286,7 @@ class CleanupConfirmDialog(QDialog):
 
             _pal = get_palette()
             _cloud_color = _pal.get("optional", "#6e93a8")
-            cloud_hdr = QLabel(tr("☁  Cloud-synced items ({provider})",
+            cloud_hdr = QLabel(tr("⇧  Cloud-synced items ({provider})",
                                   provider=provider_str))
             cloud_hdr.setStyleSheet(
                 f"font-size: 12px; font-weight: bold; color: {_cloud_color};")
@@ -299,7 +300,7 @@ class CleanupConfirmDialog(QDialog):
             cloud_warn.setWordWrap(True)
             cloud_layout.addWidget(cloud_warn)
 
-            self._cloud_cb = QCheckBox(
+            self._cloud_cb = TacticalCheckBox(
                 tr("I understand this will delete files from my cloud account")
             )
             self._cloud_cb.setStyleSheet("font-size: 11px;")
@@ -321,7 +322,6 @@ class CleanupConfirmDialog(QDialog):
 
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
-            scroll.setMaximumHeight(140)
             scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             scroll.setStyleSheet("QScrollArea { border: none; }")
 
@@ -331,10 +331,16 @@ class CleanupConfirmDialog(QDialog):
             c_layout.setSpacing(2)
 
             for f in self._review_targets[:50]:
-                row_lbl = QLabel(
-                    f"  {normalize_risk(f.get('risk'))}  "
-                    f"{f.get('name', os.path.basename(f.get('path', '')))}"
-                    f"  ·  {_format_size(f.get('size_bytes', 0))}"
+                path = f.get("path", "")
+                # The PATH, not just the name. This dialog is the last thing
+                # between the user and a deletion, and "Adobe Photoshop 2024"
+                # does not say which copy or where it lives. Elided in the
+                # middle so the drive and the leaf both stay visible, with the
+                # whole thing in the tooltip.
+                row_lbl = ElidedLabel(
+                    f"{tr(normalize_risk(f.get('risk')))}   {path}"
+                    f"   ·   {_format_size(f.get('size_bytes', 0))}",
+                    mode=Qt.ElideMiddle,
                 )
                 row_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 10px;")
                 c_layout.addWidget(row_lbl)
@@ -348,6 +354,11 @@ class CleanupConfirmDialog(QDialog):
 
             c_layout.addStretch()
             scroll.setWidget(container)
+            # Fit the content instead of always reserving the cap: a single
+            # review item was given a 79px box to sit 13px of text in, leaving
+            # a hole in the middle of the dialog.
+            scroll.setMaximumHeight(140)
+            scroll.setFixedHeight(min(140, container.sizeHint().height() + 4))
             root.addWidget(scroll)
             root.addSpacing(8)
 
@@ -357,7 +368,7 @@ class CleanupConfirmDialog(QDialog):
         # confirm_risky_cleanup setting so it stays reversible in Settings.
         self._dont_ask_cb: QCheckBox | None = None
         if self._review_targets:
-            self._dont_ask_cb = QCheckBox(
+            self._dont_ask_cb = TacticalCheckBox(
                 tr("Don't ask again for review/uncertain items")
             )
             self._dont_ask_cb.setStyleSheet("font-size: 12px;")
@@ -432,7 +443,28 @@ class CleanupConfirmDialog(QDialog):
         # (still showing progress/result in this dialog) instead of asking.
         if self._auto_confirm and self._armed_targets():
             from PySide6.QtCore import QTimer
+            # Dress the dialog as progress *before* it is shown. It used to open
+            # wearing its full confirmation face — title "Confirm Cleanup", a
+            # "Don't ask again" tick, an armed "Move to Recycle Bin" button —
+            # and then start deleting a frame later, so the user watched a
+            # question they were never given the chance to answer.
+            self._present_as_progress()
             QTimer.singleShot(0, self._on_confirm)
+
+    def _present_as_progress(self):
+        """Re-label the dialog as the operation it is about to perform.
+
+        Only the asking parts go: the risk breakdown and the item counts stay,
+        because "what is being removed right now" is exactly what a user wants
+        to read while it happens — and Cancel stays live, since the worker
+        checks for it between items.
+        """
+        self.setWindowTitle(tr("Moving to Recycle Bin"))
+        self._header_lbl.setText(tr("Moving to Recycle Bin"))
+        self._btn_confirm.setVisible(False)
+        if self._dont_ask_cb:
+            self._dont_ask_cb.setVisible(False)
+        self._progress_frame.setVisible(True)
 
     # ── Event handlers ────────────────────────────────────────────
 

@@ -20,6 +20,9 @@ from app.themes.theme_manager import build_qss, get_palette
 
 @pytest.fixture
 def screen(qapp):
+    # NB this stylesheet stays applied for the rest of the session. Restoring
+    # it here re-polishes every widget alive in other test files and faults, so
+    # tests that measure sizes must not assume a bare application.
     qapp.setStyleSheet(build_qss("forest"))
     from app.screens.analyze import AnalyzeScreen
     st = ScanState()

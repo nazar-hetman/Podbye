@@ -9,12 +9,12 @@ from PySide6.QtWidgets import (
     QComboBox, QCheckBox, QLineEdit, QFrame, QRadioButton,
     QScrollArea, QSlider, QStackedWidget,
 )
-from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtCore import Qt, Signal, QObject, QTimer
 
 from app.widgets.panels import Panel, apply_tactical_label
-from app.widgets.controls import TacticalComboBox
+from app.widgets.controls import TacticalCheckBox, TacticalComboBox
 from app.themes.theme_manager import THEME_NAMES, THEME_KEYS, get_palette, theme_signaller
-from app.i18n import tr, available_languages
+from app.i18n import tr, available_languages, explanation_languages
 from app.services.ollama_client import LOCAL_ENDPOINT
 
 
@@ -97,9 +97,50 @@ def _divider() -> QFrame:
     return f
 
 
+def _human_size(num_bytes: int) -> str:
+    """Byte count in the largest unit that keeps it readable.
+
+    Delegates rather than repeating the ladder: this copy silently stopped at
+    GB and missed the boundary-rounding fix the shared formatter carries.
+    """
+    from app.models.finding import _format_size
+    return _format_size(num_bytes)
+
+
+def _dir_size(path: str) -> tuple[int, int]:
+    """(total bytes, file count) under *path*, or (0, 0) if it does not exist.
+
+    os.walk rather than a recursive glob: this runs against the session store,
+    which has reached several gigabytes, and must not build a list of every
+    entry before it can report anything.
+    """
+    total = 0
+    count = 0
+    if not path or not os.path.isdir(path):
+        return 0, 0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+                count += 1
+            except OSError:
+                pass
+    return total, count
+
+
+class _StorageResult(QObject):
+    """Carries measured storage sizes from the background thread to the UI."""
+    result = Signal(dict)
+
+
 class _ConnectionResult(QObject):
-    """Helper to emit connection test result from background thread."""
-    result = Signal(bool, str, list)
+    """Carries a probe result from the background thread to the UI.
+
+    (status, backend, models, runtime_path) rather than a formatted message:
+    the wording belongs in the UI so it can be translated and re-translated on
+    a language switch, and so the status can drive more than just a label.
+    """
+    result = Signal(str, str, list, str, str)
 
 
 # ─── Settings Screen ──────────────────────────────────────
@@ -112,10 +153,10 @@ _SECTIONS = [
 ]
 
 _SECTION_SUBS = {
-    "general":   "appearance, language",
+    "general":   "appearance · language · window",
     "ai":        "local model · explanation · performance",
     "scan":      "safeguards · cleanup method",
-    "about":     "build · paths · diagnostics",
+    "about":     "build · storage · diagnostics",
 }
 
 
@@ -134,6 +175,11 @@ class SettingsScreen(QWidget):
         self._styled_radios: list[QRadioButton] = []
         self._conn_result = _ConnectionResult(self)
         self._conn_result.result.connect(self._on_connection_result)
+        self._storage_result = _StorageResult(self)
+        self._storage_result.result.connect(self._on_storage_sizes)
+        self._storage_targets: dict[str, str] = {}
+        self._storage_size_lbls: dict[str, QLabel] = {}
+        self._slider_timers: list[QTimer] = []
         self._lang_dirty = False
         self._build_ui()
         self._load_from_store()
@@ -174,9 +220,14 @@ class SettingsScreen(QWidget):
             rb.blockSignals(False)
         self._endpoint_input.setText(self._store.get("ai_endpoint"))
         self._apply_endpoint_mode_state(is_local)
-        self._timeout_slider.setValue(self._store.get("ai_timeout"))
+        # Signals blocked: restoring a saved value must not look like a user
+        # edit and trigger the debounced write-back.
+        for slider, key in ((self._timeout_slider, "ai_timeout"),
+                            (self._concurrent_slider, "ai_max_concurrent")):
+            slider.blockSignals(True)
+            slider.setValue(self._store.get(key))
+            slider.blockSignals(False)
         self._timeout_val.setText(f"{self._store.get('ai_timeout')} s")
-        self._concurrent_slider.setValue(self._store.get("ai_max_concurrent"))
         self._concurrent_val.setText(str(self._store.get("ai_max_concurrent")))
 
         # Tone
@@ -201,17 +252,15 @@ class SettingsScreen(QWidget):
                 break
 
         # Toggles
-        self._cb_findings.setChecked(self._store.get("ai_findings_enabled", True))
+        self._cb_findings.setChecked(self._store.get("ai_findings_enabled", False))
         self._cb_startups.setChecked(self._store.get("ai_startups_enabled", True))
         self._cb_cleanup_hints.setChecked(self._store.get("ai_cleanup_hints_enabled", False))
         self._cb_risky_only.setChecked(self._store.get("ai_explain_risky_only"))
 
-        # Cleanup safety
+        # Cleanup safety. Recycle Bin is the only method; the store also pins
+        # this on load, and the Scan tab states it rather than offering a choice.
         if self._store.get("perm_delete_enabled", False):
             self._store.set_and_save("perm_delete_enabled", False)
-        self._rb_recycle.setChecked(True)
-        self._rb_permanent.setChecked(False)
-        self._rb_permanent.setEnabled(False)
         self._cb_confirm_risky.setChecked(self._store.get("confirm_risky_cleanup", True))
         self._cb_cross_volumes.setChecked(self._store.get("scan_cross_volumes", False))
 
@@ -240,7 +289,8 @@ class SettingsScreen(QWidget):
             self._model_combo.blockSignals(True)
             try:
                 self._model_combo.clear()
-                self._model_combo.addItem(saved_model, 0)
+                # None, not 0: no server has been asked yet.
+                self._model_combo.addItem(saved_model, None)
                 self._model_combo.setCurrentIndex(0)
             finally:
                 self._model_combo.blockSignals(False)
@@ -249,7 +299,7 @@ class SettingsScreen(QWidget):
                 f"font-family: 'JetBrains Mono'; font-size: 11px; color: {get_palette().get('review', '#d8b46a')};"
             )
         else:
-            self._populate_fallback_models()
+            self._show_no_models()
 
         # Auto-test connection in background to refresh model list
         self._auto_test_connection()
@@ -314,10 +364,6 @@ class SettingsScreen(QWidget):
         p = get_palette()
         return f"font-size: 10px; color: {p.get('text_faint', '#57685e')};"
 
-    def _warning_helper_style(self) -> str:
-        p = get_palette()
-        return f"font-size: 10px; color: {p.get('review', '#d8b46a')};"
-
     def _on_endpoint_mode_changed(self, _checked: bool = False):
         """Switch between the built-in local endpoint and a custom server one.
 
@@ -349,10 +395,20 @@ class SettingsScreen(QWidget):
             # Remember it separately so a Local round-trip doesn't lose it.
             self._save_value("ai_server_endpoint", text)
 
-    def _model_level_label(self, size_bytes: int) -> str:
+    def _model_level_label(self, size_bytes) -> str:
+        """Size tier for the active model, or an honest blank when unknown.
+
+        Three distinct states, and they used to collapse into one word, "small":
+        None  — no server contacted yet, so nothing is known;
+        0     — the server answered but reports no size (LM Studio, llama.cpp
+                list models by id alone, so a 70B model was labelled small);
+        n > 0 — a real figure from Ollama.
+        """
         from app.services.ollama_client import format_model_size
+        if size_bytes is None:
+            return ""
         if size_bytes <= 0:
-            return tr("small • local model")
+            return tr("local model • size not reported by this server")
         gb = size_bytes / (1024 ** 3)
         tier = tr("small") if gb < 4 else tr("medium") if gb < 10 else tr("large")
         return f"{tier} • {tr('local')} • ~{format_model_size(size_bytes)}"
@@ -367,13 +423,30 @@ class SettingsScreen(QWidget):
         if idx < 0:
             self._model_meta_lbl.setText("")
             return
-        size_bytes = int(self._model_combo.itemData(idx, Qt.UserRole) or 0)
+        # None is meaningful here — "not asked yet" — so it must not be
+        # coerced to 0, which means "the server told us it has no size".
+        size_bytes = self._model_combo.itemData(idx, Qt.UserRole)
         self._model_meta_lbl.setText(self._model_level_label(size_bytes))
 
     def _save_value(self, key: str, value):
         if self._store:
             self._store.set_and_save(key, value)
             self.settings_saved.emit()
+
+    def _persist_slider(self, key: str, slider: QSlider):
+        """Save *slider* under *key* on any change, debounced.
+
+        sliderReleased alone only fires after a mouse drag of the handle. A value
+        nudged with the arrow keys, the mouse wheel, or a click on the groove
+        moved the label and was then silently lost on the next launch. The
+        debounce keeps a drag from rewriting config.json on every pixel.
+        """
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.setInterval(400)
+        timer.timeout.connect(lambda: self._save_value(key, slider.value()))
+        slider.valueChanged.connect(lambda _: timer.start())
+        self._slider_timers.append(timer)
 
     def _save_model(self):
         model_text = self._model_combo.currentText()
@@ -475,6 +548,12 @@ class SettingsScreen(QWidget):
         self._section_title.setText(tr(label).upper())
         self._section_sub.setText(f"// {tr(_SECTION_SUBS.get(sec_id, ''))}")
 
+        # Measure on open rather than at build time: sizes go stale as scans run,
+        # and walking a multi-gigabyte session store at startup would delay every
+        # launch for a number only this tab shows.
+        if sec_id == "about":
+            self._refresh_storage_sizes()
+
     # ─── Section Builders ──────────────────────────────────
 
     def _build_general(self) -> QWidget:
@@ -491,7 +570,7 @@ class SettingsScreen(QWidget):
         # Appearance panel
         app_panel = Panel(alt=True)
         app_lay = app_panel.with_layout(vertical=True, margins=(14, 12, 14, 12), spacing=10)
-        app_lay.addLayout(_panel_title(tr("Appearance"), tr("theme & density")))
+        app_lay.addLayout(_panel_title(tr("Appearance"), tr("theme")))
         self._register_styled_panel(app_panel)
 
         # Theme chips
@@ -548,6 +627,32 @@ class SettingsScreen(QWidget):
         ))
 
         lay.addWidget(lang_panel)
+
+        # Window panel — how the app behaves, not how a scan behaves. This used
+        # to sit under Scan, where "when closing while busy" read as a scan
+        # safeguard rather than a window preference.
+        win_panel = Panel(alt=True)
+        win_lay = win_panel.with_layout(vertical=True, margins=(14, 12, 14, 12), spacing=10)
+        win_lay.addLayout(_panel_title(tr("Window"), tr("closing")))
+        self._register_styled_panel(win_panel)
+
+        self._close_behavior_combo = TacticalComboBox()
+        self._close_behavior_combo.addItem(tr("Ask me each time"), "ask")
+        self._close_behavior_combo.addItem(tr("Keep running in background"), "background")
+        self._close_behavior_combo.addItem(tr("Quit and stop the work"), "quit")
+        self._close_behavior_combo.setFixedWidth(220)
+        self._apply_combo_style(self._close_behavior_combo)
+        self._close_behavior_combo.currentIndexChanged.connect(
+            lambda _: self._save_value(
+                "close_behavior", self._close_behavior_combo.currentData()))
+        win_lay.addLayout(_setting_row(
+            tr("When closing while busy"),
+            tr("If a task is still running when you close the window, Vigil can "
+               "ask, keep working in the system tray, or stop and quit."),
+            self._close_behavior_combo,
+        ))
+
+        lay.addWidget(win_panel)
         lay.addStretch()
 
         scroll.setWidget(content)
@@ -586,8 +691,9 @@ class SettingsScreen(QWidget):
         self._rb_ep_local.toggled.connect(self._on_endpoint_mode_changed)
         srv_lay.addLayout(_setting_row(
             tr("Connection mode"),
-            tr("Local uses Ollama on this machine. Server points Vigil at another "
-               "machine on your network (LAN addresses only)."),
+            tr("Local finds a model server already running on this machine — "
+               "Ollama, LM Studio or llama.cpp — on its usual port. Server points "
+               "Vigil at another machine on your network (LAN addresses only)."),
             mode_w,
         ))
 
@@ -612,10 +718,39 @@ class SettingsScreen(QWidget):
         ep_h.addWidget(self._btn_test)
         srv_lay.addLayout(_setting_row(tr("Endpoint"), tr("Ollama-compatible HTTP server. Vigil never reaches the public network."), ep_w))
 
-        # Connection status
+        # Connection status: the state on one line, and what to do about it on
+        # the next. A single line had to serve every outcome, so it ended up
+        # saying nothing useful about any of them.
+        conn_w = QWidget()
+        conn_v = QVBoxLayout(conn_w)
+        conn_v.setContentsMargins(0, 0, 0, 0)
+        conn_v.setSpacing(4)
+
+        conn_top = QHBoxLayout()
+        conn_top.setContentsMargins(0, 0, 0, 0)
+        conn_top.setSpacing(8)
         self._conn_status_lbl = QLabel("")
         self._conn_status_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
-        srv_lay.addLayout(_setting_row(tr("Connection"), tr("Last contacted server."), self._conn_status_lbl))
+        conn_top.addWidget(self._conn_status_lbl)
+
+        self._btn_start_ollama = QPushButton(tr("Start Ollama"))
+        self._btn_start_ollama.setObjectName("Ghost")
+        self._btn_start_ollama.setCursor(Qt.PointingHandCursor)
+        self._btn_start_ollama.setVisible(False)
+        self._btn_start_ollama.clicked.connect(self._start_ollama)
+        conn_top.addWidget(self._btn_start_ollama)
+        conn_top.addStretch()
+        conn_v.addLayout(conn_top)
+
+        self._conn_hint_lbl = QLabel("")
+        self._conn_hint_lbl.setObjectName("Dim")
+        self._conn_hint_lbl.setStyleSheet("font-size: 11px;")
+        self._conn_hint_lbl.setWordWrap(True)
+        self._conn_hint_lbl.setMaximumWidth(360)
+        self._conn_hint_lbl.setVisible(False)
+        conn_v.addWidget(self._conn_hint_lbl)
+
+        srv_lay.addLayout(_setting_row(tr("Connection"), tr("Last contacted server."), conn_w))
 
         # Library / refresh
         lib_w = QWidget()
@@ -681,7 +816,7 @@ class SettingsScreen(QWidget):
         model_hint2.setWordWrap(True)
         model_v.addWidget(model_hint2)
         mod_lay.addLayout(_setting_row(tr("Active model"), tr("Choose the local model used for explanations."), model_w))
-        self._populate_fallback_models()
+        self._show_no_models()
 
         lay.addWidget(model_panel)
 
@@ -715,7 +850,7 @@ class SettingsScreen(QWidget):
         ai_lang_lay.setContentsMargins(0, 0, 0, 0)
         ai_lang_lay.setSpacing(4)
         self._ai_lang_combo = TacticalComboBox()
-        self._ai_lang_combo.addItems(available_languages())
+        self._ai_lang_combo.addItems(explanation_languages())
         self._ai_lang_combo.setCurrentIndex(0)
         self._ai_lang_combo.setFixedWidth(168)
         self._apply_combo_style(self._ai_lang_combo)
@@ -741,15 +876,15 @@ class SettingsScreen(QWidget):
         ai_toggle_l = QVBoxLayout(ai_toggle_w)
         ai_toggle_l.setContentsMargins(0, 0, 0, 0)
         ai_toggle_l.setSpacing(6)
-        self._cb_findings = QCheckBox(tr("Explain all findings automatically"))
+        self._cb_findings = TacticalCheckBox(tr("Explain all findings automatically"))
         self._style_checkbox(self._cb_findings)
         self._cb_findings.toggled.connect(lambda checked: self._save_value("ai_findings_enabled", checked))
         ai_toggle_l.addWidget(self._cb_findings)
-        self._cb_startups = QCheckBox(tr("Startups"))
+        self._cb_startups = TacticalCheckBox(tr("Startups"))
         self._style_checkbox(self._cb_startups)
         self._cb_startups.toggled.connect(lambda checked: self._save_value("ai_startups_enabled", checked))
         ai_toggle_l.addWidget(self._cb_startups)
-        self._cb_cleanup_hints = QCheckBox(tr("Cleanup hints"))
+        self._cb_cleanup_hints = TacticalCheckBox(tr("Cleanup hints"))
         self._style_checkbox(self._cb_cleanup_hints)
         self._cb_cleanup_hints.toggled.connect(lambda checked: self._save_value("ai_cleanup_hints_enabled", checked))
         ai_toggle_l.addWidget(self._cb_cleanup_hints)
@@ -757,7 +892,7 @@ class SettingsScreen(QWidget):
                "finding is off by default — it is slow on a local model; turn it "
                "on for long background runs."), ai_toggle_w))
 
-        self._cb_risky_only = QCheckBox(tr("Enable"))
+        self._cb_risky_only = TacticalCheckBox(tr("Enable"))
         self._style_checkbox(self._cb_risky_only)
         self._cb_risky_only.toggled.connect(lambda checked: self._save_value("ai_explain_risky_only", checked))
         expl_lay.addLayout(_setting_row(tr("Explain only risky findings"), tr("Skip the model for findings flagged as safe."), self._cb_risky_only))
@@ -787,7 +922,7 @@ class SettingsScreen(QWidget):
         self._timeout_val.setFixedWidth(64)
         self._timeout_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._timeout_slider.valueChanged.connect(lambda v: self._timeout_val.setText(f"{v} s"))
-        self._timeout_slider.sliderReleased.connect(lambda: self._save_value("ai_timeout", self._timeout_slider.value()))
+        self._persist_slider("ai_timeout", self._timeout_slider)
         timeout_h.addWidget(self._timeout_slider)
         timeout_h.addWidget(self._timeout_val)
         timeout_hint = QLabel(tr("Lower = quicker recovery if a model stalls"))
@@ -815,10 +950,10 @@ class SettingsScreen(QWidget):
         self._concurrent_val.setFixedWidth(64)
         self._concurrent_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._concurrent_slider.valueChanged.connect(lambda v: self._concurrent_val.setText(str(v)))
-        self._concurrent_slider.sliderReleased.connect(lambda: self._save_value("ai_max_concurrent", self._concurrent_slider.value()))
+        self._persist_slider("ai_max_concurrent", self._concurrent_slider)
         conc_h.addWidget(self._concurrent_slider)
         conc_h.addWidget(self._concurrent_val)
-        conc_hint = QLabel(tr("1 = quieter · 2 = recommended · 4+ = aggressive"))
+        conc_hint = QLabel(tr("1 = quieter · 3 = recommended · 5+ = aggressive"))
         conc_hint.setObjectName("Muted")
         conc_hint.setStyleSheet(self._helper_style())
         conc_h.addWidget(conc_hint)
@@ -852,7 +987,7 @@ class SettingsScreen(QWidget):
         s_lay.addLayout(_panel_title(tr("Safeguards"), tr("safe cleanup behavior")))
         self._register_styled_panel(safe_panel)
 
-        self._cb_confirm_risky = QCheckBox(tr("Enable"))
+        self._cb_confirm_risky = TacticalCheckBox(tr("Enable"))
         self._style_checkbox(self._cb_confirm_risky)
         self._cb_confirm_risky.setChecked(True)
         self._cb_confirm_risky.toggled.connect(lambda checked: self._save_value("confirm_risky_cleanup", checked))
@@ -862,7 +997,7 @@ class SettingsScreen(QWidget):
             self._cb_confirm_risky,
         ))
 
-        self._cb_cross_volumes = QCheckBox(tr("Enable"))
+        self._cb_cross_volumes = TacticalCheckBox(tr("Enable"))
         self._style_checkbox(self._cb_cross_volumes)
         self._cb_cross_volumes.toggled.connect(
             lambda checked: self._save_value("scan_cross_volumes", checked))
@@ -873,24 +1008,6 @@ class SettingsScreen(QWidget):
             self._cb_cross_volumes,
         ))
 
-        # Close behavior — what the window's close button does while a scan,
-        # cleanup or AI job is still running.
-        self._close_behavior_combo = TacticalComboBox()
-        self._close_behavior_combo.addItem(tr("Ask me each time"), "ask")
-        self._close_behavior_combo.addItem(tr("Keep running in background"), "background")
-        self._close_behavior_combo.addItem(tr("Quit and stop the work"), "quit")
-        self._close_behavior_combo.setFixedWidth(220)
-        self._apply_combo_style(self._close_behavior_combo)
-        self._close_behavior_combo.currentIndexChanged.connect(
-            lambda _: self._save_value(
-                "close_behavior", self._close_behavior_combo.currentData()))
-        s_lay.addLayout(_setting_row(
-            tr("When closing while busy"),
-            tr("If a task is still running when you close the window, Vigil can "
-               "ask, keep working in the system tray, or stop and quit."),
-            self._close_behavior_combo,
-        ))
-
         lay.addWidget(safe_panel)
 
         # File Handling
@@ -899,47 +1016,19 @@ class SettingsScreen(QWidget):
         fh_lay.addLayout(_panel_title(tr("File Handling"), tr("cleanup method")))
         self._register_styled_panel(fh_panel)
 
-        method_w = QWidget()
-        method_l = QVBoxLayout(method_w)
-        method_l.setContentsMargins(0, 0, 0, 0)
-        method_l.setSpacing(10)
-
-        recycle_row = QWidget()
-        recycle_l = QVBoxLayout(recycle_row)
-        recycle_l.setContentsMargins(0, 0, 0, 0)
-        recycle_l.setSpacing(2)
-        self._rb_recycle = QRadioButton(tr("Move files to Recycle Bin"))
-        self._style_radio(self._rb_recycle)
-        self._rb_recycle.toggled.connect(lambda checked: checked and self._save_value("perm_delete_enabled", False))
-        recycle_l.addWidget(self._rb_recycle)
-        recycle_hint = QLabel(tr("Recommended. Files can be restored later."))
-        recycle_hint.setObjectName("Muted")
-        recycle_hint.setStyleSheet(self._helper_style())
-        recycle_hint.setWordWrap(True)
-        recycle_l.addWidget(recycle_hint)
-        method_l.addWidget(recycle_row)
-
-        permanent_row = QWidget()
-        permanent_l = QVBoxLayout(permanent_row)
-        permanent_l.setContentsMargins(0, 0, 0, 0)
-        permanent_l.setSpacing(3)
-        self._rb_permanent = QRadioButton(tr("Permanently delete files"))
-        self._style_radio(self._rb_permanent)
-        self._rb_permanent.setEnabled(False)
-        permanent_l.addWidget(self._rb_permanent)
-        warn_lbl = QLabel(
-            tr("Not available yet. Cleanup currently uses the Recycle Bin only.")
-        )
-        warn_lbl.setObjectName("Muted")
-        warn_lbl.setStyleSheet(self._warning_helper_style())
-        warn_lbl.setWordWrap(True)
-        permanent_l.addWidget(warn_lbl)
-        method_l.addWidget(permanent_row)
-
+        # One method, so this states a fact rather than offering a choice. The
+        # panel used to show two radio buttons where the second was permanently
+        # disabled under "Not available yet" — a control that could never be
+        # used, on the one screen where the user is deciding how much to trust
+        # cleanup.
+        method_lbl = QLabel(tr("Files are moved to the Recycle Bin and can be restored."))
+        method_lbl.setWordWrap(True)
+        method_lbl.setMaximumWidth(360)
         fh_lay.addLayout(_setting_row(
             tr("Cleanup method"),
-            tr("Choose how removed files should be handled."),
-            method_w,
+            tr("Vigil never deletes permanently. Emptying the Recycle Bin is "
+               "always your own, separate decision."),
+            method_lbl,
         ))
 
         lay.addWidget(fh_panel)
@@ -976,23 +1065,47 @@ class SettingsScreen(QWidget):
 
         lay.addWidget(build_panel)
 
-        # Paths panel
-        paths_panel = Panel(alt=True)
-        p_lay = paths_panel.with_layout(vertical=True, margins=(14, 12, 14, 12), spacing=10)
-        p_lay.addLayout(_panel_title(tr("Paths"), tr("where Vigil lives on this machine")))
-        self._register_styled_panel(paths_panel)
+        # Storage panel — every row is a directory that really exists, read from
+        # the module that owns it. The previous version listed four hardcoded
+        # strings, two of which ("reports", "cache\\hashes.db") no code has ever
+        # created, and omitted the session store — the only one big enough to
+        # matter. Each row opens in Explorer, because a path a user cannot find
+        # is not much better than no path at all.
+        store_panel = Panel(alt=True)
+        p_lay = store_panel.with_layout(vertical=True, margins=(14, 12, 14, 12), spacing=10)
+        p_lay.addLayout(_panel_title(tr("Storage"), tr("where Vigil keeps its data")))
+        self._register_styled_panel(store_panel)
 
-        for k, v in [
-            (tr("Configuration"), "%APPDATA%\\Vigil\\config.json"),
-            (tr("Logs"), "%LOCALAPPDATA%\\Vigil\\logs\\"),
-            (tr("Reports"), "%LOCALAPPDATA%\\Vigil\\reports\\"),
-            (tr("Scan cache"), "%LOCALAPPDATA%\\Vigil\\cache\\hashes.db"),
-        ]:
-            val_lbl = QLabel(v)
-            val_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
-            p_lay.addLayout(_setting_row(k, "", val_lbl))
+        from app.state.session_store import sessions_dir
+        from app.services.ai_explainer import cache_dir
 
-        lay.addWidget(paths_panel)
+        config_path = self._store.config_path if self._store else ""
+        self._storage_targets = {
+            "config": str(config_path),
+            "sessions": str(sessions_dir()),
+            "ai_cache": str(cache_dir()),
+        }
+        self._storage_size_lbls: dict[str, QLabel] = {}
+
+        p_lay.addLayout(self._storage_row(
+            "config", tr("Settings"),
+            tr("Your preferences. Deleting it resets Vigil to defaults."),
+        ))
+        p_lay.addWidget(_divider())
+        p_lay.addLayout(self._storage_row(
+            "sessions", tr("Scan sessions"),
+            tr("Saved scan results, so a run can be reopened later."),
+            show_size=True,
+        ))
+        p_lay.addWidget(_divider())
+        p_lay.addLayout(self._storage_row(
+            "ai_cache", tr("AI explanation cache"),
+            tr("Answers already generated, reused instead of asking the model "
+               "again. Safe to clear — it only costs a re-run."),
+            show_size=True, clearable=True,
+        ))
+
+        lay.addWidget(store_panel)
 
         # Diagnostics
         diag_panel = Panel(alt=True)
@@ -1005,17 +1118,9 @@ class SettingsScreen(QWidget):
         br_lay.setContentsMargins(0, 0, 0, 0)
         br_lay.setSpacing(8)
 
-        # Use the theme's objectName button classes (#Ghost / #Danger) rather
-        # than an inline stylesheet. Inline styles are baked once at build time
-        # and were never refreshed on a theme switch, so in the paper theme the
-        # "Open logs folder" text stayed light-on-light and vanished. The
-        # objectName classes live in the app QSS and follow the theme.
-        btn_logs = QPushButton(tr("Open logs folder"))
-        btn_logs.setObjectName("Ghost")
-        btn_logs.setCursor(Qt.PointingHandCursor)
-        btn_logs.clicked.connect(self._open_logs_folder)
-        br_lay.addWidget(btn_logs)
-
+        # "Open logs folder" used to live here. Vigil configures logging to the
+        # console only, so the button created an empty directory and opened it —
+        # a support action that could never produce anything to send.
         btn_reset = QPushButton(tr("Reset all settings"))
         btn_reset.setObjectName("Danger")
         btn_reset.setCursor(Qt.PointingHandCursor)
@@ -1034,11 +1139,137 @@ class SettingsScreen(QWidget):
         disc.setWordWrap(True)
         dg_lay.addWidget(disc)
 
+        credit = QLabel(tr("Built with Qt for Python (PySide6), used under the LGPL v3."))
+        credit.setObjectName("Dim")
+        credit.setStyleSheet(self._helper_style())
+        credit.setWordWrap(True)
+        dg_lay.addWidget(credit)
+
         lay.addWidget(diag_panel)
         lay.addStretch()
 
         scroll.setWidget(content)
         return scroll
+
+    # ─── About: storage rows ───────────────────────────────
+
+    def _storage_row(self, key: str, label: str, desc: str,
+                     show_size: bool = False, clearable: bool = False) -> QVBoxLayout:
+        """One storage location: real path, optional size, and a way to open it."""
+        path = self._storage_targets.get(key, "")
+
+        holder = QWidget()
+        col = QVBoxLayout(holder)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(4)
+
+        path_lbl = QLabel(path or tr("unavailable"))
+        path_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
+        path_lbl.setWordWrap(True)
+        path_lbl.setMaximumWidth(380)
+        path_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        col.addWidget(path_lbl)
+
+        if show_size:
+            size_lbl = QLabel(tr("measuring…"))
+            size_lbl.setObjectName("Muted")
+            size_lbl.setStyleSheet(self._helper_style())
+            col.addWidget(size_lbl)
+            self._storage_size_lbls[key] = size_lbl
+
+        btns = QHBoxLayout()
+        btns.setContentsMargins(0, 0, 0, 0)
+        btns.setSpacing(8)
+        btn_open = QPushButton(tr("Open folder"))
+        btn_open.setObjectName("Ghost")
+        btn_open.setCursor(Qt.PointingHandCursor)
+        btn_open.setStyleSheet(self._utility_btn_qss())
+        btn_open.clicked.connect(lambda _=False, p=path: self._reveal_path(p))
+        btn_open.setEnabled(bool(path))
+        btns.addWidget(btn_open)
+
+        if clearable:
+            btn_clear = QPushButton(tr("Clear cache"))
+            btn_clear.setObjectName("Ghost")
+            btn_clear.setCursor(Qt.PointingHandCursor)
+            btn_clear.setStyleSheet(self._utility_btn_qss())
+            btn_clear.clicked.connect(self._clear_ai_cache)
+            btns.addWidget(btn_clear)
+
+        btns.addStretch()
+        col.addLayout(btns)
+
+        return _setting_row(label, desc, holder)
+
+    def _reveal_path(self, path: str):
+        """Show *path* in the system file manager.
+
+        A file is revealed with its parent open and the file selected; a folder
+        is opened directly. A path that does not exist yet (no scan run, no AI
+        answer cached) opens the nearest parent that does, rather than failing
+        silently on a button the user just pressed.
+        """
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        if not path:
+            return
+        target = Path(path)
+        try:
+            if sys.platform == "win32" and target.is_file():
+                subprocess.Popen(["explorer", "/select,", str(target)])
+                return
+            # Nearest ancestor that exists: the sessions folder is absent until
+            # the first scan, and the AI cache until the first explanation.
+            folder = target if target.is_dir() else target.parent
+            while not folder.is_dir() and folder != folder.parent:
+                folder = folder.parent
+            opener = {"win32": "explorer", "darwin": "open"}.get(sys.platform, "xdg-open")
+            subprocess.Popen([opener, str(folder)])
+        except OSError:
+            pass
+
+    def _clear_ai_cache(self):
+        from app.services.ai_explainer import clear_cache
+        removed = clear_cache()
+        lbl = self._storage_size_lbls.get("ai_cache")
+        if lbl:
+            lbl.setText(tr("cleared · {n} file(s) removed", n=removed))
+        QTimer.singleShot(600, self._refresh_storage_sizes)
+
+    def _refresh_storage_sizes(self):
+        """Measure the session store and AI cache off the UI thread.
+
+        The session store has reached multiple gigabytes in practice, so walking
+        it must never be done on the UI thread.
+        """
+        targets = {k: self._storage_targets.get(k, "")
+                   for k in self._storage_size_lbls}
+        if not targets:
+            return
+
+        def _worker():
+            sizes: dict[str, tuple[int, int]] = {}
+            for key, path in targets.items():
+                sizes[key] = _dir_size(path)
+            try:
+                self._storage_result.result.emit(sizes)
+            except RuntimeError:
+                pass  # screen torn down while measuring
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_storage_sizes(self, sizes: dict):
+        for key, (total, count) in sizes.items():
+            lbl = self._storage_size_lbls.get(key)
+            if not lbl:
+                continue
+            if count == 0:
+                lbl.setText(tr("empty"))
+            else:
+                lbl.setText(tr("{size} · {n} file(s)",
+                               size=_human_size(total), n=count))
 
     # ─── Actions ────────────────────────────────────────────
 
@@ -1058,71 +1289,181 @@ class SettingsScreen(QWidget):
         self._conn_status_lbl.setStyleSheet(f"font-family: 'JetBrains Mono'; font-size: 11px; color: {get_palette().get('review', '#d8b46a')};")
 
         endpoint = self._endpoint_input.text().strip()
+        # Local means "a server on this machine", not "Ollama's port". Only
+        # Local scans the other well-known ports; a Server address the user
+        # typed is used exactly as given.
+        discover = self._rb_ep_local.isChecked()
 
         def _worker():
-            from app.services.ollama_client import test_connection, list_models
-            ok, msg = test_connection(endpoint)
-            models = list_models(endpoint) if ok else []
-            self._conn_result.result.emit(ok, msg, models)
+            from app.services.ollama_client import probe
+            r = probe(endpoint, discover=discover)
+            self._conn_result.result.emit(
+                r["status"], r["backend"], r["models"], r["runtime_path"],
+                r["endpoint"])
 
         t = threading.Thread(target=_worker, daemon=True)
         t.start()
 
-    def _on_connection_result(self, ok: bool, msg: str, models: list):
+    def _connection_message(self, status: str, backend: str, count: int) -> tuple:
+        """(text, colour-key, hint) for a probe status.
+
+        Every branch says what is true and what to do next. The old code had one
+        failure message for every cause — "offline · no Ollama, LM Studio or
+        llama.cpp server found" — which on a machine that has Ollama installed
+        and merely stopped reads as "you don't have one".
+        """
+        from app.services import ollama_client as oc
+
+        if status == oc.STATUS_ONLINE:
+            label = oc.BACKEND_LABELS.get(backend, backend)
+            return (tr("connected · {backend} · {n} model(s)", backend=label, n=count),
+                    "safe", "")
+        if status == oc.STATUS_NO_MODELS:
+            label = oc.BACKEND_LABELS.get(backend, backend)
+            # The next step differs per runtime: Ollama downloads models from a
+            # terminal, LM Studio loads one that is already on disk from its own
+            # window. Telling an LM Studio user to run "ollama pull" is noise.
+            hint = (tr("LM Studio is running but no model is loaded. "
+                       "Load one in its Developer tab, then press Test.")
+                    if backend == oc.BACKEND_OPENAI else
+                    tr("The server is running but has no models yet. "
+                       "Pull one, for example:  ollama pull llama3.2:3b"))
+            return (tr("connected · {backend} · no models installed", backend=label),
+                    "review", hint)
+        if status == oc.STATUS_NOT_RUNNING:
+            return (tr("Ollama is installed but not running"), "review",
+                    tr("Start it and Vigil will connect on its own — "
+                       "nothing here needs to be filled in."))
+        if status == oc.STATUS_NOT_INSTALLED:
+            return (tr("no local AI runtime on this machine"), "risk",
+                    tr("Install Ollama or LM Studio, then press Test. "
+                       "Vigil only ever talks to your own machine or LAN."))
+        if status == oc.STATUS_UNREACHABLE:
+            return (tr("no answer from that address"), "risk",
+                    tr("Check the machine is on, the runtime is running, and "
+                       "that it listens on the network rather than only on "
+                       "its own loopback."))
+        if status == oc.STATUS_REFUSED:
+            return (tr("refused · not a local address"), "risk",
+                    tr("Vigil only connects to this machine or your LAN, "
+                       "never to a cloud API."))
+        return (tr("unknown state"), "risk", "")
+
+    def _on_connection_result(self, status: str, backend: str, models: list,
+                              runtime_path: str, endpoint: str = ""):
+        from app.services import ollama_client as oc
+
+        # Discovery may have found the runtime on a different port than the one
+        # configured. Adopt it, or AI calls would keep going to the dead address.
+        if endpoint and endpoint != self._endpoint_input.text().strip():
+            self._endpoint_input.setText(endpoint)
+            self._save_value("ai_endpoint", endpoint)
+
         self._btn_test.setEnabled(True)
         self._btn_refresh_models.setEnabled(True)
-        if ok:
-            self._conn_status_lbl.setText(msg)
-            self._conn_status_lbl.setStyleSheet(f"font-family: 'JetBrains Mono'; font-size: 11px; color: {get_palette().get('safe', '#7cc596')};")
-            # Populate model dropdown with real models. Block signals so the
-            # repopulation does not fire _save_model and overwrite the stored
-            # model with a transient selection (the cause of "model switching").
+
+        text, colour_key, hint = self._connection_message(
+            status, backend, len(models))
+        palette = get_palette()
+        self._conn_status_lbl.setText(text)
+        self._conn_status_lbl.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 11px; "
+            f"color: {palette.get(colour_key, '#d68a78')};"
+        )
+        self._conn_hint_lbl.setText(hint)
+        self._conn_hint_lbl.setVisible(bool(hint))
+
+        # Offer to start a runtime that is installed but stopped — the one case
+        # where the user's next action is a single click rather than a decision.
+        self._ollama_exe = runtime_path
+        self._btn_start_ollama.setVisible(status == oc.STATUS_NOT_RUNNING
+                                          and bool(runtime_path))
+
+        if models:
+            # Block signals so repopulating does not fire _save_model and
+            # overwrite the stored model with a transient selection.
             self._model_combo.blockSignals(True)
             try:
                 self._model_combo.clear()
                 for m in models:
-                    self._model_combo.addItem(m['name'], m.get("size", 0))
-                # Select stored model if available
-                if self._store:
-                    saved_model = self._store.get("ai_model", "")
-                    for i in range(self._model_combo.count()):
-                        if saved_model == self._model_combo.itemText(i):
-                            self._model_combo.setCurrentIndex(i)
-                            break
+                    self._model_combo.addItem(m["name"], m.get("size", 0))
+                saved_model = self._store.get("ai_model", "") if self._store else ""
+                matched = False
+                for i in range(self._model_combo.count()):
+                    if saved_model == self._model_combo.itemText(i):
+                        self._model_combo.setCurrentIndex(i)
+                        matched = True
+                        break
             finally:
                 self._model_combo.blockSignals(False)
+            self._model_combo.setEnabled(True)
+
+            # The saved model is not on the server. Falling through here left
+            # the dropdown showing the first installed model while ai_model kept
+            # pointing at the missing one, so Settings looked healthy and every
+            # explanation failed with "model not found". Adopt what is actually
+            # there, persist it, and say which one changed.
+            if not matched and self._store:
+                adopted = self._model_combo.itemText(0)
+                self._save_value("ai_model", adopted)
+                if saved_model:
+                    hint = tr("\"{old}\" is no longer on this server — switched to "
+                              "\"{new}\".", old=saved_model, new=adopted)
+                    self._conn_hint_lbl.setText(hint)
+                    self._conn_hint_lbl.setVisible(True)
         else:
-            self._conn_status_lbl.setText(msg)
-            self._conn_status_lbl.setStyleSheet(f"font-family: 'JetBrains Mono'; font-size: 11px; color: {get_palette().get('risk', '#d68a78')};")
-            self._populate_fallback_models()
+            self._show_no_models()
+
         self._update_library_summary()
         self._update_model_meta()
+
+    def _start_ollama(self):
+        """Launch the installed runtime, then re-test once it has come up."""
+        import subprocess
+        exe = getattr(self, "_ollama_exe", "")
+        if not exe:
+            return
+        self._btn_start_ollama.setEnabled(False)
+        self._conn_status_lbl.setText(tr("starting Ollama…"))
+        try:
+            # "ollama serve" is the daemon; detached so closing Vigil does not
+            # take the model server down with it.
+            subprocess.Popen(
+                [exe, "serve"],
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            self._btn_start_ollama.setEnabled(True)
+            self._conn_status_lbl.setText(tr("could not start Ollama"))
+            return
+        # It needs a moment to bind the port; re-test without blocking the UI.
+        QTimer.singleShot(1500, self._retest_after_start)
+
+    def _retest_after_start(self):
+        self._btn_start_ollama.setEnabled(True)
+        self._test_connection()
 
     def _auto_test_connection(self):
         """Silently test the saved endpoint in background on startup."""
         endpoint = self._endpoint_input.text().strip()
-        if not endpoint:
+        discover = self._rb_ep_local.isChecked()
+        if not endpoint and not discover:
             return
+        endpoint = endpoint or LOCAL_ENDPOINT
 
         def _worker():
-            from app.services.ollama_client import test_connection, list_models
-            ok, msg = test_connection(endpoint)
-            models = list_models(endpoint) if ok else []
+            from app.services.ollama_client import probe
+            r = probe(endpoint, discover=discover)
             try:
-                self._conn_result.result.emit(ok, msg, models)
+                self._conn_result.result.emit(
+                    r["status"], r["backend"], r["models"], r["runtime_path"],
+                    r["endpoint"])
             except RuntimeError:
                 pass  # Qt object already destroyed during shutdown
 
         t = threading.Thread(target=_worker, daemon=True)
         t.start()
-
-    def _open_logs_folder(self):
-        import os, subprocess
-        local = os.environ.get("LOCALAPPDATA", "")
-        logs_dir = os.path.join(local, "Vigil", "logs") if local else ""
-        if logs_dir:
-            os.makedirs(logs_dir, exist_ok=True)
-            subprocess.Popen(["explorer", logs_dir])
 
     def _reset_all_settings(self):
         if self._store:
@@ -1192,30 +1533,30 @@ class SettingsScreen(QWidget):
         if hasattr(self, "_btn_apply_lang"):
             self._restyle_apply_button()
 
-    def _populate_fallback_models(self):
-        """Fill model combo with fallback options, including saved model."""
-        from app.services.ollama_client import fallback_models
+    def _show_no_models(self):
+        """Empty the model list, keeping only a model the user really chose.
+
+        Vigil used to fill this with a placeholder catalogue — "llama3.2:3b",
+        "qwen2.5:7b", "mistral", "gemma2:2b" — whenever the server was offline.
+        They looked exactly like real entries, so picking one was the obvious
+        move, and every explanation then failed because that model had never
+        been pulled. A list is now either the models you actually have, or
+        empty with the reason spelled out beside it.
+        """
         saved_model = self._store.get("ai_model", "") if self._store else ""
-        # Block signals: filling the fallback list must not fire _save_model and
-        # overwrite the stored model with a fallback entry.
+        # Block signals: repopulating must not fire _save_model and overwrite
+        # the stored model.
         self._model_combo.blockSignals(True)
         try:
             self._model_combo.clear()
-            added = set()
             if saved_model:
-                self._model_combo.addItem(saved_model, 0)
-                added.add(saved_model)
-            for name in fallback_models():
-                if name not in added:
-                    self._model_combo.addItem(name, 0)
-                    added.add(name)
-            # Re-select saved model
-            if saved_model:
-                for i in range(self._model_combo.count()):
-                    if self._model_combo.itemText(i) == saved_model:
-                        self._model_combo.setCurrentIndex(i)
-                        break
+                # Keep it visible so the setting is not silently lost while the
+                # server is down; it is a real past choice, not a suggestion.
+                # None: unreachable server means unknown size, not "no size".
+                self._model_combo.addItem(saved_model, None)
+                self._model_combo.setCurrentIndex(0)
         finally:
             self._model_combo.blockSignals(False)
+        self._model_combo.setEnabled(self._model_combo.count() > 0)
         self._update_library_summary()
         self._update_model_meta()

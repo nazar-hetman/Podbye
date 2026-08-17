@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox,
 )
 
+from app.widgets.controls import TacticalCheckBox
 from app.i18n import tr
 
 # Outcome constants — what the user chose.
@@ -101,7 +102,7 @@ class CloseRunningDialog(QDialog):
         root.addWidget(body)
 
         # ── "Don't ask again" ─────────────────────────────────────
-        self._dont_ask_cb = QCheckBox(tr("Don't ask again — remember my choice"))
+        self._dont_ask_cb = TacticalCheckBox(tr("Don't ask again — remember my choice"))
         self._dont_ask_cb.setStyleSheet("font-size: 12px;")
         root.addWidget(self._dont_ask_cb)
         root.addSpacing(14)
@@ -117,8 +118,9 @@ class CloseRunningDialog(QDialog):
 
         btn_row.addStretch()
 
-        # Info hint next to the primary action.
-        info = QLabel("ⓘ")
+        # Info hint next to the primary action. Not U+24D8 (ⓘ): neither
+        # bundled font has it and it drew as a .notdef box.
+        info = QLabel("?")
         info.setToolTip(tr(_BACKGROUND_HELP))
         info.setCursor(Qt.WhatsThisCursor)
         info.setStyleSheet("font-size: 14px; padding: 0 4px;")

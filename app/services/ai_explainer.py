@@ -67,6 +67,34 @@ def _cache_dir() -> Path:
     return Path.home() / ".cache" / "vigil" / "ai"
 
 
+def cache_dir() -> Path:
+    """Public accessor for the AI explanation cache location.
+
+    Settings/About reports and clears this directory, and must read the real
+    path rather than restate a literal.
+    """
+    return _cache_dir()
+
+
+def clear_cache() -> int:
+    """Delete every cached explanation. Returns the number of files removed.
+
+    Cached answers are keyed by finding + model + tone + length + language, so
+    they are pure derived data: clearing costs a re-run, never a loss.
+    """
+    removed = 0
+    directory = _cache_dir()
+    if not directory.is_dir():
+        return 0
+    for entry in directory.glob("*.json"):
+        try:
+            entry.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed
+
+
 def _cache_key_hash(finding: Finding, model: str, tone: str, length: str, language: str = "English") -> str:
     raw = f"{finding.cache_key}|{model}|{tone}|{length}|{language}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]

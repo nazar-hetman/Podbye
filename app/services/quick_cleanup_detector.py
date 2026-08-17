@@ -303,6 +303,15 @@ _SCANNERS = [
 ]
 
 
+# The category names shown in Quick Cleanup. They reach tr() through
+# cat.label, so a static scan over tr("...") calls cannot see them — listed
+# here so the translation-coverage test can.
+CATEGORY_LABELS = (
+    "Temp Files", "Windows Temp", "Browser Cache",
+    "Thumbnail Cache", "Windows Update Cache",
+)
+
+
 class QuickCleanupDetector(QThread):
     """Scans all quick cleanup categories in a background thread.
 

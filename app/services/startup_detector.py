@@ -88,6 +88,7 @@ _KNOWN_PUBLISHERS = {
     "microsoft": "Microsoft",
     "onedrive": "Microsoft",
     "teams": "Microsoft",
+    "msteams": "Microsoft",
     "office": "Microsoft",
     "windows": "Microsoft",
     "nvidia": "NVIDIA",
@@ -116,51 +117,116 @@ _KNOWN_PUBLISHERS = {
 }
 
 
-def _contains_any(text: str, keywords: set[str]) -> bool:
-    return any(k in text for k in keywords)
+# Words inside a run of letters/digits: an all-caps prefix, a Capitalised word,
+# or a lowercase/numeric run. Splits "MSTeams" into MS + Teams.
+_CAMEL_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|[a-z0-9]+")
+_SEPARATORS = re.compile(r"[^A-Za-z0-9]+")
+
+
+def _search_space(*parts: str) -> str:
+    """Space-padded word forms of *parts*, for whole-word keyword matching.
+
+    Keywords used to be matched as bare substrings, which quietly mis-filed
+    anything whose name merely contained one:
+
+        'steam'  in 'msteams'   -> Teams became a Game launcher
+        'box'    in 'xbox'      -> Xbox became Background sync
+        'riot'   in 'patriot'   -> an RGB utility became a Game launcher
+        'origin' in 'originals' -> anything under an originals/ folder likewise
+
+    The role decides the risk tier, the boot-impact badge, the recommendation
+    and the text handed to the AI, so a wrong role is wrong four times over.
+
+    Each run of letters/digits contributes its CamelCase sub-words and every
+    join of *consecutive* sub-words, so concatenated registry names keep
+    matching: "GoogleUpdate" yields 'update', and "OneDriveSetup" yields
+    'onedrive' as well as 'one', 'drive' and 'setup'. Only sequences that
+    really are adjacent in the name are produced, so 'patriot' still yields
+    nothing that answers to 'riot'.
+    """
+    # The sub-words stay in their original order in one sequence, so phrase
+    # keys like "google drive" can match across adjacent words. The run-on
+    # joins are appended after it rather than inline, where they would break
+    # that adjacency apart.
+    sequence: list[str] = []
+    joins: list[str] = []
+    for part in parts:
+        for run in _SEPARATORS.split(part or ""):
+            if not run:
+                continue
+            pieces = [p.lower() for p in _CAMEL_WORD.findall(run)] or [run.lower()]
+            sequence.extend(pieces)
+            for start in range(len(pieces)):
+                for end in range(start + 2, len(pieces) + 1):
+                    joins.append("".join(pieces[start:end]))
+    return f" {' '.join(sequence + joins)} "
+
+
+def _as_key(keyword: str) -> str:
+    """Normalise a keyword the same way, so '7-zip' matches '7-Zip'."""
+    return " ".join(w for w in _SEPARATORS.split(keyword.lower()) if w)
+
+
+def _contains_any(space: str, keywords) -> bool:
+    """True when any keyword appears as a whole word (or phrase) in *space*.
+
+    *space* must come from _search_space(); passing a raw string silently
+    reverts to the substring behaviour this replaced.
+    """
+    return any(f" {_as_key(k)} " in space for k in keywords)
+
+
+_SYNC_KEYS = ("onedrive", "dropbox", "google drive", "googledrive", "icloud",
+              "box sync", "boxdrive", "mega", "megasync", "nextcloud", "sync")
+_GAME_KEYS = ("steam", "epic", "epic games", "origin", "uplay", "ubisoft",
+              "gog", "battlenet", "battle net", "riot", "xbox")
+_CHAT_KEYS = ("discord", "teams", "msteams", "slack", "skype", "telegram",
+              "whatsapp", "zoom")
+_CREATIVE_KEYS = ("figma", "grammarly", "adobe", "creative cloud")
+_UPDATE_KEYS = ("update", "updater", "upgrade", "acrobat", "office")
+_LIGHT_KEYS = ("ditto", "greenshot", "sharex", "rainmeter", "notion",
+               "obsidian", "spotify", "vlc", "7-zip")
 
 
 def _infer_role(name: str, path: str, publisher: str, product_name: str) -> str:
-    lo_name = name.lower()
-    lo_path = (path or "").lower()
-    lo_pub = (publisher or "").lower()
-    lo_product = (product_name or "").lower()
-    haystack = " ".join(part for part in (lo_name, lo_path, lo_pub, lo_product) if part)
+    space = _search_space(name, path or "", publisher or "", product_name or "")
 
-    if _contains_any(haystack, _PROTECTED_NAME_KEYS | _SECURITY_NAME_KEYS):
+    if _contains_any(space, _PROTECTED_NAME_KEYS | _SECURITY_NAME_KEYS):
         return "Security component"
-    if _contains_any(haystack, _HARDWARE_NAME_KEYS):
+    if _contains_any(space, _HARDWARE_NAME_KEYS):
         return "Hardware utility"
-    if _contains_any(haystack, _REMOTE_ACCESS_KEYS):
+    if _contains_any(space, _REMOTE_ACCESS_KEYS):
         return "Remote access service"
-    if any(k in haystack for k in ("onedrive", "dropbox", "google drive", "icloud", "box", "mega", "nextcloud", "sync")):
-        return "Background sync"
-    if any(k in haystack for k in ("steam", "epic", "origin", "uplay", "gog", "battlenet", "riot", "xbox")):
-        return "Game launcher"
-    if any(k in haystack for k in ("discord", "teams", "slack", "skype", "telegram", "whatsapp", "zoom")):
+    # Chat before games: "Xbox" used to be caught by the sync branch's bare
+    # "box", and the one entry that really is a game launcher never reached
+    # the game branch at all.
+    if _contains_any(space, _CHAT_KEYS):
         return "Communication app"
-    if any(k in haystack for k in ("figma", "grammarly", "adobe", "creative cloud")):
+    if _contains_any(space, _SYNC_KEYS):
+        return "Background sync"
+    if _contains_any(space, _GAME_KEYS):
+        return "Game launcher"
+    if _contains_any(space, _CREATIVE_KEYS):
         return "Creative helper"
-    if any(k in haystack for k in ("update", "updater", "upgrade", "acrobat", "office")):
+    if _contains_any(space, _UPDATE_KEYS):
         return "Update helper"
-    if any(k in haystack for k in ("ditto", "greenshot", "sharex", "rainmeter", "notion", "obsidian", "spotify", "vlc", "7-zip")):
+    if _contains_any(space, _LIGHT_KEYS):
         return "Light utility"
     return "Startup item"
 
 
 def _classify_risk(name: str, path: str, publisher: str, product_name: str) -> tuple[str, str]:
     """Return (recommendation_level, reason) for a startup entry."""
-    lo_name = name.lower()
     lo_path = (path or "").lower()
-    lo_pub = (publisher or "").lower()
+    name_space = _search_space(name)
     role = _infer_role(name, path, publisher, product_name)
 
     # Protected: Microsoft system component running from system dirs
-    is_msft = "microsoft" in lo_pub or "microsoft" in lo_name
+    is_msft = _contains_any(_search_space(publisher or "", name), ("microsoft",))
     is_syspath = "system32" in lo_path or "syswow64" in lo_path
     if is_msft and is_syspath:
         return "Protected", "Windows system component — leave managed by Windows"
-    if _contains_any(lo_name, _PROTECTED_NAME_KEYS):
+    if _contains_any(name_space, _PROTECTED_NAME_KEYS):
         return "Protected", "Windows security component — leaving it enabled is recommended"
     if role == "Security component":
         return "Protected", "Security component — disabling can reduce active protection"
@@ -182,11 +248,11 @@ def _classify_risk(name: str, path: str, publisher: str, product_name: str) -> t
         "Game launcher",
         "Creative helper",
         "Update helper",
-    } or _contains_any(lo_name, _OPTIONAL_NAME_KEYS) or _contains_any(lo_name, _REMOTE_ACCESS_KEYS):
+    } or _contains_any(name_space, _OPTIONAL_NAME_KEYS) or _contains_any(name_space, _REMOTE_ACCESS_KEYS):
         return "Optional", "Useful convenience startup — can be opened manually when needed"
 
     # Safe
-    if _contains_any(lo_name, _SAFE_NAME_KEYS) or role == "Light utility":
+    if _contains_any(name_space, _SAFE_NAME_KEYS) or role == "Light utility":
         return "Safe", "Convenience utility — disabling only affects automatic launch"
 
     # Default: review (unknown)
@@ -277,12 +343,29 @@ def _read_version_value(exe_path: str, field_name: str) -> str:
     return ""
 
 
+def _target_mtime(exe_path: str) -> float:
+    """mtime of the startup target, 0.0 when it cannot be read.
+
+    Cheap — one stat per entry, on a list that is tens of items long — and it
+    is the only staleness signal available for a startup entry, which has no
+    size or last-used data of its own.
+    """
+    if not exe_path:
+        return 0.0
+    try:
+        return os.stat(exe_path).st_mtime
+    except OSError:
+        return 0.0
+
+
 def _infer_publisher(exe_path: str) -> str:
-    lo = (exe_path or "").lower().replace("/", "\\")
-    stem = Path(exe_path).stem.lower() if exe_path else ""
-    haystack = f"{lo} {stem}"
+    # Whole-word, for the same reason as _search_space: several of these tokens
+    # are three or four letters ("amd", "gog", "epic"), and as substrings they
+    # claimed a publisher for any path that happened to contain them —
+    # "Diamond" answering to "amd", "Epicor" to "epic".
+    space = _search_space(exe_path or "", Path(exe_path).stem if exe_path else "")
     for token, publisher in _KNOWN_PUBLISHERS.items():
-        if token in haystack:
+        if _contains_any(space, (token,)):
             return publisher
     return ""
 
@@ -492,6 +575,7 @@ def _read_run_key(hive, key_path: str, source: str, source_label: str,
                         impact=impact,
                         recommendation=_build_recommendation(risk, impact),
                         explanation_fallback=_build_explanation(name, publisher or "Unknown publisher", impact, risk),
+                        target_modified=_target_mtime(exe),
                     ))
                 except OSError:
                     break
@@ -536,6 +620,7 @@ def _read_startup_folder(folder: str, source: str, source_label: str) -> list[St
                     impact=impact,
                     recommendation=_build_recommendation(risk, impact),
                     explanation_fallback=_build_explanation(name, publisher or "Unknown publisher", impact, risk),
+                    target_modified=_target_mtime(exe),
                 ))
     except OSError:
         pass
@@ -699,6 +784,7 @@ def _read_scheduled_tasks() -> list[StartupEntry]:
             recommendation=_build_recommendation(risk, impact),
             explanation_fallback=_build_explanation(
                 name, publisher or "Unknown publisher", impact, risk),
+            target_modified=_target_mtime(exe),
         ))
     return entries
 

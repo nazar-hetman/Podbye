@@ -14,9 +14,8 @@ from PySide6.QtCore import (
     Qt, QSize, QEvent,
 )
 from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import QStyledItemDelegate, QApplication, QStyle
+from PySide6.QtWidgets import QStyledItemDelegate, QStyle
 
-from app.models.finding import _format_size
 from app.models.risk import normalize_risk, risk_sort_index, risk_colors as _risk_colors
 from app.themes.theme_manager import get_palette
 from app.i18n import tr, get_language
@@ -56,15 +55,23 @@ def _headers():
 
 # ── Lookup tables ──────────────────────────────────────────────────
 
+# U+25D4, not U+25D0: neither bundled font carries the half-filled circle, so
+# every in-progress row showed a .notdef box where its status should be.
 _AI_SYMBOL = {
     "ready": "✓", "done": "✓",
-    "pending": "◐", "analyzing": "◐",
+    "pending": "◔", "analyzing": "◔",
     "failed": "✗", "error": "✗",
     "none": "—", "disabled": "⊘",
 }
 
 # Risk ordering comes from the canonical app.models.risk.risk_sort_index —
 # this module used to keep its own reversed copy.
+
+# "Safe cleanup" sort: least deliberation first. Deliberately NOT
+# risk_sort_index, which orders by severity for the Status sort — here
+# Protected must sink to the bottom because it cannot be cleaned at all,
+# whereas Status puts it first as the thing most worth knowing about.
+_SAFE_CLEANUP_ORDER = {"Safe": 0, "Optional": 1, "Review": 2, "Protected": 3}
 
 # Risk badge colours come from the canonical app.models.risk.risk_colors
 # (imported above as _risk_colors) so every screen agrees.
@@ -83,17 +90,26 @@ class FindingsTableModel(QAbstractTableModel):
         super().__init__(parent)
         self._entities: list = []
         self._checked: set = set()
-        self._row_by_path: dict[str, int] = {}
+        self._row_by_path: dict[str, list[int]] = {}
 
     # ── Data management ───────────────────────────────────────────
 
     def _reindex(self):
-        """Rebuild the path → row lookup used by update_entity_by_path."""
-        self._row_by_path = {
-            e.get("path", ""): row
-            for row, e in enumerate(self._entities)
-            if e.get("path", "")
-        }
+        """Rebuild the path → rows lookup used by update_entity_by_path.
+
+        A list per path, not a single row: one folder legitimately produces
+        several entities when its loose files are split by content type, so
+        C:/Users/<u>/Downloads appears as an archive_group, a document_folder,
+        a media_collection and a mixed_folder — four rows, one path. Keyed
+        one-to-one, three of those were unreachable, and a streamed AI
+        explanation landed on whichever happened to win the dict.
+        """
+        index: dict[str, list[int]] = {}
+        for row, e in enumerate(self._entities):
+            path = e.get("path", "")
+            if path:
+                index.setdefault(path, []).append(row)
+        self._row_by_path = index
 
     def set_entities(self, entities: list):
         self.beginResetModel()
@@ -106,6 +122,18 @@ class FindingsTableModel(QAbstractTableModel):
         if 0 <= source_row < len(self._entities):
             return self._entities[source_row]
         return None
+
+    def row_for_entity(self, entity: dict) -> int:
+        """Source row holding *this exact* entity object, or -1.
+
+        Identity, not path: several rows legitimately share one path (a
+        folder's loose files split by content type), so a path lookup would
+        return the wrong sibling.
+        """
+        for row, e in enumerate(self._entities):
+            if e is entity:
+                return row
+        return -1
 
     def remove_cleaned(self, succeeded_paths) -> int:
         """Drop or shrink rows whose files were just recycled.
@@ -155,23 +183,34 @@ class FindingsTableModel(QAbstractTableModel):
         return removed
 
     def update_entity_by_path(self, entity: dict) -> int:
-        """Replace the row for *entity*'s path in place. Returns its row, or -1.
+        """Replace the row(s) for *entity*'s path in place. Returns the first
+        row updated, or -1.
 
         Indexed rather than scanned: AI explanations stream back one signal per
         entity, so a linear search here made refreshing a full result set
         quadratic in the number of entities.
+
+        Where one path has several rows (see _reindex), only the row of the
+        same entity_type is replaced — the content-split siblings describe
+        different things and must not inherit each other's explanation.
         """
         path = entity.get("path", "")
         if not path:
             return -1
-        row = self._row_by_path.get(path, -1)
-        if row < 0 or row >= len(self._entities):
-            return -1
-        self._entities[row] = entity
-        top_left = self.index(row, 0)
-        bottom_right = self.index(row, self.columnCount() - 1)
-        self.dataChanged.emit(top_left, bottom_right, [])
-        return row
+        rows = self._row_by_path.get(path) or []
+        etype = entity.get("entity_type")
+        first = -1
+        for row in rows:
+            if row >= len(self._entities):
+                continue
+            if len(rows) > 1 and self._entities[row].get("entity_type") != etype:
+                continue
+            self._entities[row] = entity
+            self.dataChanged.emit(self.index(row, 0),
+                                  self.index(row, self.columnCount() - 1), [])
+            if first < 0:
+                first = row
+        return first
 
     # ── QAbstractTableModel overrides ──────────────────────────────
 
@@ -309,15 +348,27 @@ class FindingsTableModel(QAbstractTableModel):
 # ── Filter + sort proxy ───────────────────────────────────────────
 
 class FindingsFilterProxy(QSortFilterProxyModel):
-    """Combines search-text filter, risk-level filter, and custom sort."""
+    """Combines search-text filter, risk-level filter, and custom sort.
+
+    SORT_KEYS is the single source of truth for what the Findings sort
+    dropdown offers — the screen builds the combo from it. It used to keep its
+    own separate list, and the two drifted: the dropdown advertised "Safe
+    cleanup" and "Last accessed", neither of which lessThan() had a branch
+    for, so both silently fell through to size-descending and behaved exactly
+    like "Largest first". Meanwhile the "oldest" sort that *was* implemented
+    was never offered. Every key here must have a branch in lessThan(), and
+    test_sorting_semantics proves it.
+    """
 
     SORT_KEYS: list[tuple[str, str]] = [
-        ("largest",     "Largest first"),
-        ("smallest",    "Smallest first"),
-        ("risk",        "Status"),
-        ("ai_analyzed", "AI analyzed"),
-        ("reclaimable", "Reclaimable"),
-        ("oldest",      "Oldest first"),
+        ("largest",      "Largest first"),
+        ("smallest",     "Smallest first"),
+        ("reclaimable",  "Reclaimable size"),
+        ("safe_cleanup", "Safe cleanup first"),
+        ("risk",         "Status"),
+        ("last_access",  "Least recently used"),
+        ("oldest",       "Oldest first"),
+        ("ai_analyzed",  "AI analyzed"),
     ]
 
     def __init__(self, parent=None):
@@ -337,6 +388,11 @@ class FindingsFilterProxy(QSortFilterProxyModel):
     def set_sort_key(self, key: str):
         self._sort_key = key
         self.invalidate()
+
+    def sort_key(self) -> str:
+        """The active sort. The Findings list needs it to rank app groups by
+        their aggregate rather than by their largest single member."""
+        return self._sort_key
 
     # ── QSortFilterProxyModel overrides ───────────────────────────
 
@@ -394,12 +450,36 @@ class FindingsFilterProxy(QSortFilterProxyModel):
                 return la > ra
             return le.get("size_bytes", 0) > re.get("size_bytes", 0)
         if k == "reclaimable":
+            lr = le.get("reclaimable_bytes", 0)
+            rr = re.get("reclaimable_bytes", 0)
+            if lr != rr:
+                return lr > rr
+            return le.get("size_bytes", 0) > re.get("size_bytes", 0)
+        if k == "safe_cleanup":
+            # What can go with the least thought, biggest win first. Safe and
+            # Optional lead; Review follows; Protected sinks to the bottom
+            # because it cannot be cleaned at all.
+            lo = _SAFE_CLEANUP_ORDER.get(normalize_risk(le.get("risk")), 9)
+            ro = _SAFE_CLEANUP_ORDER.get(normalize_risk(re.get("risk")), 9)
+            if lo != ro:
+                return lo < ro
             return le.get("reclaimable_bytes", 0) > re.get("reclaimable_bytes", 0)
+        if k == "last_access":
+            # Least recently *used* first — the strongest "you don't need
+            # this" signal there is. Items with no atime sort last rather
+            # than pretending to be ancient.
+            la = le.get("accessed") or float("inf")
+            ra = re.get("accessed") or float("inf")
+            if la != ra:
+                return la < ra
+            return le.get("size_bytes", 0) > re.get("size_bytes", 0)
         if k == "oldest":
-            # Sort by age descending (smallest mtime = oldest)
-            lm = le.get("modified", float("inf")) if le.get("modified") else float("inf")
-            rm = re.get("modified", float("inf")) if re.get("modified") else float("inf")
-            return lm < rm
+            # Oldest *modified* first (smallest mtime = oldest).
+            lm = le.get("modified") or float("inf")
+            rm = re.get("modified") or float("inf")
+            if lm != rm:
+                return lm < rm
+            return le.get("size_bytes", 0) > re.get("size_bytes", 0)
         return le.get("size_bytes", 0) > re.get("size_bytes", 0)
 
 
@@ -460,11 +540,13 @@ class FindingsDelegate(QStyledItemDelegate):
             painter.setPen(QColor(border_hex))
             painter.drawText(badge, Qt.AlignCenter, risk.upper())
 
-            # Cloud-sync indicator — small ☁ in top-right of badge
+            # Cloud-sync indicator in the top-right of the badge. U+21E7, not
+            # U+2601: no font on the box has the cloud, not even Segoe UI
+            # Symbol, so it drew as a .notdef box on every synced row.
             if entity.get("cloud_sync_provider"):
                 painter.setFont(QFont("Segoe UI", 7))
                 painter.setPen(QColor(get_palette().get("optional", "#6e93a8")))
-                painter.drawText(badge.adjusted(0, 0, -2, 0), Qt.AlignRight | Qt.AlignTop, "☁")
+                painter.drawText(badge.adjusted(0, 0, -2, 0), Qt.AlignRight | Qt.AlignTop, "⇧")
 
             painter.restore()
             return

@@ -1,9 +1,8 @@
 """Reusable panel and card widgets for Vigil."""
 
 from PySide6.QtWidgets import (
-    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QSizePolicy, QWidget,
+    QFrame, QVBoxLayout, QHBoxLayout, QLabel,
 )
-from PySide6.QtCore import Qt
 
 _TACTICAL_FAMILY = "'Silkscreen', 'JetBrains Mono'"
 

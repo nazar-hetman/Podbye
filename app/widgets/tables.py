@@ -5,8 +5,8 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
     QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem,
 )
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QBrush
+from PySide6.QtCore import Qt, QEvent, QObject, QTimer
+from PySide6.QtGui import QBrush, QFontMetrics
 
 
 class RowHighlightDelegate(QStyledItemDelegate):
@@ -55,11 +55,95 @@ class RowHighlightDelegate(QStyledItemDelegate):
         style.drawControl(QStyle.CE_ItemViewItem, opt, painter, widget)
 
 
-def create_table(columns: list[tuple[str, int]], row_count: int = 0) -> QTableWidget:
+# QHeaderView::section reserves horizontal padding before any text is drawn.
+# The app stylesheet uses 10px a side; History's local sheet uses 6px. Taking
+# the larger keeps one number honest for both.
+_HEADER_PADDING = 22
+
+
+def fit_header_widths(table: QTableWidget) -> None:
+    """Grow any non-stretch column too narrow for its own heading.
+
+    Every column width in this app was chosen against the English heading, and
+    a translated one is routinely wider — "ITEMS" becomes "ЕЛЕМЕНТИ" or
+    "ÉLÉMENTS". Qt elides the overflow without a word, so the Analyze table's
+    ITEMS column read "ЛЕМЕНТ" and History's read the same.
+
+    Call this after the table is polished, not while building it: before the
+    stylesheet is applied the header still carries the application default
+    font, and the measurement comes out too small.
+    """
+    # QTableWidget exposes horizontalHeader(); QTreeWidget calls it header().
+    getter = getattr(table, "horizontalHeader", None) or getattr(table, "header")
+    hdr = getter()
+    fm = QFontMetrics(hdr.font())
+    for col in range(hdr.count()):
+        if hdr.sectionResizeMode(col) == QHeaderView.Stretch:
+            continue
+        text = _header_text(table, col)
+        if not text.strip():
+            continue
+        need = fm.horizontalAdvance(text) + _HEADER_PADDING
+        if need > table.columnWidth(col):
+            table.setColumnWidth(col, need)
+
+
+def _header_text(table, col: int) -> str:
+    """The heading in *col*, for either a table or a tree."""
+    if hasattr(table, "horizontalHeaderItem"):
+        item = table.horizontalHeaderItem(col)
+        return item.text() if item is not None else ""
+    item = table.headerItem()
+    return item.text(col) if item is not None else ""
+
+
+class _HeaderFitFilter(QObject):
+    """Re-run fit_header_widths whenever the table is shown or restyled."""
+
+    def __init__(self, table: QTableWidget):
+        super().__init__(table)
+        self._table = table
+        table.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        # getattr, not self._table: the filter is parented to the table, so
+        # during interpreter teardown Python can clear this object's __dict__
+        # while Qt still delivers a queued event through the C++ side. Reading
+        # the attribute directly raised AttributeError out of the override.
+        table = getattr(self, "_table", None)
+        if table is not None and obj is table and event.type() in (
+                QEvent.Show, QEvent.StyleChange, QEvent.FontChange):
+            # Deferred, not inline. Resizing a column repaints, and a repaint
+            # dispatched from inside an event filter re-enters widgets that
+            # are still being constructed — it reached a half-built
+            # TacticalComboBox and raised out of a C++ virtual.
+            QTimer.singleShot(0, self._fit)
+        return False
+
+    def _fit(self):
+        table = getattr(self, "_table", None)
+        if table is None:
+            return
+        try:
+            fit_header_widths(table)
+        except RuntimeError:
+            pass        # the C++ table went away on a screen rebuild
+
+
+def install_header_fit(table: QTableWidget) -> None:
+    """Keep every heading in *table* readable, in any language."""
+    table._header_fit_filter = _HeaderFitFilter(table)
+
+
+def create_table(columns: list[tuple[str, int]], row_count: int = 0,
+                 align_right: list[int] | None = None) -> QTableWidget:
     """Create a styled QTableWidget.
 
     columns: list of (header_text, width_or_stretch).
              Use -1 for stretch, positive int for fixed width.
+    align_right: column indices whose cells are right-aligned — the heading is
+             aligned to match. Qt centres header text by default, which leaves
+             every heading adrift of the values it names.
     """
     table = QTableWidget()
     table.setColumnCount(len(columns))
@@ -80,7 +164,19 @@ def create_table(columns: list[tuple[str, int]], row_count: int = 0) -> QTableWi
             table.setColumnWidth(i, width)
 
     table.setHorizontalHeaderLabels(headers)
+    align_header(table, align_right)
+    install_header_fit(table)
     return table
+
+
+def align_header(table: QTableWidget, align_right: list[int] | None = None) -> None:
+    """Align each heading the way that column's cells are aligned."""
+    right = set(align_right or [])
+    for col in range(table.columnCount()):
+        item = table.horizontalHeaderItem(col)
+        if item is not None:
+            item.setTextAlignment(
+                (Qt.AlignRight if col in right else Qt.AlignLeft) | Qt.AlignVCenter)
 
 
 def set_row(table: QTableWidget, row: int, values: list[str], align_right: list[int] = None):

@@ -42,6 +42,21 @@ _FULL_CHECKPOINT_S = 120.0
 _LARGE_SCAN_THRESHOLD = 50_000
 
 
+
+def _restore_reason(ed: dict):
+    """The stored explanation, with its template if the session carries one.
+
+    Sessions written before reasons kept their template have only the rendered
+    English; those come back as a plain string and stay English, which is
+    honest — there is nothing left to translate from.
+    """
+    from app.models.reasons import Reason
+    key = (ed.get("reason_key") or "").strip()
+    if key:
+        return Reason(key, **(ed.get("reason_args") or {}))
+    return ed.get("risk_reason", "")
+
+
 class ScanState(QObject):
     """Global scan state shared across screens."""
 
@@ -870,7 +885,7 @@ class ScanState(QObject):
             # AI explains only entities that are visible in Findings (post-processed list)
             explainable = [e for e in entities if getattr(e, 'risk', '') not in ('Protected', 'Safe')]
 
-            _log.debug(f"[ai] [LIFECYCLE] Step 5: Preparing AI queue...")
+            _log.debug("[ai] [LIFECYCLE] Step 5: Preparing AI queue...")
             _log.debug(f"[ai]    Total entities: {len(entities)}")
             _log.debug(f"[ai]    Explainable entities: {len(explainable)}")
             
@@ -893,8 +908,10 @@ class ScanState(QObject):
             
             if ai_will_start:
                 model = self._settings_store.get("ai_model", "unknown")
-                lang = self._settings_store.get("ai_language", "english")
-                _log.debug(f"[ai] [LIFECYCLE] Step 6a: Starting AI classification")
+                # "ai_language" is a field on Finding/SmartEntity, never a
+                # settings key — this line logged the default on every run.
+                lang = self._settings_store.get("ai_explanation_language", "English")
+                _log.debug("[ai] [LIFECYCLE] Step 6a: Starting AI classification")
                 _log.debug(f"[ai]    Queue size: {len(explainable)} entities")
                 _log.debug(f"[ai]    Model: {model}")
                 _log.debug(f"[ai]    Language: {lang}")
@@ -1135,12 +1152,17 @@ class ScanState(QObject):
                     # made every restored finding look ~55 years old and broke
                     # age-based sorting for the whole restored session.
                     modified=fd.get("modified", 0.0) or 0.0,
-                    accessed=0.0,
+                    accessed=fd.get("accessed", 0.0) or 0.0,
                     parent=fd.get("path", "").rsplit("/", 1)[0].rsplit("\\", 1)[0],
                     category=fd.get("category", ""),
                     risk=fd.get("risk", ""),
                     source_rule=fd.get("source_rule", ""),
                     risk_reason=fd.get("risk_reason", ""),
+                    # Sub-type label; the "What it is:" half of `why` reads it,
+                    # so dropping it made every restored finding fall back to
+                    # its coarse category.
+                    semantic_label=fd.get("semantic_label", ""),
+                    owner_confidence=fd.get("owner_confidence", "none"),
                     size=fd.get("size", ""),
                     age=fd.get("age", ""),
                     ai_status=fd.get("ai_status", "none"),
@@ -1174,21 +1196,41 @@ class ScanState(QObject):
                     file_count=ed.get("file_count", 0),
                     folder_count=ed.get("folder_count", 0),
                     risk=ed.get("risk", ""),
-                    risk_reason=ed.get("risk_reason", ""),
+                    # Rebuild the Reason so a reopened scan can still be
+                    # re-rendered in the language the reader picks now,
+                    # not the one that was active when it was saved.
+                    risk_reason=_restore_reason(ed),
                     confidence=ed.get("confidence", "heuristic"),
+                    confidence_score=ed.get("confidence_score", 0.0),
                     ai_status=ed.get("ai_status", "none"),
                     ai_explanation=ed.get("ai_explanation", ""),
                     ai_error=ed.get("ai_error", ""),
                     ai_model=ed.get("ai_model", ""),
                     ai_language=ed.get("ai_language", ""),
+                    ai_updated_at=ed.get("ai_updated_at", 0.0),
                     summary=ed.get("summary", ""),
                     cloud_sync_provider=ed.get("cloud_sync_provider", ""),
                     modified=ed.get("modified", 0.0),
+                    accessed=ed.get("accessed", 0.0),
                     age_boost=ed.get("age_boost", 0.0),
                     dup_reclaimable=ed.get("dup_reclaimable", 0),
                     children_sample=ed.get("children_sample", []),
                     duplicate_locations=ed.get("duplicate_locations", []),
                     removable_duplicate_paths=ed.get("removable_duplicate_paths", []),
+                    # Everything below is persisted but used to be dropped on
+                    # restore, so reopening a session from History silently
+                    # weakened it: no uninstall command or publisher on app
+                    # rows, Downloads/Desktop entities falling back to their
+                    # type category, loose-file groups losing the files they
+                    # actually stand for, and Vigil's own data losing the
+                    # is_self flag that protects it from cleanup.
+                    removable_file_paths=ed.get("removable_file_paths", []),
+                    install_date=ed.get("install_date", ""),
+                    app_version=ed.get("app_version", ""),
+                    app_publisher=ed.get("app_publisher", ""),
+                    uninstall_string=ed.get("uninstall_string", ""),
+                    is_self=ed.get("is_self", False),
+                    origin=ed.get("origin", ""),
                 )
                 self._entities.append(e)
             except (KeyError, TypeError):

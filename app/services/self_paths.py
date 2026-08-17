@@ -48,11 +48,30 @@ def install_dir() -> str:
 
 
 def data_dir() -> str:
-    """%APPDATA%/Vigil — config.json, sessions, logs, AI cache."""
+    """%APPDATA%/Vigil — config.json and the scan session store."""
     appdata = os.environ.get("APPDATA", "")
     if appdata:
         return _norm(Path(appdata) / "Vigil")
     return _norm(Path.home() / ".config" / "vigil")
+
+
+def cache_root() -> str:
+    """%LOCALAPPDATA%/Vigil — the AI explanation cache.
+
+    Vigil's data is split across both AppData roots, and only the Roaming one
+    used to be protected. The AI cache therefore classified like anybody else's
+    cache folder — Safe, recycle-able — so a full C:/ scan could offer to delete
+    Vigil's own data while Vigil was running.
+    """
+    local = os.environ.get("LOCALAPPDATA", "")
+    if local:
+        return _norm(Path(local) / "Vigil")
+    return _norm(Path.home() / ".cache" / "vigil")
+
+
+def data_dirs() -> tuple[str, ...]:
+    """Every root that holds Vigil's data rather than its program files."""
+    return tuple(d for d in (data_dir(), cache_root()) if d)
 
 
 def self_roots() -> tuple[str, ...]:
@@ -62,7 +81,7 @@ def self_roots() -> tuple[str, ...]:
     a frozen build resolves sys.executable only once it is actually frozen.
     """
     roots: list[str] = []
-    for candidate in (install_dir(), data_dir()):
+    for candidate in (install_dir(), data_dir(), cache_root()):
         if candidate and _is_usable_root(candidate) and candidate not in roots:
             roots.append(candidate)
     return tuple(roots)

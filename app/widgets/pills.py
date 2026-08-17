@@ -1,7 +1,7 @@
 """Badge/pill/chip widgets for Vigil."""
 
-from PySide6.QtWidgets import QLabel, QPushButton, QApplication
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QLabel, QPushButton
+from PySide6.QtCore import QSize, Qt, Signal
 
 
 # Semantic color key → palette key
@@ -33,6 +33,12 @@ _VARIANT_BG_MAP = {
 class Badge(QLabel):
     """A small colored badge/pill label, theme-aware."""
 
+    # Horizontal padding + border from refresh_style() below. QLabel's own
+    # sizeHint does not reliably account for stylesheet padding, so a badge
+    # could be laid out narrower than its own text: "5 SUR 5 SÉLECTIONNÉS"
+    # wanted 142px and was given 136.
+    _CHROME = 9 * 2 + 2
+
     def __init__(self, text: str, variant: str = "info", parent=None):
         super().__init__(text.upper(), parent)
         self._variant = variant
@@ -41,6 +47,18 @@ class Badge(QLabel):
         self.setFixedHeight(22)
         self.setAlignment(Qt.AlignCenter)
         self.refresh_style()
+
+    def _text_width(self) -> int:
+        return self.fontMetrics().horizontalAdvance(self.text()) + self._CHROME
+
+    def sizeHint(self):
+        hint = super().sizeHint()
+        return QSize(max(hint.width(), self._text_width()), 22)
+
+    def minimumSizeHint(self):
+        """A badge is a label, not a container — it must never be squeezed
+        below the word it exists to show."""
+        return QSize(self._text_width(), 22)
 
     def refresh_style(self):
         fg = self._resolve_fg()

@@ -7,24 +7,48 @@ from dataclasses import dataclass
 from datetime import datetime
 
 
+# Largest unit first. Decimals are per-unit: the big units carry a decimal
+# because one whole GB of difference is invisible at TB scale, while a decimal
+# on KB/MB is noise. TB and PB are not hypothetical here — the all-time
+# "analyzed" counter on Home is cumulative across every scan ever run, and it
+# read "13542.8 GB" on a machine that had been scanning drives for a month.
+_SIZE_UNITS = (
+    ("PB", 1024 ** 5, 1),
+    ("TB", 1024 ** 4, 1),
+    ("GB", 1024 ** 3, 1),
+    ("MB", 1024 ** 2, 0),
+    ("KB", 1024,      0),
+    ("B",  1,         0),
+)
+
+
 def _format_size(size_bytes: int) -> str:
-    # The unit is chosen by threshold but the value is rounded for display, and
-    # the two can disagree at a boundary: 1073741823 B is just under 1 GB, so it
-    # takes the MB branch, where .0f rounds 1023.999… up to a nonsensical
-    # "1024 MB". Promote to the next unit when rounding carries.
-    if size_bytes >= 1024 ** 3:
-        return f"{size_bytes / (1024 ** 3):.1f} GB"
-    if size_bytes >= 1024 ** 2:
-        mb = size_bytes / (1024 ** 2)
-        if round(mb) >= 1024:
-            return f"{size_bytes / (1024 ** 3):.1f} GB"
-        return f"{mb:.0f} MB"
-    if size_bytes >= 1024:
-        kb = size_bytes / 1024
-        if round(kb) >= 1024:
-            return f"{size_bytes / (1024 ** 2):.0f} MB"
-        return f"{kb:.0f} KB"
+    """Byte count in the largest unit that keeps the number readable."""
+    for i, (unit, scale, places) in enumerate(_SIZE_UNITS):
+        if size_bytes < scale:
+            continue
+        value = size_bytes / scale
+        # The unit is chosen by threshold but the value is rounded for display,
+        # and the two can disagree at a boundary: 1073741823 B is just under
+        # 1 GB, so it picks MB, where .0f rounds 1023.999… up to a nonsensical
+        # "1024 MB". Promote to the next unit when rounding carries.
+        if i > 0 and round(value, places) >= 1024:
+            unit, scale, places = _SIZE_UNITS[i - 1]
+            value = size_bytes / scale
+        return f"{value:.{places}f} {unit}"
     return f"{size_bytes} B"
+
+
+def split_size(size_bytes: int) -> tuple[str, str]:
+    """``_format_size`` split into (number, unit) for the big two-label readouts.
+
+    Screens that style the number and the unit differently used to pick the
+    unit with their own if-ladder, which is how they stayed capped at GB after
+    the shared formatter learned about TB. Splitting the formatted string keeps
+    them honest by construction.
+    """
+    number, _, unit = _format_size(size_bytes).partition(" ")
+    return number, unit
 
 
 def _format_age(mtime: float) -> str:
@@ -625,7 +649,7 @@ class Finding:
         if not self.size:
             if self.cloud_only:
                 from app.i18n import tr
-                self.size = tr("☁ cloud-only")
+                self.size = tr("⇧ cloud-only")
             else:
                 self.size = _format_size(self.size_bytes)
         if not self.age:
@@ -665,6 +689,10 @@ class Finding:
             # back to the same default and "Oldest first" silently did nothing.
             # Session restore also needs it to rebuild ages after a resume.
             "modified":        self.modified,
+            # Raw atime alongside the formatted `last_access`. The session
+            # store persists this one and re-derives the string, so a restored
+            # finding keeps its real last-access date instead of showing "—".
+            "accessed":        self.accessed,
             "risk":            self.risk,
             "source_rule":     self.source_rule,
             "risk_reason":     self.risk_reason,

@@ -8,8 +8,6 @@ has to make *reading* them cheap, not just stop writing them.
 
 Findings renders entities, so the raw array is skipped at the byte level.
 """
-import json
-
 import pytest
 
 from app.config.settings_store import SettingsStore

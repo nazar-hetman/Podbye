@@ -74,8 +74,11 @@ def test_cleanup_rule_text_is_translated(code):
 def test_destructive_action_strings_are_translated(code):
     """A user must never be asked to confirm deleting files in a language they
     did not choose. These are the strings attached to irreversible actions."""
+    # "Permanently delete files" is deliberately absent: Vigil has no permanent
+    # delete. The Settings radio that offered one was disabled under "Not
+    # available yet", and has been removed rather than left as dead UI.
     critical = [
-        "Move to Recycle Bin", "Permanently delete files", "Confirm Cleanup",
+        "Move to Recycle Bin", "Confirm Cleanup",
         "Deep Uninstall", "Safe", "Optional", "Review", "Protected",
         "Cancel", "Recycle Bin",
     ]
@@ -165,6 +168,11 @@ def _dynamic_tables() -> dict[str, set[str]]:
     import app.screens.settings as st
     from app.models.findings_table_model import _HEADER_KEYS
     from app.models.smart_entity import ENTITY_TYPES, _CATEGORY_BY_TYPE
+    from app.services.cleanup_result_classifier import CALLER_LABELS
+    from app.screens.history import CLEANUP_TARGET_LABELS
+    from app.screens.findings_dashboard import INSPECTOR_FIELD_LABELS
+    from app.services.entity_detector import detector_reason_templates
+    import app.services.quick_cleanup_detector as qc_detector
 
     tables = {
         "quick cleanup explanations":
@@ -172,6 +180,14 @@ def _dynamic_tables() -> dict[str, set[str]]:
         "categories": set(_CATEGORY_BY_TYPE.values()),
         "entity type labels": set(ENTITY_TYPES.values()),
         "table headers": {k for k in _HEADER_KEYS if k},
+        # Reached as tr(variable): the flow name inside a cleanup explanation,
+        # and the "what lives here" name for a cleaned path in History.
+        "cleanup caller labels": set(CALLER_LABELS),
+        "history cleanup targets": {label for _token, label in CLEANUP_TARGET_LABELS},
+        "inspector field labels": set(INSPECTOR_FIELD_LABELS),
+        # The evidence line under every finding.
+        "detector reasons": detector_reason_templates(),
+        "quick cleanup categories": set(qc_detector.CATEGORY_LABELS),
     }
     subs = getattr(st, "_SECTION_SUBS", None)
     if isinstance(subs, dict):

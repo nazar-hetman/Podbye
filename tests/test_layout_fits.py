@@ -28,6 +28,8 @@ _QWIDGETSIZE_MAX = 16777215  # Qt's 'no maximum' sentinel
 def app(qapp):
     from app.fonts import load_fonts
     load_fonts()
+    # NB this stylesheet stays applied for the rest of the session — restoring
+    # it re-polishes every widget alive in other test files and faults.
     qapp.setStyleSheet(build_qss("forest"))
     original = get_language()
     yield qapp

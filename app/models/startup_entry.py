@@ -1,7 +1,7 @@
 """StartupEntry model — a single Windows startup program entry."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -29,6 +29,12 @@ class StartupEntry:
     recommendation: str = ""
     explanation_fallback: str = ""
 
+    # mtime of the resolved executable, 0.0 when it could not be read (missing
+    # target, permission denied). A startup entry pointing at a binary nothing
+    # has touched in years is usually a leftover from an app the user stopped
+    # using — the one triage signal the list had no way to show.
+    target_modified: float = 0.0
+
     # AI fields
     ai_status: str = "none"     # "none" | "pending" | "analyzing" | "ready" | "failed" | "disabled"
     ai_explanation: str = ""
@@ -46,3 +52,14 @@ class StartupEntry:
     @property
     def publisher_display(self) -> str:
         return self.publisher or "Unknown publisher"
+
+    @property
+    def target_modified_display(self) -> str:
+        """``YYYY-MM-DD`` for the target binary, or "" when unknown."""
+        if not self.target_modified:
+            return ""
+        from datetime import datetime
+        try:
+            return datetime.fromtimestamp(self.target_modified).strftime("%Y-%m-%d")
+        except (OSError, ValueError, OverflowError):
+            return ""

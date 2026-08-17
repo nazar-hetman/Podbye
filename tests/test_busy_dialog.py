@@ -6,7 +6,6 @@ naive implementation shows a dialog that nothing is left to close.
 """
 import time
 
-from app.widgets import progress
 from app.widgets.progress import BusyDialog, run_busy
 
 

@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass, field
 
 from app.models.finding import _format_size, _format_age
+from app.models.reasons import reason_args_of, reason_key_of
 
 
 # ── Entity types ──────────────────────────────────────────────────
@@ -482,7 +483,12 @@ class SmartEntity:
             "age": self.age,
             "risk": self.risk,
             "source_rule": f"entity detection: {self.entity_type}",
-            "risk_reason": self.risk_reason,
+            "risk_reason": str(self.risk_reason),
+            # The template and its values, so the explanation can be
+            # rendered in whatever language the reader picks later —
+            # including after reopening a scan saved months ago.
+            "reason_key": reason_key_of(self.risk_reason),
+            "reason_args": reason_args_of(self.risk_reason),
             "why": self._why_text(type_label),
             "recommendation": self._recommendation(),
             "ai_status": self.ai_status,

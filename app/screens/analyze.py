@@ -527,7 +527,8 @@ class AnalyzeScreen(QWidget):
         pf_lay.addWidget(self._pf_hdr_sep)
 
         columns = [(tr("CATEGORY"), -1), (tr("ITEMS"), 70), (tr("SIZE"), 90)]
-        self._pf_table = create_table(columns, 0)
+        # align_right mirrors the set_row() call that fills this table.
+        self._pf_table = create_table(columns, 0, align_right=[1, 2])
         self._pf_table.setMinimumHeight(200)
         # Make rows clickable with unified row hover/selection.
         self._pf_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -625,6 +626,7 @@ class AnalyzeScreen(QWidget):
         # Clear existing
         for chip in self._chips:
             self._chips_container.removeWidget(chip)
+            chip.hide()   # removeWidget alone leaves it drawn
             chip.deleteLater()
         self._chips.clear()
 
@@ -1190,6 +1192,19 @@ class AnalyzeScreen(QWidget):
         by_reason = Counter(e.get("reason", "Unknown") for e in entries)
         for reason, count in by_reason.items():
             self._feed.add_line(f"[protected] {reason}: {count} item(s) skipped")
+
+    # ── Background work ───────────────────────────────────────────
+
+    def busy_reason(self) -> str:
+        if self._worker is not None and self._worker.isRunning():
+            return tr("a scan is running")
+        if self._dup_worker is not None and self._dup_worker.isRunning():
+            return tr("duplicates are being compared")
+        return ""
+
+    def stop_background_work(self, timeout_ms: int = 3000) -> bool:
+        from app.services.workers import stop_all
+        return stop_all(self._worker, self._dup_worker, timeout_ms=timeout_ms)
 
     def _on_worker_log(self, line):
         """Log from ScanWorker — show in feed."""

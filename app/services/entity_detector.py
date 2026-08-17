@@ -40,6 +40,7 @@ from typing import Optional
 
 from app.models.finding import Finding, _format_size
 from app.models.smart_entity import SmartEntity, ENTITY_TYPES
+from app.models.reasons import Reason
 from app.models.risk import RISK_PROTECTED
 from app.services.app_presence import presence as _app_presence, PRESENT as _PRESENT
 
@@ -125,11 +126,17 @@ def _get_installed_programs(force_refresh: bool = False) -> dict[str, dict]:
                                     except OSError:
                                         pass
 
-                                    # Uninstaller command — prefer the quiet
-                                    # variant so Deep Uninstall can run the app's
-                                    # own uninstaller instead of recycling files.
+                                    # Uninstaller command. The INTERACTIVE
+                                    # string is preferred, not the quiet one:
+                                    # Deep Uninstall is a button the user
+                                    # pressed, so they should see the app's own
+                                    # wizard and know what happened. A /SILENT
+                                    # run that fails — and most need elevation
+                                    # — is indistinguishable from one that
+                                    # worked, which is exactly how this
+                                    # appeared to "exist but not work".
                                     uninstall = ""
-                                    for _val in ("QuietUninstallString", "UninstallString"):
+                                    for _val in ("UninstallString", "QuietUninstallString"):
                                         try:
                                             uninstall, _ = winreg.QueryValueEx(subkey, _val)
                                             if uninstall:
@@ -1054,6 +1061,53 @@ def _nvidia_update_cache_root(norm_path: str) -> str:
     return ""
 
 
+# Folder names that mean "game saves" ONLY with corroborating context. "saves"
+# is an ordinary English word: it labelled C:/Users/Nazar/LLaMA-Factory/saves —
+# 417 MB of LLM fine-tuning checkpoints — as Game Save Data, and that single
+# folder was 95% of the entire Saves category by size, so the category was both
+# wrong and misleadingly weighted.
+#
+# "saved games" is deliberately absent: it is a Windows known folder, so the
+# name IS the evidence.
+_GENERIC_SAVE_DIR_NAMES = {"saves", "save", "sav", "userdata"}
+
+# Path segments that corroborate a game. Any one of them is enough.
+_GAME_CONTEXT_SEGMENTS = {
+    "my games", "mygames", "saved games", "savedgames",
+    "steamapps", "steam", "epic games", "epicgames", "gog galaxy", "gog",
+    "origin games", "ea games", "ubisoft", "battle.net", "riot games",
+    "rockstar games", "bethesda", "square enix", "xboxgames",
+}
+
+
+def _is_contextless_save_dir(lower_name: str, norm_path: str) -> bool:
+    """True for a generically-named save folder with nothing to back it up."""
+    if lower_name not in _GENERIC_SAVE_DIR_NAMES:
+        return False
+    segments = set(norm_path.rstrip("/").split("/"))
+    return not (segments & _GAME_CONTEXT_SEGMENTS)
+
+
+# Types that must never outrank "this is an installed program". A folder
+# sitting directly inside an install root IS an application, whatever its
+# contents happen to look like — content classification decides the identity of
+# the whole folder from an extension ratio, and two .vhdx images are 68% of the
+# bytes in C:/Program Files/WSL, so 621 files of DLLs and resources were
+# labelled "Virtual Machine Storage" and filed under Virtual Machines.
+#
+# Deliberately not exhaustive: cache/log/dev types are never install-root
+# children (they sit deeper), and a game installed to Program Files really is
+# a game, so both are left to classify normally.
+_NEVER_OUTRANKS_INSTALL_ROOT = {
+    "installer", "installer_group",
+    "vm_storage", "unknown_folder", "mixed_folder",
+    "media_collection", "photo_collection", "video_collection",
+    "audio_collection", "creative_project",
+    "archive_group", "backup_group", "dataset",
+    "document_folder", "database", "ai_models",
+}
+
+
 def _safety_correct_entity_type(path: str, entity_type: str) -> tuple[str, str]:
     """Apply narrow safety corrections discovered during semantic audits."""
     norm_path = path.replace("\\", "/").lower().rstrip("/")
@@ -1070,7 +1124,7 @@ def _safety_correct_entity_type(path: str, entity_type: str) -> tuple[str, str]:
     # An install root's per-app folder is the installed program itself. Reading
     # its executables as "installers" made Vigil offer to recycle the program
     # directory of Microsoft OneDrive and Ollama.
-    if entity_type in ("installer", "installer_group") \
+    if entity_type in _NEVER_OUTRANKS_INSTALL_ROOT \
             and _is_install_root_child(norm_path):
         return "application", ("Installed application — remove it through its own "
                                "uninstaller, not by deleting the folder")
@@ -1529,16 +1583,16 @@ def _last_chance_folder_classification(
     direct_exts = {c.extension.lower() for c in direct_children if not c.is_dir}
 
     if lname in _BUILD_ARTIFACT_DIR_NAMES:
-        return "build_folder", "Build artifact folder name"
+        return "build_folder", Reason("Build artifact folder name")
 
     if lname in _CACHE_KEYWORDS or lname.endswith("cache"):
-        return "cache_folder", "Cache folder name"
+        return "cache_folder", Reason("Cache folder name")
 
     if lname in {"tmp", "temp", "temporary"} or lname.endswith("tmp"):
-        return "temp_folder", "Temporary folder name"
+        return "temp_folder", Reason("Temporary folder name")
 
     if lname in {"log", "logs"} or any(k in lname for k in ("log", "diag", "trace", "dump", "crash")):
-        return "log_folder", "Log/diagnostic folder name"
+        return "log_folder", Reason("Log/diagnostic folder name")
 
     if lname in _DEV_ASSET_DIR_NAMES:
         return "dev_artifacts", "Development/test asset folder name"
@@ -1549,7 +1603,7 @@ def _last_chance_folder_classification(
         return "dev_artifacts", "Configuration folder"
 
     if path_parts & _APPLICATION_SUPPORT_SEGMENTS:
-        return "application_data", "Application support data path"
+        return "application_data", Reason("Application support data path")
 
     if direct_file_names & _PROJECT_MARKER_FILES:
         return "dev_project", "Development project marker file"
@@ -1824,9 +1878,9 @@ def _pass_self(ctx: "_DetectionContext"):
     """Vigil's own folders, claimed first and marked protected.
 
     Runs before every other pass so nothing else can classify them. Left to the
-    generic passes, %APPDATA%/Vigil/logs reads as a log folder and
-    %APPDATA%/Vigil/cache as a cache folder — Safe, recycle-able — which let
-    Vigil offer to delete the session store holding the results on screen.
+    generic passes, %APPDATA%/Vigil/sessions reads as ordinary app data and
+    %LOCALAPPDATA%/Vigil/cache as a cache folder — Safe, recycle-able — which
+    let Vigil offer to delete the session store holding the results on screen.
 
     The wording lives in the UI, not here: the entity carries is_self and the
     dashboard phrases it in the user's language.
@@ -1843,12 +1897,12 @@ def _pass_self(ctx: "_DetectionContext"):
         if norm in ctx.claimed_paths or norm not in roots:
             continue
         children = ctx.sample(norm)
-        is_data = norm == _norm_self_data_dir()
+        is_data = norm in _norm_self_data_dirs()
         ent = _build_entity(
             ctx, f.path,
             "Vigil (app data)" if is_data else "Vigil",
             "protected_system", children,
-            "Vigil's own data — settings, scan history and logs"
+            "Vigil's own data — settings, scan history and cached AI answers"
             if is_data else "Vigil itself — the app doing the cleaning",
         )
         ent.is_self = True
@@ -1859,9 +1913,9 @@ def _pass_self(ctx: "_DetectionContext"):
         ctx.log(f"[smart]   → protected {found} of Vigil's own folder(s)")
 
 
-def _norm_self_data_dir() -> str:
-    from app.services.self_paths import data_dir
-    return data_dir()
+def _norm_self_data_dirs() -> tuple[str, ...]:
+    from app.services.self_paths import data_dirs
+    return data_dirs()
 
 
 def _pass0_update_caches(ctx: "_DetectionContext"):
@@ -2003,7 +2057,7 @@ def _pass_downloads(ctx: "_DetectionContext"):
                 continue
             ent = _build_entity(
                 ctx, child.path, child.name, "download_item",
-                ctx.sample(c_norm), "Downloaded item — kept whole",
+                ctx.sample(c_norm), Reason("Downloaded item — kept whole"),
             )
             fc = ctx.claim(c_norm)
             ctx.emit_entity(ent, fc)
@@ -2039,6 +2093,10 @@ def _pass1_known_dirs(ctx: "_DetectionContext"):
         if norm_path in ctx.claimed_paths:
             continue
         if lower_name not in _DIR_ENTITY_MAP:
+            continue
+        # "saves" is a folder name, not evidence of a game. Skipping here lets
+        # content classification have its say instead.
+        if _is_contextless_save_dir(lower_name, norm_path):
             continue
 
         etype = _DIR_ENTITY_MAP[lower_name]
@@ -2154,7 +2212,7 @@ def _pass1_known_dirs(ctx: "_DetectionContext"):
 
         ent = _build_entity(ctx, 
             f.path, display, etype, children,
-            corrected_reason or f"Known directory: {f.name}",
+            corrected_reason or Reason("Known directory: {name}", name=f.name),
         )
         ctx.claim(norm_path)
         ctx.emit_entity(ent)
@@ -2310,13 +2368,13 @@ def _pass2b_app_markers(ctx: "_DetectionContext"):
             children = ctx.sample(parent_norm)
             if nvidia_cache_norm:
                 entity_type = "installer_cache"
-                marker_reason = "NVIDIA update/cache staging folder"
+                marker_reason = Reason("NVIDIA update/cache staging folder")
             elif marker_type == "application":
                 entity_type = "portable_app"
-                marker_reason = f"Portable application marker: {f.name}"
+                marker_reason = Reason("Portable application marker: {name}", name=f.name)
             else:
                 entity_type = marker_type
-                marker_reason = f"Project/application marker: {f.name}"
+                marker_reason = Reason("Project/application marker: {name}", name=f.name)
 
             ent = _build_entity(ctx, parent, display_name, entity_type, children,
                                 marker_reason)
@@ -2356,7 +2414,7 @@ def _pass2b_app_markers(ctx: "_DetectionContext"):
 
             children = ctx.sample(parent_norm)
             ent = _build_entity(ctx, parent, display_name, etype, children,
-                                f"Database file: {f.name}")
+                                Reason("Database file: {name}", name=f.name))
             ctx.claim(parent_norm)
             ctx.emit_entity(ent)
             pass_entities_portable += 1
@@ -2467,8 +2525,9 @@ def _pass_browser_caches(ctx: "_DetectionContext"):
         ent = _build_entity(
             ctx, f.path, f"{browser} cache · {where}", "cache_folder",
             ctx.sample(norm),
-            f"Cached web content — {browser} rebuilds it as you browse; "
-            "your passwords, cookies, history and bookmarks are untouched",
+            Reason("Cached web content — {browser} rebuilds it as you browse; "
+                   "your passwords, cookies, history and bookmarks are untouched",
+                   browser=browser),
         )
         fc = ctx.claim(norm)
         ctx.emit_entity(ent, fc)
@@ -2639,7 +2698,8 @@ def _pass4_cache_folders(ctx: "_DetectionContext"):
             display_name = f"Cache for {source_app}" if source_app else f.name
             ent = _build_entity(ctx, 
                 f.path, display_name, "cache_folder", children,
-                "Cache folder" + (f" for {source_app}" if source_app else ""),
+                (Reason("Cache folder for {app}", app=source_app) if source_app
+                 else Reason("Cache folder")),
             )
             ctx.claim(norm_path)
             ctx.emit_entity(ent)
@@ -2665,7 +2725,7 @@ def _pass5_protected(ctx: "_DetectionContext"):
         if _is_protected_path(norm_path):
             children = ctx.sample(norm_path)
             ent = _build_entity(ctx, f.path, f.name, "protected_system", children,
-                                "System or protected path detected")
+                                Reason("System or protected path detected"))
             fc = ctx.claim(norm_path)
             ctx.emit_entity(ent, fc)
             pass_entities += 1
@@ -2814,12 +2874,12 @@ def _pass6_content_folders(ctx: "_DetectionContext"):
 
         etype = _classify_by_content(direct_files)
         if etype:
-            reason = "Content analysis"
+            reason = Reason("Content analysis")
             # App/UI asset folders look image-dominant but are not user media.
             if etype in _USER_IMAGE_MEDIA_TYPES and _looks_like_app_assets(
                     norm_path, d.name, direct_files):
                 etype = "application_data"
-                reason = "Application/UI assets, not a personal media library"
+                reason = Reason("Application/UI assets, not a personal media library")
             display = _qualify_folder_name(d.name, d.path)
             ent = _build_entity(ctx, d.path, display, etype, direct, reason)
             fc = ctx.claim(norm_path)
@@ -2896,7 +2956,8 @@ def _pass7_sweep(ctx: "_DetectionContext"):
             )
             if fallback_type:
                 etype = fallback_type
-            elif lower_name in _DIR_ENTITY_MAP:
+            elif lower_name in _DIR_ENTITY_MAP \
+                    and not _is_contextless_save_dir(lower_name, norm_path):
                 etype = _DIR_ENTITY_MAP[lower_name]
                 corrected_type, _ = _safety_correct_entity_type(d.path, etype)
                 etype = corrected_type
@@ -2950,7 +3011,7 @@ def _pass7_sweep(ctx: "_DetectionContext"):
 
         reason = corrected_reason or fallback_reason or (
             "Name-based classification" if etype != "unknown_folder"
-            else "Ungrouped folder"
+            else Reason("Ungrouped folder")
         )
 
         # ── Display name with ownership context ───────────────────────
@@ -3317,9 +3378,9 @@ def _enrich_program_files_apps(entities: list) -> int:
         where = "Program Files" if where in _INSTALL_ROOT_NAMES else "Programs"
         e.entity_type = "application"
         e.name = name
-        e.risk_reason = (f"Installed application in {where} — "
-                         "remove it through its own uninstaller, not by "
-                         "deleting the folder")
+        e.risk_reason = Reason(
+            "Installed application in {where} — remove it through its own "
+            "uninstaller, not by deleting the folder", where=where)
         e.summary = f"Installed application · {name}"
         changed += 1
     return changed
@@ -3382,8 +3443,9 @@ def _enrich_drive_root_apps(entities: list) -> int:
             continue
         e.entity_type = "application"
         e.name = name
-        e.risk_reason = (f"Installed application (found in {source}) — remove it "
-                         "through its own uninstaller, not by deleting the folder")
+        e.risk_reason = Reason(
+            "Installed application (found in {source}) — remove it through its "
+            "own uninstaller, not by deleting the folder", source=source)
         e.summary = f"Installed application · {name}"
         changed += 1
     return changed
@@ -3401,7 +3463,7 @@ def _enrich_support_folders(entities: list) -> int:
     orphaned to the uninstall registry yet are plainly installed. UNKNOWN is
     surfaced as "could not confirm", never as "safe to delete".
     """
-    from app.services.app_presence import presence, describe, PRESENT, GENERIC
+    from app.services.app_presence import presence, describe, GENERIC
 
     changed = 0
     for e in entities:
@@ -3461,8 +3523,9 @@ def _enrich_user_content_subfolders(entities: list) -> int:
         where = os.path.basename(os.path.dirname(norm))
         e.entity_type = "application_data"
         e.name = leaf                      # drop the "· docs and code" noise
-        e.risk_reason = (f"Application data stored in {where} by {leaf} — "
-                         "keep it if you still use that program")
+        e.risk_reason = Reason(
+            "Application data stored in {where} by {leaf} — keep it if you "
+            "still use that program", where=where, leaf=leaf)
         e.summary = f"App data · {leaf} · stored in {where}"
         changed += 1
     return changed
@@ -3539,16 +3602,19 @@ def _enrich_game_saves(ctx: "_DetectionContext", entities: list):
             installed = _game_is_installed(_normalize_game_name(game_seg), known_games)
             e.name = f"{display_game} Saves"
             if installed:
-                e.risk_reason = f"Save data for {display_game} — game still installed"
+                e.risk_reason = Reason("Save data for {game} — game still installed",
+                                       game=display_game)
             else:
-                e.risk_reason = (f"Save data for {display_game} — owning game not "
-                                 f"found in this scan (may be uninstalled)")
+                e.risk_reason = Reason(
+                    "Save data for {game} — owning game not found in this "
+                    "scan (may be uninstalled)", game=display_game)
             e.summary = (f"Game Saves · {display_game} · "
                          f"{e.file_count:,} files · {e.size}")
             enriched += 1
         elif not e.risk_reason or e.risk_reason.lower().startswith("entity type:"):
-            e.risk_reason = ("Game/app save data — owning game could not be "
-                             "determined from the path")
+            e.risk_reason = Reason(
+                "Game/app save data — owning game could not be determined "
+                "from the path")
             enriched += 1
 
     if enriched:
@@ -3586,10 +3652,10 @@ def _enforce_system_protection(entities: list, log_fn=None) -> int:
                 and parts[2] in _NEVER_CLEAN_WINDOWS_SUBTREES:
             if e.risk != RISK_PROTECTED:
                 e.risk = RISK_PROTECTED
-                e.risk_reason = (
-                    f"Windows {parts[2]} — part of the operating system; "
-                    "removing it can break Windows features or updates"
-                )
+                e.risk_reason = Reason(
+                    "Windows {subtree} — part of the operating system; "
+                    "removing it can break Windows features or updates",
+                    subtree=parts[2])
                 changed += 1
     if changed and log_fn:
         log_fn(f"[smart] protected {changed} entities inside Windows system subtrees")
@@ -3851,7 +3917,7 @@ def _postprocess(ctx: "_DetectionContext", t0: float) -> list:
                     e.cloud_sync_provider = provider
                     if e.risk == "Safe":
                         e.risk = "Review"
-                        e.risk_reason = f"cloud-synced ({provider})"
+                        e.risk_reason = Reason("cloud-synced ({provider})", provider=provider)
                     cloud_count += 1
             if cloud_count:
                 log_fn(f"[cloud] {cloud_count} entities in cloud-synced paths")
@@ -3888,6 +3954,33 @@ def _postprocess(ctx: "_DetectionContext", t0: float) -> list:
 
     log_fn("[smart] entities ready for dashboard")
     return entities
+
+
+
+def detector_reason_templates() -> set:
+    """Every Reason(...) template this module can produce.
+
+    Reasons reach tr() through a stored key, so no static scan over tr("...")
+    calls finds them. Read out of this module's own source so the list cannot
+    drift from the code — adding a Reason without a translation fails the
+    coverage test rather than shipping English into a translated build.
+    """
+    import ast as _ast
+    import pathlib as _pathlib
+
+    source = _pathlib.Path(__file__).read_text(encoding="utf-8")
+    keys = set()
+    for node in _ast.walk(_ast.parse(source)):
+        if not (isinstance(node, _ast.Call)
+                and getattr(node.func, "id", "") == "Reason" and node.args):
+            continue
+        first = node.args[0]
+        if isinstance(first, _ast.Constant) and isinstance(first.value, str):
+            keys.add(first.value)
+        elif isinstance(first, _ast.JoinedStr):
+            keys.add("".join(v.value for v in first.values
+                             if isinstance(v, _ast.Constant)))
+    return keys
 
 
 def detect_entities(

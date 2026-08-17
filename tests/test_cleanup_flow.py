@@ -1,10 +1,9 @@
 """Tests for cleanup flow fixes: post-delete removal, review gating,
 protected depth-awareness, and deep-uninstall availability.
 """
-from app.screens.cleanup_dialog import (
-    _cleanup_targets_for_item, _is_review_tier, _is_drive_root_path,
-)
-from app.screens.findings_dashboard import _has_uninstaller, launch_uninstaller
+from app.screens.cleanup_dialog import _cleanup_targets_for_item, _is_review_tier
+from app.screens.findings_dashboard import _has_uninstaller
+from app.services.uninstaller import NO_COMMAND, launch_uninstaller
 from app.models.findings_table_model import FindingsTableModel
 
 
@@ -97,15 +96,20 @@ def test_model_remove_cleaned_backslash_paths_match():
 
 # ── #4: deep uninstall availability ───────────────────────────────
 
-def test_has_uninstaller():
-    assert _has_uninstaller({"uninstall_string": '"C:/app/unins.exe" /S'})
+def test_has_uninstaller(tmp_path):
+    """"Registered" is not enough — the file has to be there. 19 of 475
+    uninstall commands on a real machine pointed at a deleted executable."""
+    real = tmp_path / "unins000.exe"
+    real.write_text("")
+    assert _has_uninstaller({"uninstall_string": f'"{real}" /S'})
+    assert not _has_uninstaller({"uninstall_string": '"C:/nope/unins.exe" /S'})
     assert not _has_uninstaller({"uninstall_string": ""})
     assert not _has_uninstaller({})
 
 
 def test_launch_uninstaller_empty_is_safe():
-    started, msg = launch_uninstaller("")
-    assert started is False
+    outcome, msg = launch_uninstaller("")
+    assert outcome == NO_COMMAND
 
 
 # ── drive-root guard still holds ──────────────────────────────────

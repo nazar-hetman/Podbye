@@ -1,7 +1,5 @@
 """Multi-root scanning and per-drive entity partitioning ("Scan all drives")."""
 import os
-import tempfile
-import pathlib
 
 import pytest
 

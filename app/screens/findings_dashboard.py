@@ -23,25 +23,31 @@ from typing import Callable, Optional
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox,
-    QLineEdit, QTextEdit, QFrame, QTableView, QMessageBox,
-    QHeaderView, QAbstractItemView, QScrollArea, QGridLayout,
-    QSizePolicy, QSpacerItem, QStackedWidget, QTabWidget
+    QLineEdit, QTextEdit, QFrame, QMessageBox,
+    QScrollArea, QGridLayout, QAbstractItemView, QHeaderView,
+    QSizePolicy, QStackedWidget, QTabWidget, QTreeWidget, QTreeWidgetItem
 )
-from PySide6.QtCore import Qt, QTimer, QSize, Signal, QObject
-from PySide6.QtGui import QColor, QFont, QPainter, QFontMetrics, QPen
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPainter, QPen
 
 from app.widgets.pills import Badge
 from app.models.finding import _format_size
 from app.themes.theme_manager import get_category_colors, get_palette
 from app.screens.cleanup_dialog import CleanupConfirmDialog
 from app.models.findings_table_model import (
-    FindingsTableModel, FindingsFilterProxy, FindingsDelegate, COL_CHECK, COL_NAME,
+    FindingsTableModel, FindingsFilterProxy, COL_CHECK, COL_NAME,
 )
-from app.models.risk import normalize_risk, risk_fg as _risk_fg, risk_variant as _risk_variant
+from app.models.risk import (
+    RISK_ORDER, normalize_risk, risk_fg as _risk_fg, risk_variant as _risk_variant,  # noqa: E501
+)
 from app.models.smart_entity import actionability_for_type
+from app.models.entity_grouping import group_entities, group_label, owner_key
+from app.models.reasons import translate_reason
+from app.models.path_tree import PathNode, build_tree, collapse_single_child_chains
+from app.widgets.tables import install_header_fit
 from app.i18n import tr
 from app.widgets.panels import apply_tactical_label
-from app.widgets.controls import TacticalComboBox
+from app.widgets.controls import ElidedLabel, TacticalCheckBox, TacticalComboBox
 
 
 # ── Performance Constants ───────────────────────────────────────────
@@ -283,30 +289,14 @@ def _short_parent(path: str, segments: int = 2) -> str:
     return "…/" + "/".join(parts[-segments:])
 
 
-def _elide_path_middle(path: str, max_len: int = 54) -> str:
-    """Shorten a path for a single-line display, keeping the drive and the tail.
+def _norm_path(path: str) -> str:
+    """One slash style for display. Scanned paths mix both within one string.
 
-    Long paths otherwise wrapped and stretched the inspection panel. Middle
-    elision preserves the two ends a user reads — the drive/root and the file
-    itself — e.g. ``C:/Users/…/CachedData/c97a3f/index.db``. Display only; the
-    full path is kept as the widget tooltip and used verbatim by Copy/Open.
+    Shortening is ElidedLabel's job now — it fits the width the panel actually
+    has, where the character budget this replaced always cut at 54 regardless
+    of how wide the window was.
     """
-    p = str(path or "").replace("\\", "/")
-    if len(p) <= max_len:
-        return p
-    parts = [seg for seg in p.split("/") if seg]
-    if len(parts) <= 2:
-        return p[: max_len - 1] + "…"
-    head = parts[0]                       # drive / root
-    tail_parts = parts[1:]
-    tail = tail_parts[-1]
-    # Grow the tail from the end until we hit the budget.
-    for i in range(len(tail_parts) - 2, 0, -1):
-        candidate = "/".join(tail_parts[i:])
-        if len(head) + len(candidate) + 5 > max_len:
-            break
-        tail = candidate
-    return f"{head}/…/{tail}"
+    return str(path or "").replace("\\", "/")
 
 
 def _duplicate_short_parents(entity: dict) -> list[str]:
@@ -449,40 +439,40 @@ def _entity_activity_text(entity: dict) -> str:
     if entity.get("entity_type") == "duplicate_group":
         locations = _duplicate_locations(entity)
         if locations and locations[0].get("modified") != "—":
-            return f"Newest copy {locations[0]['modified']}"
-        return "Duplicate activity unknown"
+            return tr("Newest copy {when}", when=locations[0]["modified"])
+        return tr("Duplicate activity unknown")
     install_date = entity.get("install_date", "")
     if install_date:
-        return f"Installed {install_date}"
+        return tr("Installed {when}", when=install_date)
     accessed = entity.get("last_access", "")
     if accessed and accessed != "—":
-        return f"Last active {accessed}"
+        return tr("Last active {when}", when=accessed)
     modified = entity.get("first_seen", "")
     if modified and modified != "—":
-        return f"Updated {modified}"
+        return tr("Updated {when}", when=modified)
     age = entity.get("age", "")
     if age and age != "—":
-        return f"Age {age}"
-    return "Recent activity unknown"
+        return tr("Age {age}", age=age)
+    return tr("Recent activity unknown")
 
 
 def _entity_importance_text(entity: dict) -> str:
     if entity.get("entity_type") == "duplicate_group":
         if entity.get("risk") == "Protected":
-            return "High — duplicate touches protected system locations"
+            return tr("High — duplicate touches protected system locations")
         if entity.get("risk") == "Review":
-            return "High — verify app/project ownership before removing copies"
-        return "Medium — remove only clear extra copies"
+            return tr("High — verify app/project ownership before removing copies")
+        return tr("Medium — remove only clear extra copies")
     risk = entity.get("risk", "Review")
     if entity.get("cloud_sync_provider"):
-        return "High — synced with cloud storage"
+        return tr("High — synced with cloud storage")
     if risk == "Protected":
-        return "High — protected by system rules"
+        return tr("High — protected by system rules")
     if risk == "Review":
-        return "High — may contain personal or app data"
+        return tr("High — may contain personal or app data")
     if risk == "Optional":
-        return "Medium — likely removable if no longer needed"
-    return "Low — generally safe to regenerate"
+        return tr("Medium — likely removable if no longer needed")
+    return tr("Low — generally safe to regenerate")
 
 
 def _entity_file_group_size(entity: dict) -> int:
@@ -507,18 +497,22 @@ def _entity_contains_text(entity: dict) -> str:
     folder_count = entity.get("folder_count", 0)
     parts = []
     if file_count:
-        parts.append(f"{file_count:,} files")
+        parts.append(tr("{n:,} files", n=file_count))
     if folder_count:
-        parts.append(f"{folder_count:,} folders")
+        parts.append(tr("{n:,} folders", n=folder_count))
+    # entity_type_label comes from the ENTITY_TYPES table, whose values are
+    # translated — but only if someone calls tr() on them. This is the row
+    # subtitle under every finding, so it was the most-repeated piece of
+    # English in a translated build.
     label = entity.get("entity_type_label") or entity.get("semantic_label") or ""
     if label:
-        parts.append(label)
+        parts.append(tr(label))
     # Say so when the row stands for a list rather than a folder. Without this
     # "Loose archives in Downloads" looks like one indivisible thing, and the
     # per-file view — which is what a group row is for — goes unnoticed.
     if _entity_file_group_size(entity) >= 2:
         parts.append(tr("choose individual files"))
-    return " · ".join(parts) if parts else "Contents not summarized"
+    return " · ".join(parts) if parts else tr("Contents not summarized")
 
 
 def _entity_context_text(entity: dict) -> str:
@@ -641,24 +635,25 @@ def _is_application_action_target(entity: dict) -> bool:
     ))
 
 
+# The inspector's field labels. They reach tr() through _mk_key(), so the
+# static scan over tr("literal") calls cannot see them — listed here so the
+# translation-coverage test can. Every one of them stayed English in
+# translated builds until they were wrapped.
+INSPECTOR_FIELD_LABELS = (
+    "CATEGORY:", "TYPE:", "PATH:", "SIZE:",
+    "CONTAINS:", "LAST ACTIVE:", "IMPORTANCE:",
+)
+
+
 def _has_uninstaller(entity: dict) -> bool:
-    """True when the app exposes a real registry uninstaller command."""
-    return bool((entity.get("uninstall_string") or "").strip())
+    """True when the app exposes an uninstaller that can actually be run.
 
-
-def launch_uninstaller(uninstall_string: str) -> tuple[bool, str]:
-    """Run an app's native uninstaller command. Returns (started, message)."""
-    cmd = (uninstall_string or "").strip()
-    if not cmd:
-        return False, "no uninstaller command available"
-    try:
-        import subprocess
-        # The registry string is a full command line (often quoted with args),
-        # so let the shell parse it exactly as Windows would.
-        subprocess.Popen(cmd, shell=True)
-        return True, "uninstaller launched"
-    except Exception as exc:  # pragma: no cover - platform/runtime dependent
-        return False, f"could not launch uninstaller: {exc}"
+    Not merely "the registry mentions one": 19 of 475 uninstall commands on a
+    real machine pointed at an executable that no longer existed, so the
+    button promised something Vigil could never deliver.
+    """
+    from app.services.uninstaller import uninstaller_is_runnable
+    return uninstaller_is_runnable(entity.get("uninstall_string") or "")
 
 
 def _finding_rgba(hex_color: str, alpha: int) -> str:
@@ -682,9 +677,11 @@ def _finding_recommendation(entity: dict) -> tuple[str, str, str, str]:
     if entity.get("is_self"):
         return (
             tr("THAT'S ME"),
+            # No trailing smiley: U+1F642 has no glyph in the bundled fonts or
+            # in Segoe UI Symbol, so it drew as a .notdef box mid-sentence.
             tr("Recommendation: this is Vigil — the app doing the cleaning. You can "
                "remove it whenever you like, but it would be good to let it finish "
-               "the job first. 🙂"),
+               "the job first."),
             tr("Vigil's own files: the app, your settings, and the scan history "
                "this screen is showing. Vigil will not clean itself up."),
             accent_info,
@@ -693,28 +690,28 @@ def _finding_recommendation(entity: dict) -> tuple[str, str, str, str]:
         return (
             tr("PROTECTED"),
             tr("Recommendation: keep this item. It is marked protected and should not be cleaned from Findings."),
-            entity.get("risk_reason") or tr("Protected rule matched this path or entity type."),
+            translate_reason(entity) or tr("Protected rule matched this path or entity type."),
             accent_risk,
         )
     if is_duplicate and _duplicate_is_per_app_binary(entity):
         return (
             tr("KEEP COPIES"),
             tr("Recommendation: keep every copy — each belongs to a separate program that needs its own. To free space, uninstall an app you no longer use instead of deleting this file."),
-            entity.get("risk_reason") or _duplicate_subtitle(entity),
+            translate_reason(entity) or _duplicate_subtitle(entity),
             accent_review,
         )
     if not is_duplicate and not is_app and _is_content_container(entity):
         return (
             tr("REVIEW INSIDE"),
             tr("Recommendation: Vigil won't delete this whole folder — it holds personal or mixed content. Open it to review, or reclaim space from specific items inside (duplicates, very old large files)."),
-            entity.get("risk_reason") or tr("Personal or mixed content — deleting everything here is rarely what you want."),
+            translate_reason(entity) or tr("Personal or mixed content — deleting everything here is rarely what you want."),
             accent_review,
         )
     if is_app:
         return (
             tr("SYSTEM-LEVEL"),
             tr("Recommendation: use Deep Uninstall for applications; recycle only leftover files you recognize."),
-            entity.get("risk_reason") or tr("Application metadata or installer/package signals were detected."),
+            translate_reason(entity) or tr("Application metadata or installer/package signals were detected."),
             accent_review,
         )
     if is_duplicate:
@@ -735,26 +732,22 @@ def _finding_recommendation(entity: dict) -> tuple[str, str, str, str]:
         return (
             tr("OPTIONAL"),
             tr("Recommendation: clean this only if the path and contents are familiar."),
-            entity.get("recommendation") or entity.get("risk_reason") or tr("This is likely removable but may still be useful."),
+            entity.get("recommendation") or translate_reason(entity) or tr("This is likely removable but may still be useful."),
             accent_info,
         )
     return (
         tr("NEEDS REVIEW"),
         tr("Recommendation: inspect the path, owner, and AI reasoning before cleanup."),
-        entity.get("risk_reason") or tr("Vigil does not have enough confidence to mark this as safe."),
+        translate_reason(entity) or tr("Vigil does not have enough confidence to mark this as safe."),
         accent_review,
     )
 
 # Sort options for detail view
-SORT_OPTIONS = [
-    ("largest", "Largest first"),
-    ("smallest", "Smallest first"),
-    ("ai_analyzed", "AI analyzed"),
-    ("risk", "Status"),
-    ("safe_cleanup", "Safe cleanup"),
-    ("last_access", "Last accessed"),
-    ("reclaimable", "Reclaimable size"),
-]
+# The dropdown is built from the proxy's own key list, not a second copy of
+# it. The copy that used to live here had drifted: it advertised "Safe
+# cleanup" and "Last accessed", which lessThan() had no branch for, so both
+# silently sorted by size and were indistinguishable from "Largest first".
+SORT_OPTIONS = FindingsFilterProxy.SORT_KEYS
 
 
 def get_contrast_color(bg_color_hex: str) -> str:
@@ -786,6 +779,7 @@ class DonutChartWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._segments: list[dict] = []   # {cat, pct, color, angle_start, angle_span}
+        self._category_count: int = 0     # all categories, not just the wedges
         self._total_bytes: int = 0
         self._scan_label: str = ""
         self._selected: str = ""
@@ -795,38 +789,77 @@ class DonutChartWidget(QWidget):
         self.setCursor(Qt.PointingHandCursor)
         self.setMouseTracking(True)
 
+    # Above this, the remaining categories are pooled into one "Other" wedge.
+    # A real scan finds 19, and the tail of that list is a fringe of sub-degree
+    # slivers: unreadable, unclickable, and indistinguishable from each other.
+    # The category list beside the chart still shows every one of them — the
+    # donut answers "what is taking the space", not "what exists".
+    MAX_SLICES = 8
+
     def set_data(self, sorted_cats: list[tuple], total_bytes: int, scan_label: str = ""):
         """sorted_cats: list of (category, data_dict) sorted by size desc."""
-        from PySide6.QtGui import QColor as _QColor
         self._total_bytes = total_bytes
         self._scan_label = scan_label
         self._segments.clear()
 
-        # Build angle map — each segment proportional to real size
-        total = sum(d["size_bytes"] for _, d in sorted_cats) or 1
+        cats = list(sorted_cats)
+        # The real figure, not the number of wedges — pooling must not make the
+        # centre under-report how many categories the scan actually found.
+        self._category_count = len(cats)
+        head, tail = cats[:self.MAX_SLICES], cats[self.MAX_SLICES:]
+
+        total = sum(d["size_bytes"] for _, d in cats) or 1
         angle = 0.0
-        for cat, data in sorted_cats:
-            span = 360.0 * data["size_bytes"] / total
-            if span < 0.5:
-                span = 0.5
-            color = _get_category_color(cat)
+
+        def _add(cat, size_bytes, pct, color, is_other=False, pooled=0):
+            nonlocal angle
+            span = 360.0 * size_bytes / total
             self._segments.append({
                 "cat": cat,
-                "pct": data.get("percentage", 0),
-                "size_bytes": data["size_bytes"],
+                "pct": pct,
+                "size_bytes": size_bytes,
                 "color": color,
                 "angle_start": angle,
                 "angle_span": span,
+                "is_other": is_other,
+                "pooled": pooled,
             })
             angle += span
+
+        for cat, data in head:
+            _add(cat, data["size_bytes"], data.get("percentage", 0),
+                 _get_category_color(cat))
+
+        if tail:
+            pooled_bytes = sum(d["size_bytes"] for _, d in tail)
+            _add(tr("Other"), pooled_bytes,
+                 sum(d.get("percentage", 0) for _, d in tail),
+                 _get_category_color("Other"), is_other=True, pooled=len(tail))
         self.update()
+
+    # Angular separator carved between neighbouring wedges.
+    GAP_DEG = 1.4
+    # No wedge is drawn thinner than this, so a category with a real share
+    # never vanishes entirely into its own separator.
+    MIN_SPAN_DEG = 0.25
+
+    @classmethod
+    def _drawn_span(cls, angle_span: float) -> float:
+        """Sweep actually painted for a wedge of *angle_span* degrees.
+
+        The gap is carved out of the wedge, so it can never exceed it. A slice
+        narrower than the gap used to yield a negative sweep, and Qt draws a
+        negative sweep counter-clockwise — the sliver was painted backwards
+        across its neighbours, which is the speckled band the ring showed.
+        """
+        gap = min(cls.GAP_DEG, angle_span * 0.4)
+        return max(angle_span - gap, cls.MIN_SPAN_DEG)
 
     def set_selected(self, category: str):
         self._selected = category
         self.update()
 
     def paintEvent(self, event):
-        from PySide6.QtGui import QPainter, QColor, QPen, QFont, QFontMetrics
         from PySide6.QtCore import QRectF
         import math
 
@@ -851,8 +884,6 @@ class DonutChartWidget(QWidget):
             diameter * HOLE_FRAC,
         )
 
-        GAP_DEG = 1.4   # softer angular separation between sectors
-
         for seg in self._segments:
             a_start = seg["angle_start"]
             a_span  = seg["angle_span"]
@@ -870,11 +901,10 @@ class DonutChartWidget(QWidget):
             # Hairline separator between sectors, drawn in the panel bg.
             painter.setPen(QPen(QColor(get_palette().get("bg_deep", "#0a100c")), 1))
 
-            # Qt: angles are 1/16th degree, start=top (90°), CCW positive
-            # We map: 0° = top, CW, so Qt angle = (90 - a_start) * 16
-            qt_start = int((90.0 - a_start - a_span / 2 * 0 + 0) * 16)
+            # Qt: angles are 1/16th degree, start=top (90°), CCW positive.
+            # We map: 0° = top, CW, so Qt angle = (90 - a_start) * 16.
             qt_start = int((90.0 - a_start) * 16)
-            qt_span  = int(-(a_span - GAP_DEG) * 16)
+            qt_span = int(-self._drawn_span(a_span) * 16)
 
             # Explode selected/hovered sector outward — restrained nudge
             draw_rect = rect
@@ -899,9 +929,11 @@ class DonutChartWidget(QWidget):
         if active and self._segments:
             seg = next((s for s in self._segments if s["cat"] == active), None)
             if seg:
+                label = (tr("{n} smaller categories").format(n=seg["pooled"])
+                         if seg.get("is_other") else seg["cat"])
                 self._draw_center_text(painter, cx, cy,
                     f"{seg['pct']:.1f}%",
-                    seg["cat"],
+                    label,
                     _format_size(seg["size_bytes"]),
                 )
                 return
@@ -909,12 +941,11 @@ class DonutChartWidget(QWidget):
         # Default: total size + category count (no percentage)
         self._draw_center_text(painter, cx, cy,
             _format_size(self._total_bytes),
-            f"{len(self._segments)} categories",
+            tr("{n} categories").format(n=self._category_count),
             self._scan_label,
         )
 
     def _draw_center_text(self, painter, cx, cy, line1: str, line2: str, line3: str):
-        from PySide6.QtGui import QColor, QFont
         from PySide6.QtCore import QRectF, Qt as _Qt
 
         def _txt(text, font_family, size_px, bold, color_hex, y_offset):
@@ -979,19 +1010,40 @@ class DonutChartWidget(QWidget):
 
     def mousePressEvent(self, event):
         cat = self._seg_at(event.position())
-        if cat:
-            self._selected = cat
-            self.update()
+        if not cat:
+            return
+        self._selected = cat
+        self.update()
+        # The pooled wedge stands for several categories, so there is no single
+        # view to open. It still highlights and reports itself in the centre.
+        if not self._is_other(cat):
             self.sector_clicked.emit(cat)
+
+    def _is_other(self, category: str) -> bool:
+        return any(s["cat"] == category and s.get("is_other") for s in self._segments)
 
 
 # ── Category card for the overview list ──────────────────────────
 
 class CategoryCardWidget(QFrame):
-    """Single row in the overview category list."""
+    """Single row in the overview category list.
+
+    The column geometry is public because StorageOverviewWidget builds the
+    header row from it — the two drifted apart once and the headers ended up
+    labelling nothing.
+    """
 
     clicked  = Signal(str)
     hovered  = Signal(str)   # emits category name or "" on leave
+
+    MARGIN_L = 10
+    MARGIN_R = 14
+    SPACING  = 8
+    SWATCH_W = 4
+    NAME_W   = 142
+    COUNT_W  = 80
+    SIZE_W   = 72
+    PCT_W    = 52
 
     def __init__(self, category: str, data: dict, parent=None):
         super().__init__(parent)
@@ -1008,12 +1060,12 @@ class CategoryCardWidget(QFrame):
 
     def _build(self, category: str, data: dict):
         row = QHBoxLayout(self)
-        row.setContentsMargins(10, 0, 14, 0)
-        row.setSpacing(8)
+        row.setContentsMargins(self.MARGIN_L, 0, self.MARGIN_R, 0)
+        row.setSpacing(self.SPACING)
 
         # Color swatch
         swatch = QFrame()
-        swatch.setFixedSize(4, 34)
+        swatch.setFixedSize(self.SWATCH_W, 34)
         swatch.setStyleSheet(f"background: {self._color}; border: none; border-radius: 2px;")
         row.addWidget(swatch)
 
@@ -1024,7 +1076,7 @@ class CategoryCardWidget(QFrame):
         name_row.setContentsMargins(0, 0, 0, 0)
         name_row.setSpacing(0)
         self._name_lbl = QLabel(tr(category).upper())
-        self._name_lbl.setFixedWidth(142)
+        self._name_lbl.setFixedWidth(self.NAME_W)
         name_row.addWidget(self._name_lbl)
         row.addWidget(name_wrap)
 
@@ -1032,22 +1084,23 @@ class CategoryCardWidget(QFrame):
 
         p = get_palette()
 
-        # Item count
-        self._count_lbl = QLabel(f"{data.get('count', 0):,} items")
-        self._count_lbl.setFixedWidth(80)
+        # Item count — bare number, because the column header says ITEMS. The
+        # unit used to be repeated in every cell, and untranslated with it.
+        self._count_lbl = QLabel(f"{data.get('count', 0):,}")
+        self._count_lbl.setFixedWidth(self.COUNT_W)
         self._count_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         row.addWidget(self._count_lbl)
 
         # Size
         self._size_lbl = QLabel(_format_size(data.get("size_bytes", 0)))
-        self._size_lbl.setFixedWidth(72)
+        self._size_lbl.setFixedWidth(self.SIZE_W)
         self._size_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         row.addWidget(self._size_lbl)
 
         # Percentage label
         pct = data.get("percentage", 0)
         self._pct_lbl = QLabel(f"{pct:.1f}%")
-        self._pct_lbl.setFixedWidth(52)
+        self._pct_lbl.setFixedWidth(self.PCT_W)
         self._pct_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         row.addWidget(self._pct_lbl)
 
@@ -1080,7 +1133,6 @@ class CategoryCardWidget(QFrame):
         p = get_palette()
         border = p.get("border", "#213028")
         hover = p.get("panel_hover", "#1d2c25")
-        tint = p.get("tint_bg", "#0f1914")
         panel = p.get("panel", "#141d18")
         if self._is_selected:
             self.setStyleSheet(
@@ -1137,6 +1189,8 @@ class StorageOverviewWidget(QFrame):
       2. calls on_category_click(category)
     """
 
+    browse_by_folder = Signal()
+
     def __init__(self, parent=None, on_category_click: Callable = None):
         super().__init__(parent)
         self.on_category_click = on_category_click
@@ -1164,6 +1218,18 @@ class StorageOverviewWidget(QFrame):
         self._total_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 10px;")
         header.addWidget(self._total_lbl)
         header.addStretch()
+
+        # The way out when a category is wrong: browse by location instead.
+        self._btn_by_folder = QPushButton(tr("Browse by folder"))
+        self._btn_by_folder.setObjectName("Subtle")
+        self._btn_by_folder.setStyleSheet("font-size: 11px; padding: 6px 12px;")
+        self._btn_by_folder.setCursor(Qt.PointingHandCursor)
+        self._btn_by_folder.setToolTip(
+            tr("See everything by where it lives on disk, not by what Vigil "
+               "thinks it is."))
+        self._btn_by_folder.clicked.connect(
+            lambda: self.browse_by_folder.emit())
+        header.addWidget(self._btn_by_folder)
         outer.addLayout(header)
 
         # ── Body: category list LEFT (primary), summary RIGHT ────────
@@ -1179,17 +1245,32 @@ class StorageOverviewWidget(QFrame):
         list_outer.setContentsMargins(0, 0, 0, 0)
         list_outer.setSpacing(0)
 
+        # The header must mirror CategoryCardWidget._build exactly, or it
+        # labels nothing: the cards push their figures right with a stretch
+        # after the name, while this row used to pack every header hard left
+        # and end with the stretch — so CATEGORY/ITEMS/SIZE/% sat bunched on
+        # the left edge with the columns they name a thousand pixels away.
         list_hdr = QHBoxLayout()
-        list_hdr.setContentsMargins(10, 10, 14, 8)
+        list_hdr.setContentsMargins(CategoryCardWidget.MARGIN_L, 10,
+                                    CategoryCardWidget.MARGIN_R, 8)
+        list_hdr.setSpacing(CategoryCardWidget.SPACING)
+        # swatch column + the gap that follows it
+        list_hdr.addSpacing(CategoryCardWidget.SWATCH_W)
         self._hdr_labels = []
-        for txt, w in [(tr("CATEGORY"), 160), (tr("ITEMS"), 80), (tr("SIZE"), 72), ("%", 52)]:
+        columns = [
+            (tr("CATEGORY"), CategoryCardWidget.NAME_W, Qt.AlignLeft),
+            (tr("ITEMS"),    CategoryCardWidget.COUNT_W, Qt.AlignRight),
+            (tr("SIZE"),     CategoryCardWidget.SIZE_W,  Qt.AlignRight),
+            ("%",            CategoryCardWidget.PCT_W,   Qt.AlignRight),
+        ]
+        for idx, (txt, w, align) in enumerate(columns):
             h = QLabel(txt)
             h.setFixedWidth(w)
-            h.setAlignment(Qt.AlignRight | Qt.AlignVCenter if txt != "CATEGORY" else Qt.AlignLeft | Qt.AlignVCenter)
+            h.setAlignment(align | Qt.AlignVCenter)
             list_hdr.addWidget(h)
             self._hdr_labels.append(h)
-        list_hdr.insertSpacing(0, 14)   # swatch gap
-        list_hdr.addStretch()
+            if idx == 0:
+                list_hdr.addStretch()   # same place the cards put theirs
         list_outer.addLayout(list_hdr)
 
         self._list_sep = QFrame()
@@ -1234,12 +1315,16 @@ class StorageOverviewWidget(QFrame):
         ]:
             row = QHBoxLayout()
             row.setSpacing(8)
-            k = QLabel(label)
-            row.addWidget(k)
-            row.addStretch()
+            # The summary panel is capped at 340px, and the value is the
+            # payload — TOP CATEGORY carries a name plus a size. So the
+            # eyebrow yields (elides) and the value keeps its natural width;
+            # sharing the squeeze cut "Applications · 12.0 GB" in French.
+            k = ElidedLabel(label)
+            row.addWidget(k, stretch=1)
             v = QLabel("—")
             v.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 12px;")
             v.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            v.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
             row.addWidget(v)
             sp.addLayout(row)
             self._metric_keys.append(k)
@@ -1361,17 +1446,20 @@ class StorageOverviewWidget(QFrame):
     # ── internal ─────────────────────────────────────────────────
 
     def _rebuild_cards(self, sorted_cats: list):
-        # Remove old cards
-        for card in list(self._cards.values()):
-            self._cards_layout.removeWidget(card)
-            card.deleteLater()
+        # Drop every old card. hide() before deleteLater() is what matters:
+        # removeWidget() only takes the card out of the layout, and the widget
+        # stays a visible child of the container — parked at its pre-layout
+        # 100x58 default in the top-left corner, painting over the new list
+        # until the event loop gets round to the deferred delete. Hiding and
+        # not unparenting, because setParent(None) promotes the widget to a
+        # top-level window and those surface as blank frames over the app.
         self._cards.clear()
-
-        # Remove old stretch
         while self._cards_layout.count():
             item = self._cards_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            widget = item.widget()
+            if widget is not None:
+                widget.hide()
+                widget.deleteLater()
 
         for cat, data in sorted_cats:
             card = CategoryCardWidget(cat, data, parent=self._cards_container)
@@ -1423,6 +1511,35 @@ class _PreallocDetailPanel(QWidget):
     click in the old _clear_detail_panel() + _build_detail_content() approach.
     """
 
+    # Never let the key column swallow the panel, however long a translation
+    # gets — the value is what the user came to read.
+    _KEY_COLUMN_MAX = 190
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._sync_key_column()
+
+    def changeEvent(self, event):
+        from PySide6.QtCore import QEvent as _QEvent
+        super().changeEvent(event)
+        if event.type() in (_QEvent.StyleChange, _QEvent.FontChange,
+                            _QEvent.LanguageChange):
+            self._sync_key_column()
+
+    def _sync_key_column(self):
+        """Give every field label the width the widest one actually needs."""
+        keys = getattr(self, "_meta_keys", None)
+        if not keys:
+            return
+        try:
+            widest = max(
+                QFontMetrics(k.font()).horizontalAdvance(k.text()) for k in keys)
+        except RuntimeError:
+            return
+        width = min(self._KEY_COLUMN_MAX, max(88, widest + 6))
+        for key in keys:
+            key.setFixedWidth(width)
+
     def __init__(
         self,
         open_cb: Callable,
@@ -1449,8 +1566,6 @@ class _PreallocDetailPanel(QWidget):
         self._current_recommendation: str = ""
         self._current_recommendation_accent: str = get_palette().get("text_dim", "#8a9b8f")
         self._ai_has_long_reasoning = False
-
-        from PySide6.QtWidgets import QGridLayout, QTextEdit, QScrollArea
 
         p = get_palette()
         faint = p.get("text_faint", "#57685e")
@@ -1517,7 +1632,10 @@ class _PreallocDetailPanel(QWidget):
         _val_style   = "font-family: 'JetBrains Mono'; font-size: 12px;"
 
         def _mk_key(text: str) -> QLabel:
-            l = QLabel(text)
+            # Translate here, once, rather than at seven call sites — every
+            # field label in the inspector stayed English in translated
+            # builds because each was a bare literal.
+            l = QLabel(tr(text))
             l.setStyleSheet(f"{_faint_style} color: {faint};")
             return l
 
@@ -1548,10 +1666,12 @@ class _PreallocDetailPanel(QWidget):
         lbl_row_l.addStretch()
 
         self._path_key  = _mk_key("PATH:")
-        self._path_val  = _mk_val()
-        # The path is elided to one line (full path in the tooltip) so a long
-        # path can't wrap and stretch the inspection panel.
-        self._path_val.setWordWrap(False)
+        # Elided to one line (full path in the tooltip) so a long path can't
+        # stretch the inspection panel. ElidedLabel fits the width it is given
+        # instead of a fixed character budget, so widening the window reveals
+        # more of the path rather than keeping it cut at the same place.
+        self._path_val  = ElidedLabel(mode=Qt.ElideMiddle)
+        self._path_val.setStyleSheet(_val_style)
         self._size_key  = _mk_key("SIZE:")
         self._size_val  = _mk_val()
         self._items_key = _mk_key("CONTAINS:")
@@ -1561,12 +1681,21 @@ class _PreallocDetailPanel(QWidget):
         self._importance_key = _mk_key("IMPORTANCE:")
         self._importance_val = _mk_val()
 
+        # The key column is one width for every row so the values line up.
+        # It used to be a hard 88px, measured against the English labels;
+        # "LAST ACTIVE:" becomes "ОСТАННЯ АКТИВНІСТЬ:" and wanted 135px, so
+        # the heading was cut. _sync_key_column() measures the real strings
+        # once the stylesheet is applied — before that the labels still carry
+        # the application default font and come out too narrow.
+        self._meta_keys: list[QLabel] = []
+
         def _meta_row(key_widget: QLabel, value_widget: QWidget) -> QWidget:
             row = QWidget()
             row_l = QHBoxLayout(row)
             row_l.setContentsMargins(0, 0, 0, 0)
             row_l.setSpacing(10)
             key_widget.setFixedWidth(88 if self._compact else 112)
+            self._meta_keys.append(key_widget)
             row_l.addWidget(key_widget, 0, Qt.AlignTop)
             row_l.addWidget(value_widget, 1)
             return row
@@ -1582,6 +1711,7 @@ class _PreallocDetailPanel(QWidget):
         ]:
             meta_stack.addWidget(_meta_row(k, v))
         meta_stack.addStretch()
+        self._sync_key_column()
 
         left_w = QWidget()
         left_l = QVBoxLayout(left_w)
@@ -1612,17 +1742,29 @@ class _PreallocDetailPanel(QWidget):
         dup_hdr.addStretch()
         dup_l.addLayout(dup_hdr)
 
+        # Same rule as the reasoning block: the panel scrolls, this does not.
+        # A duplicate group with a dozen copies filled this 126 px box and put
+        # its scrollbar alongside the panel's, at every window height.
         self._dup_text = QTextEdit()
         self._dup_text.setReadOnly(True)
-        self._dup_text.setMaximumHeight(126)
-        self._dup_text.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._dup_text.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._dup_text.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._dup_text.setFrameShape(QFrame.NoFrame)
+        self._dup_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._dup_text.document().documentLayout().documentSizeChanged.connect(
+            lambda _size: self._fit_dup_text_height())
         dup_l.addWidget(self._dup_text)
         self._dup_section.setVisible(False)
         root.addWidget(self._dup_section)
 
         # ── Contextual reasoning block (full width, below) ────────────
-        self._ai_title = QLabel(tr("CONTEXTUAL REASONING"))
+        # Both items in this header row can give way, each with a floor. Making
+        # only one shrinkable pinned the other at its minimum: with the caption
+        # fixed the badge sat permanently truncated, and with the caption on an
+        # Ignored policy it lost every pixel to the row's stretch and vanished.
+        self._ai_title = ElidedLabel(tr("CONTEXTUAL REASONING"))
+        self._ai_title.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        self._ai_title.setMinimumWidth(90)
         self._ai_title.setStyleSheet(
             f"font-family: 'Silkscreen', 'JetBrains Mono'; font-size: 9px; "
             f"letter-spacing: 1px; color: {faint};"
@@ -1637,7 +1779,19 @@ class _PreallocDetailPanel(QWidget):
         ai_hdr_row = QHBoxLayout()
         ai_hdr_row.setSpacing(8)
         ai_hdr_row.addWidget(self._ai_title)
-        self._ai_state_badge = QLabel()
+        # "Available · Simplified Chinese" — the language makes this the one
+        # variable-length item in the row, and a plain label treats its full
+        # text as a hard minimum, so it pushed the whole inspector wider than
+        # the sidebar and the overflow was cut with no scrollbar to reach it
+        # (19 px lost on Ukrainian, 82 px on Simplified Chinese).
+        #
+        # Preferred keeps its natural width whenever the row has room, and the
+        # explicit minimum is what lets it shrink and elide when it does not.
+        # Only this one yields: the caption beside it is the section heading
+        # and must stay readable.
+        self._ai_state_badge = ElidedLabel()
+        self._ai_state_badge.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        self._ai_state_badge.setMinimumWidth(60)
         self._ai_state_badge.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
         ai_hdr_row.addWidget(self._ai_state_badge)
         ai_hdr_row.addStretch()
@@ -1651,14 +1805,14 @@ class _PreallocDetailPanel(QWidget):
         ai_hdr_row.addWidget(self._ai_ask_btn)
         ai_frame_layout.addLayout(ai_hdr_row)
 
-        self._ai_scroll = QScrollArea()
-        self._ai_scroll.setWidgetResizable(True)
-        self._ai_scroll.setFrameShape(QScrollArea.NoFrame)
-        self._ai_scroll.setMaximumHeight(156)
-        self._ai_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-
-        ai_container = QWidget()
-        ai_layout = QVBoxLayout(ai_container)
+        # A plain container, not a scroll area. This block used to be a 156 px
+        # QScrollArea holding a 132 px self-scrolling QTextEdit, inside the
+        # sidebar's own page-level scroll area — so once the window was short
+        # enough for the page to scroll, a long AI answer put two vertical
+        # scrollbars side by side at the right edge. The page scroll is the one
+        # that belongs to the panel; nothing nested inside it scrolls now.
+        self._ai_body = QWidget()
+        ai_layout = QVBoxLayout(self._ai_body)
         ai_layout.setContentsMargins(0, 0, 0, 0)
         ai_layout.setSpacing(4)
         self._ai_content_lbl = QLabel()
@@ -1667,21 +1821,27 @@ class _PreallocDetailPanel(QWidget):
         self._ai_content_lbl.setVisible(False)
         ai_layout.addWidget(self._ai_content_lbl)
 
+        # Kept a QTextEdit for selectable prose, but it no longer scrolls: it
+        # grows to its document and lets the panel scroll instead.
         self._ai_text = QTextEdit()
         self._ai_text.setReadOnly(True)
         self._ai_text.setStyleSheet(
             "QTextEdit { background: transparent; border: none; "
             "font-family: 'JetBrains Mono'; font-size: 12px; }"
         )
-        self._ai_text.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._ai_text.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._ai_text.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._ai_text.setMaximumHeight(132)
+        self._ai_text.setFrameShape(QFrame.NoFrame)
+        self._ai_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._ai_text.setVisible(False)
+        # Re-fit whenever the document reflows — on new text and on every panel
+        # width change, since wrapping decides how tall the answer is.
+        self._ai_text.document().documentLayout().documentSizeChanged.connect(
+            lambda _size: self._fit_ai_text_height())
         ai_layout.addWidget(self._ai_text)
 
-        self._ai_scroll.setWidget(ai_container)
-        self._ai_scroll.setVisible(False)
-        ai_frame_layout.addWidget(self._ai_scroll)
+        self._ai_body.setVisible(False)
+        ai_frame_layout.addWidget(self._ai_body)
 
         self._ai_section = QWidget()
         ai_sec_l = QVBoxLayout(self._ai_section)
@@ -1825,8 +1985,36 @@ class _PreallocDetailPanel(QWidget):
     # ── Slot helpers ──────────────────────────────────────────────────
 
     def _apply_ai_reasoning_visibility(self):
-        self._ai_scroll.setVisible(True)
+        """Show exactly one of the two reasoning widgets — never both.
+
+        They are alternatives: the label carries a short rule-based note, the
+        text edit carries long AI prose. Showing both stacks a 132 px scrolling
+        QTextEdit under a label inside a 156 px scroll area, so the block grows
+        its own scrollbar next to the one the text edit already has — the two
+        scrollbars reported after clicking Ask AI on an item that was showing a
+        default explanation.
+
+        Both visibilities are decided here, from one flag, so a caller cannot
+        set half the state and leave the other half stale.
+        """
+        self._ai_body.setVisible(True)
         self._ai_text.setVisible(self._ai_has_long_reasoning)
+        self._ai_content_lbl.setVisible(not self._ai_has_long_reasoning)
+        if self._ai_has_long_reasoning:
+            self._fit_ai_text_height()
+
+    def _fit_ai_text_height(self):
+        """Size the answer box to its text so the panel is the only scroller."""
+        self._fit_text_height(self._ai_text)
+
+    def _fit_dup_text_height(self):
+        self._fit_text_height(self._dup_text)
+
+    @staticmethod
+    def _fit_text_height(edit):
+        doc = edit.document()
+        doc.setTextWidth(max(1, edit.viewport().width()))
+        edit.setFixedHeight(int(doc.size().height()) + 4)
 
     def _on_open(self):
         if self._current_path:
@@ -1867,8 +2055,9 @@ class _PreallocDetailPanel(QWidget):
             f"color: {get_palette().get('review', '#d8b46a')};"
         )
         self._ai_content_lbl.setText(tr("Reasoning will appear when analysis finishes."))
-        self._ai_content_lbl.setVisible(True)
-        self._ai_text.setVisible(False)
+        # The previous selection may have had AI prose. Without this reset the
+        # stale flag re-showed its answer under the "analyzing" note.
+        self._ai_has_long_reasoning = False
         self._apply_ai_reasoning_visibility()
 
     # ── Contained-files list ──────────────────────────────────────────
@@ -1950,6 +2139,7 @@ class _PreallocDetailPanel(QWidget):
             item = self._files_clay.takeAt(0)
             w = item.widget()
             if w is not None:
+                w.hide()   # else the old page paints over the new one
                 w.deleteLater()
         self._file_checks = []
 
@@ -1964,7 +2154,7 @@ class _PreallocDetailPanel(QWidget):
             rl = QHBoxLayout(row)
             rl.setContentsMargins(0, 0, 0, 0)
             rl.setSpacing(8)
-            cb = QCheckBox(os.path.basename(p) or p)
+            cb = TacticalCheckBox(os.path.basename(p) or p)
             cb.setToolTip(p)
             cb.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
             cb.setChecked(p in self._selected_files)
@@ -2244,7 +2434,7 @@ class _PreallocDetailPanel(QWidget):
         # Header
         self._name_lbl.setText(_duplicate_title(entity) if is_duplicate else name)
 
-        self._risk_badge.set_badge(risk.upper(), _status_variant(risk))
+        self._risk_badge.set_badge(tr(risk).upper(), _status_variant(risk))
 
         _pal = get_palette()
         _ai_safe  = _pal.get("safe",       "#7aa88a")
@@ -2252,8 +2442,9 @@ class _PreallocDetailPanel(QWidget):
         _ai_risk  = _pal.get("risk",       "#c67a69")
         _ai_idle  = _pal.get("text_faint", "#57685e")
         _ai_map = {
+            # U+25D4, not U+25D0 — see _AI_SYMBOL in findings_table_model.
             "ready": ("✓ AI", _ai_safe), "done":      ("✓ AI", _ai_safe),
-            "pending": ("◐ AI", _ai_warn), "analyzing": ("◐ AI", _ai_warn),
+            "pending": ("◔ AI", _ai_warn), "analyzing": ("◔ AI", _ai_warn),
             "failed": ("✗ AI", _ai_risk), "error":     ("✗ AI", _ai_risk),
             "none": ("— AI", _ai_idle), "disabled": ("⊘ AI", _ai_idle),
         }
@@ -2264,15 +2455,14 @@ class _PreallocDetailPanel(QWidget):
         )
 
         # Info rows
-        self._cat_val.setText(category)
+        self._cat_val.setText(tr(category))
         if is_duplicate:
-            self._path_val.setText(_duplicate_path_preview(entity))
-            self._path_val.setToolTip("")
+            self._path_val.setText(_norm_path(_duplicate_path_preview(entity)))
         else:
-            self._path_val.setText(_elide_path_middle(path) if path else "—")
-            self._path_val.setToolTip(path or "")
+            self._path_val.setText(_norm_path(path) if path else "—")
         self._size_val.setText(size)
-        self._items_val.setText(contains_text or f"{item_count:,} items")
+        self._items_val.setText(
+            contains_text or tr("{n:,} items", n=item_count))
         # For duplicates the dedicated DUPLICATE LOCATIONS block below already
         # spells out copies/locations, so the CONTAINS row is pure repetition.
         items_row = self._items_val.parentWidget()
@@ -2290,7 +2480,9 @@ class _PreallocDetailPanel(QWidget):
         # LABEL row — show only when a semantic label is present
         has_label = bool(semantic_label)
         self._lbl_key.setVisible(has_label)
-        self._lbl_val.setText(semantic_label)
+        # ENTITY_TYPES values are in the locale files; they only reach them
+        # through tr(), and this call site was passing the raw English.
+        self._lbl_val.setText(tr(semantic_label))
         lbl_row_w = self._lbl_val.parentWidget()
         if lbl_row_w:
             lbl_row_w.setVisible(has_label)
@@ -2348,8 +2540,6 @@ class _PreallocDetailPanel(QWidget):
                     f"font-family: 'JetBrains Mono'; font-size: 12px; "
                     f"color: {get_palette().get('review', '#d8b46a')};"
                 )
-                self._ai_content_lbl.setVisible(True)
-                self._ai_text.setVisible(False)
                 self._apply_ai_reasoning_visibility()
             elif has_ai_prose:
                 self._ai_has_long_reasoning = True
@@ -2364,7 +2554,6 @@ class _PreallocDetailPanel(QWidget):
                     f"font-family: 'JetBrains Mono'; font-size: 11px; color: {get_palette().get('text_dim', '#8a9b8f')};"
                 )
                 self._ai_text.setPlainText(ai_explanation)
-                self._ai_content_lbl.setVisible(False)
                 self._apply_ai_reasoning_visibility()
             elif is_duplicate:
                 # Rule-based duplicate explanation in place of AI prose.
@@ -2378,8 +2567,6 @@ class _PreallocDetailPanel(QWidget):
                     f"font-family: 'JetBrains Mono'; font-size: 12px; "
                     f"color: {get_palette().get('text', '#d6e2da')};"
                 )
-                self._ai_content_lbl.setVisible(True)
-                self._ai_text.setVisible(False)
                 self._apply_ai_reasoning_visibility()
             elif is_container:
                 # Rule-based help for personal/mixed containers — what it holds
@@ -2394,8 +2581,6 @@ class _PreallocDetailPanel(QWidget):
                     f"font-family: 'JetBrains Mono'; font-size: 12px; "
                     f"color: {get_palette().get('text', '#d6e2da')};"
                 )
-                self._ai_content_lbl.setVisible(True)
-                self._ai_text.setVisible(False)
                 self._apply_ai_reasoning_visibility()
             elif ai_status in ("failed", "error"):
                 self._ai_has_long_reasoning = False
@@ -2411,8 +2596,6 @@ class _PreallocDetailPanel(QWidget):
                     f"font-family: 'JetBrains Mono'; font-size: 12px; "
                     f"color: {get_palette().get('risk', '#d68a78')}; "
                 )
-                self._ai_content_lbl.setVisible(True)
-                self._ai_text.setVisible(False)
                 self._apply_ai_reasoning_visibility()
             elif can_ask_ai:
                 # No reasoning yet — invite the user to ask about this item.
@@ -2428,15 +2611,13 @@ class _PreallocDetailPanel(QWidget):
                     f"font-family: 'JetBrains Mono'; font-size: 12px; "
                     f"color: {get_palette().get('text_dim', '#8a9b8f')};"
                 )
-                self._ai_content_lbl.setVisible(True)
-                self._ai_text.setVisible(False)
                 self._apply_ai_reasoning_visibility()
             else:
                 self._ai_state_badge.setText("")
-                self._ai_scroll.setVisible(False)
+                self._ai_body.setVisible(False)
         else:
             self._ai_state_badge.setText("")
-            self._ai_scroll.setVisible(False)
+            self._ai_body.setVisible(False)
 
         if is_duplicate:
             locations = _duplicate_locations(entity)
@@ -2597,56 +2778,21 @@ class RightSidebar(QFrame):
         self._stack.setCurrentWidget(self._empty)
 
 
-class _FindingSelectionCheckBox(QCheckBox):
-    """Same square checkbox renderer used by Quick Cleanup rows."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(18, 18)
-
-    def paintEvent(self, event):
-        del event
-        p = get_palette()
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-
-        checked = self.isChecked()
-        enabled = self.isEnabled()
-        hovered = self.underMouse()
-
-        border = p.get("border_alt", "#2b3d33")
-        border_hover = p.get("border_hover", "#3a5648")
-        border_active = p.get("accent", "#7cc596")
-        fill = p.get("bg_deep", "#080d0a")
-        fill_hover = p.get("panel_hover", "#1d2c25")
-        fill_active = p.get("accent_soft", "#1b2e22")
-        tick = p.get("text", "#d6e2da")
-        disabled = p.get("text_faint", "#57685e")
-
-        box = self.rect().adjusted(1, 1, -1, -1)
-        current_border = border_active if checked else border_hover if hovered else border
-        current_fill = fill_active if checked else fill_hover if hovered else fill
-        if not enabled:
-            current_border = border
-            current_fill = fill
-
-        painter.setPen(QPen(QColor(current_border), 1))
-        painter.setBrush(QColor(current_fill))
-        painter.drawRect(box)
-
-        if checked:
-            painter.setPen(QPen(QColor(tick if enabled else disabled), 2))
-            painter.drawLine(4, 9, 7, 12)
-            painter.drawLine(7, 12, 13, 6)
-
-        painter.end()
+# Was a byte-identical copy of Quick Cleanup's; both now share one widget.
+_FindingSelectionCheckBox = TacticalCheckBox
 
 
 class FindingsEntityRow(QFrame):
-    """Softer entity row for the category inspection list."""
+    """Softer entity row for the category inspection list.
+
+    Doubles as the header of an app group — see rebind(). The header carries
+    the group's totals and an expand chevron; its members render as the same
+    widget, indented.
+    """
 
     clicked = Signal(int)
     check_toggled = Signal(int, bool)
+    group_toggled = Signal(str)      # group key, emitted by a header row
 
     def __init__(self, source_row: int, entity: dict, checked: bool = False, parent=None):
         super().__init__(parent)
@@ -2668,27 +2814,41 @@ class FindingsEntityRow(QFrame):
         self._check_btn.clicked.connect(self._on_check_clicked)
         layout.addWidget(self._check_btn, alignment=Qt.AlignVCenter)
 
+        # Expand/collapse affordance — only shown on a group header row.
+        self._group: dict | None = None
+        self._depth: int = 0
+        self._chevron = QLabel("")
+        self._chevron.setFixedWidth(10)
+        self._chevron.setAlignment(Qt.AlignCenter)
+        self._chevron.setStyleSheet("font-size: 9px; background: transparent;")
+        self._chevron.setVisible(False)
+        layout.addWidget(self._chevron, alignment=Qt.AlignVCenter)
+
         center = QVBoxLayout()
         center.setSpacing(3)
 
         title_row = QHBoxLayout()
         title_row.setSpacing(6)
-        self._name_lbl = QLabel(entity.get("name", "Unknown"))
+        # Elided, not plain: both of these already carried an Ignored size
+        # policy so the row would never force the list wider, which meant a
+        # plain QLabel simply had its tail cut off — no ellipsis, no tooltip.
+        # At the 1100px minimum window the meta line lost a third of itself.
+        self._name_lbl = ElidedLabel(entity.get("name", "Unknown"))
         self._name_lbl.setStyleSheet("font-size: 14px; font-weight: 760;")
-        self._name_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         title_row.addWidget(self._name_lbl, stretch=1)
 
-        self._risk_badge = Badge(entity.get("risk", "Review"), _status_variant(entity.get("risk", "Review")))
+        _risk0 = entity.get("risk", "Review")
+        # tr(): the badge sat next to filter chips that WERE translated, so
+        # one screen showed "REVIEW" and "À vérifier" for the same thing.
+        self._risk_badge = Badge(tr(_risk0), _status_variant(_risk0))
         title_row.addWidget(self._risk_badge, alignment=Qt.AlignVCenter)
         center.addLayout(title_row)
 
-        self._meta_lbl = QLabel()
+        self._meta_lbl = ElidedLabel()
         self._meta_lbl.setObjectName("Muted")
         self._meta_lbl.setStyleSheet(
             "font-family: 'JetBrains Mono'; font-size: 11px;"
         )
-        self._meta_lbl.setWordWrap(False)
-        self._meta_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         center.addWidget(self._meta_lbl)
 
         # Path label kept as a hidden attribute so update_entity can still
@@ -2733,7 +2893,12 @@ class FindingsEntityRow(QFrame):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and not self._check_btn.geometry().contains(event.position().toPoint()):
-            self.clicked.emit(self._source_row)
+            if self.is_group_header():
+                # The whole header toggles, not just the chevron — a 10px
+                # target for the primary action of the row would be unkind.
+                self.group_toggled.emit(self.group_key())
+            else:
+                self.clicked.emit(self._source_row)
         super().mousePressEvent(event)
 
     def enterEvent(self, event):
@@ -2764,19 +2929,55 @@ class FindingsEntityRow(QFrame):
         self._check_btn.blockSignals(False)
         self._check_btn.update()
 
-    def rebind(self, source_row: int, entity: dict, checked: bool):
-        """Repoint a pooled row at a new entity instead of recreating it."""
+    def rebind(self, source_row: int, entity: dict, checked: bool,
+               *, depth: int = 0, group: dict | None = None):
+        """Repoint a pooled row at a new entity instead of recreating it.
+
+        ``depth`` indents a row that belongs to a group; ``group`` turns the
+        row into that group's header, carrying the expand state and the
+        aggregate figures. One widget serves both jobs on purpose: headers and
+        members share a single ordered pool, so the visual order is simply the
+        order rows are bound in. Two pools could not interleave, because a
+        QVBoxLayout fixes widget order when they are inserted.
+        """
         self._source_row = source_row
         self._selected = False
         self._hovered = False
+        self._group = group
+        self._depth = depth
         self.update_entity(entity, checked)
+        self._apply_group_chrome()
+
+    def _apply_group_chrome(self):
+        """Show the expand chevron and indent for grouped rows."""
+        group = getattr(self, "_group", None)
+        depth = getattr(self, "_depth", 0)
+        lay = self.layout()
+        lay.setContentsMargins(12 + depth * 22, 8, 14, 8)
+        if group is None:
+            self._chevron.setVisible(False)
+            self._chevron.setText("")
+            return
+        self._chevron.setVisible(True)
+        self._chevron.setText("▾" if group.get("expanded") else "▸")
+        self._chevron.setToolTip(
+            tr("Hide the {n} items inside", n=group.get("count", 0))
+            if group.get("expanded")
+            else tr("Show the {n} items inside", n=group.get("count", 0)))
+
+    def is_group_header(self) -> bool:
+        return getattr(self, "_group", None) is not None
+
+    def group_key(self) -> str:
+        group = getattr(self, "_group", None)
+        return group.get("key", "") if group else ""
 
     def update_entity(self, entity: dict, checked: bool):
         self._entity = entity
         risk = entity.get("risk", "Review")
         is_duplicate = entity.get("entity_type") == "duplicate_group"
         self._name_lbl.setText(_duplicate_title(entity) if is_duplicate else entity.get("name", "Unknown"))
-        self._risk_badge.set_badge(risk, _status_variant(risk))
+        self._risk_badge.set_badge(tr(risk), _status_variant(risk))
         if is_duplicate:
             self._meta_lbl.setText(_duplicate_row_meta(entity))
             self._path_lbl.setText(_duplicate_path_preview(entity))
@@ -2859,6 +3060,166 @@ class FindingsEntityRow(QFrame):
         self._apply_check_style()
 
 
+def _group_risk(group: dict) -> str:
+    """The most cautious risk in a group — a header must never look safer
+    than the least safe thing folded under it."""
+    entities = list(group.get("members") or [])
+    if group.get("root") is not None:
+        entities.append(group["root"])
+    worst, worst_idx = "Safe", -1
+    for e in entities:
+        risk = normalize_risk(e.get("risk", "Review"))
+        idx = _GROUP_RISK_ORDER.get(risk, 0)
+        if idx > worst_idx:
+            worst, worst_idx = risk, idx
+    return worst
+
+
+# Protected outranks everything: a group holding one protected item must say so.
+_GROUP_RISK_ORDER = {"Safe": 0, "Optional": 1, "Review": 2, "Protected": 3}
+
+
+class FolderTreeView(QFrame):
+    """Browse the scan by folder instead of by classification.
+
+    Every other view answers "what is this?", which is a judgement and can be
+    wrong: WSL was filed under Virtual Machines because two .vhdx images
+    outweighed 619 DLLs, and Discord under Media. This answers "where is it?",
+    which is never a judgement — so when a label is wrong the user is not
+    stuck. It is also the view that makes "what is eating my disk" answerable
+    by following the biggest number down, the way every disk tool works.
+    """
+
+    entity_activated = Signal(dict)     # user picked a folder that is a finding
+
+    def __init__(self, parent=None, on_back: Callable = None):
+        super().__init__(parent)
+        self.on_back = on_back
+        self.setObjectName("Panel")
+        self._root: PathNode | None = None
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(12)
+
+        nav = QHBoxLayout()
+        nav.setSpacing(12)
+        back = QPushButton(tr("← Back to Overview"))
+        back.setObjectName("Subtle")
+        back.setStyleSheet("font-size: 11px; padding: 6px 12px;")
+        back.setCursor(Qt.PointingHandCursor)
+        back.clicked.connect(lambda: self.on_back() if self.on_back else None)
+        nav.addWidget(back)
+
+        title = QLabel(tr("BY FOLDER"))
+        apply_tactical_label(title, font_size=14, letter_spacing=3)
+        nav.addWidget(title)
+
+        self._summary_lbl = QLabel("")
+        self._summary_lbl.setObjectName("Muted")
+        self._summary_lbl.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 11px;")
+        nav.addWidget(self._summary_lbl)
+        nav.addStretch()
+        layout.addLayout(nav)
+
+        hint = QLabel(tr("Sizes include everything inside a folder. "
+                         "Largest first, so the space is always the top row."))
+        hint.setObjectName("Dim")
+        hint.setStyleSheet("font-size: 11px;")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        self._tree = QTreeWidget()
+        self._tree.setObjectName("FolderTree")
+        self._tree.setColumnCount(3)
+        self._tree.setHeaderLabels([tr("FOLDER"), tr("SIZE"), tr("ITEMS")])
+        self._tree.setRootIsDecorated(True)
+        self._tree.setUniformRowHeights(True)
+        self._tree.setAlternatingRowColors(False)
+        self._tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._tree.setColumnWidth(0, 620)
+        self._tree.header().setStretchLastSection(False)
+        self._tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self._tree.header().setSectionResizeMode(1, QHeaderView.Fixed)
+        self._tree.header().setSectionResizeMode(2, QHeaderView.Fixed)
+        self._tree.setColumnWidth(1, 110)
+        self._tree.setColumnWidth(2, 90)
+        for col, align in ((1, Qt.AlignRight), (2, Qt.AlignRight)):
+            item = self._tree.headerItem()
+            item.setTextAlignment(col, align | Qt.AlignVCenter)
+        self._tree.itemExpanded.connect(self._on_expanded)
+        self._tree.itemActivated.connect(self._on_activated)
+        self._tree.itemClicked.connect(self._on_activated)
+        install_header_fit(self._tree)
+        layout.addWidget(self._tree, stretch=1)
+        self._apply_style()
+
+    def _apply_style(self):
+        p = get_palette()
+        self._tree.setStyleSheet(
+            f"QTreeWidget#FolderTree {{ background: {p.get('panel_alt', '#18241e')}; "
+            f"border: 1px solid {p.get('border', '#213028')}; "
+            f"font-family: 'JetBrains Mono'; font-size: 11px; "
+            f"selection-background-color: {p.get('accent_soft', '#1b2e22')}; "
+            f"selection-color: {p.get('text', '#d6e2da')}; }} "
+            f"QTreeWidget#FolderTree::item {{ padding: 5px 4px; border: none; }} "
+            f"QHeaderView::section {{ background: {p.get('panel', '#141d18')}; "
+            f"color: {p.get('text_faint', '#57685e')}; border: none; "
+            f"border-bottom: 1px solid {p.get('border', '#213028')}; "
+            f"padding: 8px 6px; font-family: 'Silkscreen', 'JetBrains Mono'; "
+            f"font-size: 8px; letter-spacing: 1px; }}"
+        )
+
+    # ── population ────────────────────────────────────────────────
+
+    def set_entities(self, entities: list):
+        """Rebuild the tree. Only the top level is materialised up front —
+        a full C:/ scan is ~1,200 entities and several thousand folders, and
+        building every QTreeWidgetItem eagerly stalls the screen."""
+        self._root = collapse_single_child_chains(build_tree(entities))
+        self._tree.clear()
+        self._summary_lbl.setText(
+            tr("// {size} across {n:,} items",
+               size=_format_size(self._root.size_bytes),
+               n=self._root.entity_count))
+        for node in self._root.sorted_children():
+            self._tree.addTopLevelItem(self._make_item(node))
+
+    def _make_item(self, node: PathNode) -> QTreeWidgetItem:
+        item = QTreeWidgetItem([node.name,
+                                _format_size(node.size_bytes),
+                                f"{node.entity_count:,}"])
+        item.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+        item.setTextAlignment(2, Qt.AlignRight | Qt.AlignVCenter)
+        item.setData(0, Qt.UserRole, node)
+        item.setToolTip(0, node.path)
+        if node.entity is not None:
+            risk = normalize_risk(node.entity.get("risk", "Review"))
+            item.setForeground(0, QBrush(QColor(_risk_fg(risk))))
+        if node.children:
+            # A placeholder child gives the expand arrow without building the
+            # subtree; _on_expanded swaps it for the real rows on first open.
+            item.addChild(QTreeWidgetItem(["…"]))
+        return item
+
+    def _on_expanded(self, item: QTreeWidgetItem):
+        node = item.data(0, Qt.UserRole)
+        if node is None:
+            return
+        if item.childCount() == 1 and item.child(0).data(0, Qt.UserRole) is None:
+            item.takeChildren()
+            for child in node.sorted_children():
+                item.addChild(self._make_item(child))
+
+    def _on_activated(self, item: QTreeWidgetItem, _column: int = 0):
+        node = item.data(0, Qt.UserRole)
+        if node is not None and node.entity is not None:
+            self.entity_activated.emit(node.entity)
+
+
 class CategoryDetailView(QFrame):
     """Category drill-down using a calmer list with right-side inspection."""
 
@@ -2871,6 +3232,8 @@ class CategoryDetailView(QFrame):
         self._selected_path: str = ""
         self._row_widgets: dict[str, FindingsEntityRow] = {}
         self._row_pool: list[FindingsEntityRow] = []
+        self._expanded_groups: set[str] = set()
+        self._app_index_cache: dict | None = None
 
         self.setObjectName("Panel")
         self._build_ui()
@@ -2948,9 +3311,21 @@ class CategoryDetailView(QFrame):
         filter_row.addSpacing(4)
 
         # Risk filter chips — uniform tactical labels, theme-aware accents.
+        # "All" is a reset rather than a fifth risk: it turns every chip back
+        # on. Startups had this chip and Findings did not, so an identical row
+        # of chips answered a click differently depending on the screen.
+        self._all_risks_btn = QPushButton(tr("All"))
+        self._all_risks_btn.setCheckable(True)
+        self._all_risks_btn.setChecked(True)
+        self._all_risks_btn.setObjectName("Subtle")
+        self._all_risks_btn.setCursor(Qt.PointingHandCursor)
+        self._all_risks_btn.clicked.connect(self._on_all_risks_clicked)
+        filter_row.addWidget(self._all_risks_btn)
+
         self._risk_btns: dict[str, QPushButton] = {}
-        for risk in ("Safe", "Optional", "Review", "Protected"):
-            btn = QPushButton(risk)
+        for risk in RISK_ORDER:
+            # tr(): the chip labels were the only risk names left in English.
+            btn = QPushButton(tr(risk))
             btn.setCheckable(True)
             btn.setChecked(True)
             btn.setObjectName("Subtle")
@@ -3206,9 +3581,17 @@ class CategoryDetailView(QFrame):
         self._rebuild_entity_rows()
         self._update_footer()
 
+    def _on_all_risks_clicked(self):
+        """'All' means no filter — turn every risk chip back on."""
+        for btn in self._risk_btns.values():
+            btn.setChecked(True)
+        self._apply_risk_filter()
+
     def _apply_risk_filter(self):
         active = {r for r, btn in self._risk_btns.items() if btn.isChecked()}
-        self._proxy.set_risk_filter(active if len(active) < len(self._risk_btns) else None)
+        showing_everything = len(active) == len(self._risk_btns)
+        self._proxy.set_risk_filter(None if showing_everything else active)
+        self._all_risks_btn.setChecked(showing_everything)
         self._refresh_risk_chip_styles()
         self._rebuild_entity_rows()
         self._update_footer()
@@ -3255,18 +3638,22 @@ class CategoryDetailView(QFrame):
         border = p.get("border_alt", "#2b3d33")
         quiet  = p.get("border",     "#213028")
         faint  = p.get("text_faint", "#57685e")
+
+        def _chip_qss(active: bool, color: str) -> str:
+            if active:
+                return (f"font-size: 10px; padding: 5px 12px; color: {color}; "
+                        f"background: {panel}; border: 1px solid {border}; "
+                        f"border-radius: 2px;")
+            return (f"font-size: 10px; padding: 5px 12px; color: {faint}; "
+                    f"background: transparent; border: 1px solid {quiet}; "
+                    f"border-radius: 2px;")
+
         for risk, btn in self._risk_btns.items():
-            if btn.isChecked():
-                color = _status_color(risk)
-                btn.setStyleSheet(
-                    f"font-size: 10px; padding: 5px 12px; color: {color}; "
-                    f"background: {panel}; border: 1px solid {border}; border-radius: 2px;"
-                )
-            else:
-                btn.setStyleSheet(
-                    f"font-size: 10px; padding: 5px 12px; color: {faint}; "
-                    f"background: transparent; border: 1px solid {quiet}; border-radius: 2px;"
-                )
+            btn.setStyleSheet(_chip_qss(btn.isChecked(), _status_color(risk)))
+        # "All" carries no risk colour of its own — it reads as active only
+        # while nothing is filtered out.
+        self._all_risks_btn.setStyleSheet(
+            _chip_qss(self._all_risks_btn.isChecked(), p.get("text", "#d6e2da")))
 
     def changeEvent(self, event):
         from PySide6.QtCore import QEvent
@@ -3476,20 +3863,40 @@ class CategoryDetailView(QFrame):
             )
             return
 
+        from app.services.uninstaller import (
+            CANCELLED, LAUNCHED, launch_uninstaller, uninstaller_is_runnable,
+        )
+
+        # A registry entry outlives the program it describes. Say so plainly
+        # rather than launching nothing and reporting success.
+        if not uninstaller_is_runnable(uninstall_cmd):
+            QMessageBox.information(
+                self, tr("Uninstaller is missing"),
+                tr("Windows still lists an uninstaller for {name}, but the file "
+                   "it points to is gone — the entry is left over from a "
+                   "program that was already removed or moved.\n\n"
+                   "Use “Move to Recycle Bin” for any leftover files you "
+                   "recognise.").format(name=name),
+            )
+            return
+
         reply = QMessageBox.question(
             self, tr("Deep Uninstall"),
             tr("Run the official uninstaller for {name}?\n\n"
-               "This launches the application's own uninstaller. Follow its "
-               "prompts to finish removal.").format(name=name),
+               "This launches the application's own uninstaller. Windows will "
+               "ask for permission first, because uninstalling needs "
+               "administrator rights.").format(name=name),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
             return
 
-        started, message = launch_uninstaller(uninstall_cmd)
+        outcome, message = launch_uninstaller(uninstall_cmd)
         if self._scan_state and hasattr(self._scan_state, "log_line"):
             self._scan_state.log_line.emit(f"[uninstall] {name}: {message}")
-        if started:
+        if outcome == CANCELLED:
+            return          # the user declined UAC; nothing to report
+        if outcome == LAUNCHED:
             # Both caches are now stale. The registry snapshot is obvious; the
             # presence evidence (Start Menu, installed folders, PATH, processes)
             # matters just as much — without clearing it, a re-scan still reports
@@ -3528,6 +3935,139 @@ class CategoryDetailView(QFrame):
             row.set_selected(False)
         self._clear_detail_sidebar()
 
+    def select_by_path(self, path: str) -> bool:
+        """Select the row for *path*, expanding its group if it is folded away.
+
+        Used when the by-folder view hands an entity back: the user found it
+        by location, so the list has to land on it rather than merely open in
+        the vicinity.
+        """
+        for row in range(self._model.rowCount()):
+            entity = self._model.get_entity(row)
+            if not entity or entity.get("path", "") != path:
+                continue
+            owner = owner_key(path, self._app_index())
+            if owner:
+                self._expanded_groups.add(owner.lower())
+            self._selected_path = path
+            self._rebuild_entity_rows()
+            self._show_detail_sidebar(entity)
+            return True
+        return False
+
+    # ── grouping ──────────────────────────────────────────────────
+
+    def _display_rows(self):
+        """Yield ``(source_row, entity, depth, group)`` in visual order.
+
+        One app is one row. A real scan put 23 Discord rows in this list —
+        `shared_proto_db`, `Session Storage`, `WidevineCdm` — none of which is
+        a decision anyone can make, and ~120 more for AppData/Local/Packages.
+        Members are folded under the app that owns them.
+
+        Nothing is dropped: a collapsed group still reports its own totals and
+        its members are one click away. Small items in particular stay
+        reachable, because clearing them out is a thing people actually want
+        to do — the group just lets them do it in one go.
+        """
+        ordered = []
+        for proxy_row in range(self._proxy.rowCount()):
+            sr = self._proxy.mapToSource(
+                self._proxy.index(proxy_row, COL_NAME)).row()
+            entity = self._model.get_entity(sr)
+            if entity:
+                ordered.append((sr, entity))
+
+        groups = group_entities([e for _sr, e in ordered], self._app_index())
+        row_of = {id(e): sr for sr, e in ordered}
+
+        # A group's row shows the whole app's total, so it has to be RANKED by
+        # that total. Left in first-appearance order it was positioned by its
+        # largest single member instead, and a 618 MB Discord could sit below
+        # a 300 MB row while claiming to be bigger. Only the size-like sorts
+        # have a meaningful aggregate; the rest keep the proxy's order.
+        sort_key = self._proxy.sort_key()
+        if sort_key in ("largest", "smallest", "reclaimable"):
+            field = ("reclaimable_bytes" if sort_key == "reclaimable"
+                     else "size_bytes")
+            groups.sort(key=lambda g: g.get(field, 0),
+                        reverse=(sort_key != "smallest"))
+
+        for group in groups:
+            members = group["members"]
+            root = group["root"]
+            total = len(members) + (1 if root else 0)
+            if total <= 1:
+                only = root or (members[0] if members else None)
+                if only is not None:
+                    yield row_of.get(id(only), -1), only, 0, None
+                continue
+
+            key = (group.get("owner") or "").lower()
+            expanded = key in self._expanded_groups
+            header = {
+                "count": total, "expanded": expanded, "key": key,
+                "members": members, "root": root,
+            }
+            yield (row_of.get(id(root), -1) if root else -1,
+                   self._group_header_entity(group, total),
+                   0, header)
+            if expanded:
+                if root is not None:
+                    yield row_of.get(id(root), -1), root, 1, None
+                for member in members:
+                    yield row_of.get(id(member), -1), member, 1, None
+
+    def _app_index(self):
+        """Registry install-location → display name, read once per screen."""
+        if getattr(self, "_app_index_cache", None) is None:
+            from app.models.entity_grouping import build_app_index
+            self._app_index_cache = build_app_index()
+        return self._app_index_cache
+
+    def _group_header_entity(self, group: dict, total: int) -> dict:
+        """A display-only dict describing the group as a whole."""
+        root = group.get("root") or {}
+        return {
+            "name": group_label(group),
+            "path": group.get("owner", ""),
+            "size": _format_size(group.get("size_bytes", 0)),
+            "size_bytes": group.get("size_bytes", 0),
+            "reclaimable_bytes": sum(
+                int(e.get("reclaimable_bytes", 0) or 0)
+                for e in ([root] if root else []) + group["members"]),
+            "file_count": group.get("file_count", 0),
+            "risk": _group_risk(group),
+            "entity_type": root.get("entity_type", "application"),
+            "entity_type_label": tr("{n} items in this app", n=total),
+            "is_group": True,
+            "ai_status": "none",
+        }
+
+    def _group_fully_checked(self, group: dict | None) -> bool:
+        if not group:
+            return False
+        rows = self._group_source_rows(group)
+        return bool(rows) and all(self._model.is_checked(r) for r in rows)
+
+    def _group_source_rows(self, group: dict) -> list[int]:
+        entities = list(group.get("members") or [])
+        if group.get("root") is not None:
+            entities.append(group["root"])
+        rows = []
+        for e in entities:
+            r = self._model.row_for_entity(e)
+            if r >= 0:
+                rows.append(r)
+        return rows
+
+    def _toggle_group(self, key: str):
+        if key in self._expanded_groups:
+            self._expanded_groups.discard(key)
+        else:
+            self._expanded_groups.add(key)
+        self._rebuild_entity_rows()
+
     def _rebuild_entity_rows(self):
         """Repopulate the list by reusing pooled row widgets.
 
@@ -3552,29 +4092,29 @@ class CategoryDetailView(QFrame):
 
         selected_visible = False
         idx = 0
-        for proxy_row in range(visible):
-            source_index = self._proxy.mapToSource(self._proxy.index(proxy_row, COL_NAME))
-            sr = source_index.row()
-            entity = self._model.get_entity(sr)
-            if not entity:
-                continue
-            checked = self._model.is_checked(sr)
+        for sr, entity, depth, group in self._display_rows():
+            checked = (self._model.is_checked(sr) if sr >= 0
+                       else self._group_fully_checked(group))
             if idx < len(self._row_pool):
                 row = self._row_pool[idx]
-                row.rebind(sr, entity, checked)
+                row.rebind(sr, entity, checked, depth=depth, group=group)
                 row.setVisible(True)
             else:
                 row = FindingsEntityRow(sr, entity, checked)
                 row.clicked.connect(self._select_source_row)
                 row.check_toggled.connect(self._set_checked_state)
+                row.group_toggled.connect(self._toggle_group)
                 self._row_pool.append(row)
                 # Insert just before the trailing stretch so order stays stable.
                 self._list_layout.insertWidget(self._list_layout.count() - 1, row)
+                row.rebind(sr, entity, checked, depth=depth, group=group)
             path = entity.get("path", "")
-            is_selected = bool(path) and path == self._selected_path
+            is_selected = (group is None and bool(path)
+                           and path == self._selected_path)
             row.set_selected(is_selected)
             selected_visible = selected_visible or is_selected
-            self._row_widgets[path or f"row:{sr}"] = row
+            if group is None:
+                self._row_widgets[path or f"row:{sr}"] = row
             idx += 1
 
         # Park any unused pooled rows.
@@ -3628,6 +4168,21 @@ class CategoryDetailView(QFrame):
         self._show_detail_sidebar(entity)
 
     def _set_checked_state(self, source_row: int, checked: bool):
+        # A group header owns no row of its own (source_row -1 when the app
+        # folder produced no entity), so ticking it has to fan out to every
+        # member. This is the point of grouping for small items: clearing 363
+        # scattered fragments is one click, not 363.
+        sender = self.sender()
+        if isinstance(sender, FindingsEntityRow) and sender.is_group_header():
+            for row in self._group_source_rows(sender._group):
+                self._apply_check(row, checked)
+            self._rebuild_entity_rows()
+            return
+        self._apply_check(source_row, checked)
+
+    def _apply_check(self, source_row: int, checked: bool):
+        if source_row < 0:
+            return
         self._model.setData(
             self._model.index(source_row, COL_CHECK),
             Qt.Checked if checked else Qt.Unchecked,
@@ -3711,8 +4266,9 @@ class LoadingStateWidget(QFrame):
 
         p = get_palette()
 
-        # Spinner
-        self._spinner_lbl = QLabel("\u25d0")
+        # Spinner. U+25D4, not U+25D0 (see _AI_SYMBOL): the half-filled
+        # circle is in neither bundled font and drew as a .notdef box.
+        self._spinner_lbl = QLabel("\u25d4")
         self._spinner_lbl.setAlignment(Qt.AlignCenter)
         layout.addWidget(self._spinner_lbl)
 
@@ -3982,6 +4538,11 @@ class FindingsDashboard(QWidget):
         self._category_view = CategoryDetailView(on_back=self._on_back_to_dashboard)
         self._stack.addWidget(self._category_view)
 
+        # View 6: By folder — the escape hatch when a classification is wrong.
+        self._tree_view = FolderTreeView(on_back=self._on_back_to_dashboard)
+        self._tree_view.entity_activated.connect(self._show_detail_for_entity)
+        self._stack.addWidget(self._tree_view)
+
         self._main_layout.addWidget(self._stack)
 
         # Show appropriate state initially
@@ -3992,6 +4553,7 @@ class FindingsDashboard(QWidget):
         self._overview_view = StorageOverviewWidget(
             on_category_click=self._on_category_click
         )
+        self._overview_view.browse_by_folder.connect(self._show_tree)
         # Let the dashboard fill the available width. The category list inside
         # already has stretch=1 and the summary panel is capped at 340px wide,
         # so the table grows into the empty space and the summary stays right.
@@ -4044,7 +4606,6 @@ class FindingsDashboard(QWidget):
         phase = self._scan_state.current_phase
         has_entities = self._scan_state.has_entities
         is_active = self._scan_state.is_analysis_active
-        entity_count = self._scan_state.entity_count
 
         # Priority: stopped > loading > dashboard > empty
         if phase == "stopped":
@@ -4151,6 +4712,25 @@ class FindingsDashboard(QWidget):
         self._refresh_dashboard()
         self._stack.setCurrentWidget(self._dashboard_container)
         self._current_view = "dashboard"
+
+    def _show_tree(self):
+        """Open the by-folder view over everything the scan found."""
+        items = []
+        if self._scan_state is not None:
+            items = (self._scan_state.display_items()
+                     if hasattr(self._scan_state, "display_items") else [])
+        self._tree_view.set_entities(items)
+        self._stack.setCurrentWidget(self._tree_view)
+        self._current_view = "tree"
+
+    def _show_detail_for_entity(self, entity: dict):
+        """A folder picked in the tree opens in its category's list, selected —
+        so the tree hands the user back to the view that can act on it."""
+        category = entity.get("category") or "Unknown"
+        self._show_category(category)
+        path = entity.get("path", "")
+        if path:
+            self._category_view.select_by_path(path)
 
     def _show_category(self, category: str):
         entities, total = self._get_entities_for_category(category)

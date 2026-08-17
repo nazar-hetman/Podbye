@@ -7,7 +7,7 @@ exactly the cross-theme leakage we want to prevent.
 import re
 
 from app.themes.theme_manager import (
-    PALETTES, THEME_KEYS, build_qss, get_palette,
+    PALETTES, THEME_KEYS, build_qss,
     get_category_colors, _CATEGORY_COLORS,
 )
 

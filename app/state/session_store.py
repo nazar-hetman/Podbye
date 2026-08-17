@@ -79,6 +79,16 @@ def _sessions_dir() -> Path:
     return Path.home() / ".config" / "vigil" / "sessions"
 
 
+def sessions_dir() -> Path:
+    """Public accessor for the session store location.
+
+    Settings/About reports this path, and it must read the real value rather
+    than restate a literal — About used to list two directories that no code
+    had ever created.
+    """
+    return _sessions_dir()
+
+
 def _last_run_path() -> Path:
     return _sessions_dir() / "last_run.json"
 
@@ -129,6 +139,9 @@ def sweep_orphaned_files(now: float | None = None) -> tuple[int, int]:
 
     Together that was 3.55 GB on a 6.9 GB sessions folder. Fresh files are
     always left alone, so a concurrent instance is never disturbed.
+
+    Sessions the index *does* name are never deleted here — see
+    compact_oversized_sessions() for the oversized ones.
     """
     now = time.time() if now is None else now
     sess_dir = _sessions_dir()
@@ -177,6 +190,132 @@ def sweep_orphaned_files(now: float | None = None) -> tuple[int, int]:
         removed += 1
         reclaimed += size
     return removed, reclaimed
+
+
+def compact_oversized_sessions(now: float | None = None) -> tuple[int, int]:
+    """Rewrite retained session files whose findings array is already ignored.
+
+    Returns ``(files_compacted, bytes_reclaimed)``.
+
+    sweep_orphaned_files only takes files the index does *not* name, so a
+    session listed in history.json is protected however large it is. Three
+    files written before Vigil stopped persisting raw findings held 3.42 GB of
+    a 3.44 GB folder that way, and they only drop off after MAX_ANALYZE_HISTORY
+    further scans push them out of the index.
+
+    Nothing is lost by rewriting them: _load_session_file already reads
+    anything past _SKIP_FINDINGS_ABOVE_BYTES with _read_skipping_findings, so
+    those findings are discarded on every read anyway. Compacting just stops
+    paying disk for bytes the loader is contractually unable to return. The
+    same threshold governs both, which keeps the invariant simple — if the
+    loader would throw the findings away, they are not kept on disk.
+
+    Files below the threshold are left alone: the win there is a fraction of a
+    megabyte and would cost a full parse-and-rewrite of every session on every
+    startup.
+    """
+    now = time.time() if now is None else now
+    sess_dir = _sessions_dir()
+    if not sess_dir.is_dir():
+        return 0, 0
+
+    compacted = reclaimed = 0
+    for entry in sess_dir.iterdir():
+        try:
+            if not entry.is_file():
+                continue
+            name = entry.name
+            if not (name == "last_run.json"
+                    or (name.startswith("session_") and name.endswith(".json"))):
+                continue
+            stat = entry.stat()
+            if stat.st_size <= _SKIP_FINDINGS_ABOVE_BYTES:
+                continue
+            # Another instance may be mid-scan writing this very session.
+            if now - stat.st_mtime < _STALE_AFTER_SECONDS:
+                continue
+
+            data = _read_skipping_findings(entry)
+            if data is None:
+                # Unexpected layout. A full parse of a multi-gigabyte file is
+                # exactly the freeze this whole path exists to avoid, so leave
+                # it: the loader cannot read it either, and the index will
+                # eventually evict it.
+                continue
+            data["findings"] = []
+            data["findings_omitted"] = True
+            data["entities"] = _strip_derived_fields(
+                data.get("entities") or [], _DERIVED_ENTITY_KEYS)
+
+            # Reading a multi-gigabyte file takes seconds, and a scan that
+            # started meanwhile can checkpoint last_run.json in that window.
+            # os.replace would swap in our older content over the newer save,
+            # so re-check the file we actually read is still the one on disk.
+            if entry.stat().st_mtime != stat.st_mtime:
+                continue
+            _write_json_atomic(entry, data)
+            reclaimed += stat.st_size - entry.stat().st_size
+        except (OSError, MemoryError, ValueError):
+            continue
+        compacted += 1
+    return compacted, reclaimed
+
+
+# ── Snapshot slimming ────────────────────────────────────────────
+
+# Keys written into a session file that no reader ever reads back.
+#
+# Every load path goes restore_from_session() -> SmartEntity/Finding ->
+# to_dict(), so display text is rebuilt from the model on the way to the
+# screen. Persisting it too cost ~40% of a session file (`why` alone was
+# 198 KB of a 2.2 MB snapshot) and actively hurt: `why`, `recommendation` and
+# the *_label fields are user-facing prose frozen in whatever language the
+# scan ran in, so a session reopened after a language switch rendered stale
+# text. Dropping them makes reopened sessions follow the current language.
+#
+# Anything listed here MUST be derivable from the fields that survive — see
+# SmartEntity.__post_init__ / its properties, and Finding.__post_init__.
+_DERIVED_ENTITY_KEYS = frozenset({
+    "category",           # property of entity_type + origin
+    "is_dir", "is_entity",  # constants for every entity
+    "size", "age",        # formatted from size_bytes / modified
+    "source_rule",        # f"entity detection: {entity_type}"
+    "why", "recommendation",
+    "entity_type_label",  # ENTITY_TYPES lookup
+    "actionability",      # property of entity_type + risk
+    "confidence_label",   # property of confidence_score
+    "last_access", "first_seen",  # formatted from accessed / modified
+    "reclaimable_bytes",  # recomputed; the per-session total is stored instead
+})
+
+# Findings keep category/risk/source_rule: re-deriving those means re-running
+# categorize() over up to _LARGE_SCAN_THRESHOLD findings on restore, which is
+# real work, unlike the formatting below.
+_DERIVED_FINDING_KEYS = frozenset({
+    "size", "age",
+    "why", "recommendation",
+    "last_access", "first_seen",
+    "reclaimable_bytes",
+})
+
+
+def _strip_derived_fields(items: list[dict], derived: frozenset) -> list[dict]:
+    """Drop re-derivable and default-valued keys from serialized items.
+
+    Empty strings and empty lists go too — every reader fetches these with a
+    matching ``.get(key, "")`` / ``.get(key, [])`` default, and on a real scan
+    most entities carry a dozen empty app-metadata fields at ~25 bytes of JSON
+    each.
+    """
+    out = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        out.append({
+            k: v for k, v in item.items()
+            if k not in derived and v != "" and v != []
+        })
+    return out
 
 
 # ── Public API ───────────────────────────────────────────────────
@@ -627,7 +766,15 @@ def build_snapshot(
     not yet walked when the snapshot was taken. On resume it lets the scanner
     continue from where it stopped instead of re-walking the whole tree. Empty
     for a completed scan.
+
+    Item dicts are slimmed by _strip_derived_fields on the way in, so the
+    snapshot is what gets *persisted* — not what gets displayed. Callers that
+    want display-ready dicts go through the model's to_dict().
     """
+    entities_dicts = entities_dicts or []
+    # Summed before stripping: the per-item value is derived, but History reads
+    # the session total and cannot recompute it without the models.
+    total_reclaimable = _sum_reclaimable(entities_dicts or findings_dicts)
     return {
         "session_id": session_id,
         "target": target,
@@ -637,12 +784,13 @@ def build_snapshot(
         "last_update": time.time(),
         "scanned_count": scanned_count,
         "total_size": total_size,
+        "total_reclaimable_bytes": total_reclaimable,
         "category_totals": category_totals,
         "risk_totals": risk_totals,
-        "findings": findings_dicts,
+        "findings": _strip_derived_fields(findings_dicts, _DERIVED_FINDING_KEYS),
         # True when the raw per-file list was too large to persist. Findings
         # renders entities, so this only tells a resume it cannot dedup by path.
         "findings_omitted": findings_omitted,
-        "entities": entities_dicts or [],
+        "entities": _strip_derived_fields(entities_dicts, _DERIVED_ENTITY_KEYS),
         "scan_frontier": scan_frontier or [],
     }

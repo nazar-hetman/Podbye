@@ -4,9 +4,6 @@ The model output itself can't be tested here (Ollama is the user's local
 machine), so these pin the two things that ARE in our control: the instructions
 we send, and how we post-process the reply.
 """
-import re
-
-from app.services import prompt_builder as pb
 from app.services.prompt_builder import build_prompt, build_entity_prompt
 from app.services.ollama_client import strip_reasoning
 from app.services.ai_explainer import _gen_options

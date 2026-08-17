@@ -42,3 +42,14 @@ scratch_*
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Design mockups live outside the repo (../Vigil-design-archive) — 34 MB of
+# PNGs that no build or test reads.
+Design/
+vigil/
+Vigil_design.html
+vigil_design.tar
+
+# Scratch output
+crash.log
+scratch_tr_report.json

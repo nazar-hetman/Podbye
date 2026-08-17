@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 
-from app.widgets.panels import Panel, SectionHeader, apply_tactical_label
+from app.widgets.panels import Panel, apply_tactical_label
 from app.widgets.pills import Badge
 from app.state.session_store import (
     clear_session,
@@ -28,7 +28,7 @@ from app.state.session_store import (
     load_session_summary,
     load_summary,
 )
-from app.models.finding import _format_size
+from app.models.finding import _format_size, split_size
 from app.models.risk import normalize_risk, normalized_risk_totals
 from app.themes.theme_manager import get_palette, theme_signaller
 from app.i18n import tr
@@ -220,7 +220,7 @@ class HomeScreen(QWidget):
             item = self._dynamic_container.takeAt(0)
             w = item.widget()
             if w:
-                w.deleteLater()
+                self._drop(w)
             elif item.layout():
                 self._clear_layout(item.layout())
 
@@ -229,9 +229,25 @@ class HomeScreen(QWidget):
             item = layout.takeAt(0)
             w = item.widget()
             if w:
-                w.deleteLater()
+                self._drop(w)
             elif item.layout():
                 self._clear_layout(item.layout())
+
+    @staticmethod
+    def _drop(w):
+        """Hide before deleting.
+
+        deleteLater() only queues the delete; until it runs, the widget is
+        still a visible child sitting at its old geometry, so the outgoing
+        state paints on top of the incoming one. Home rebuilds this area on
+        every navigation, which made that a flash of two overlaid layouts.
+
+        hide() rather than setParent(None): unparenting also stops the
+        painting, but it promotes the widget to a top-level *window*, and
+        those turn up on screen as blank frames.
+        """
+        w.hide()
+        w.deleteLater()
 
     def _rebuild_dynamic(self):
         self._clear_dynamic()
@@ -275,7 +291,8 @@ class HomeScreen(QWidget):
         v.setStyleSheet(f"{_MONO} font-size: 18px; font-weight: bold;")
         v.setAlignment(Qt.AlignHCenter | Qt.AlignBottom)
         # A shared minimum width keeps the four stats evenly spaced and stops a
-        # wide value (e.g. "3556.1 GB") from crowding its neighbour.
+        # wide value (e.g. "3556.1 GB") from crowding its neighbour. Rolling
+        # over to TB caps the width the all-time counter can ever reach.
         v.setMinimumWidth(78)
         col.addWidget(v)
         l = QLabel(label)
@@ -314,16 +331,16 @@ class HomeScreen(QWidget):
         row.setSpacing(20)
 
         # Hero — total space freed, in the safe/accent colour.
-        parts = _format_size(freed).split(" ", 1)
+        freed_num, freed_unit = split_size(freed)
         hero = QVBoxLayout()
         hero.setSpacing(0)
         hero_val = QHBoxLayout()
         hero_val.setSpacing(4)
         hero_val.setAlignment(Qt.AlignBottom)
-        hero_num = QLabel(parts[0] if parts else "0")
+        hero_num = QLabel(freed_num)
         hero_num.setStyleSheet(f"{_MONO} font-size: 34px; font-weight: bold; color: {accent};")
         hero_val.addWidget(hero_num)
-        hero_unit = QLabel(parts[1] if len(parts) > 1 else "B")
+        hero_unit = QLabel(freed_unit)
         hero_unit.setObjectName("Dim")
         hero_unit.setStyleSheet(f"{_MONO} font-size: 14px; padding-bottom: 5px;")
         hero_val.addWidget(hero_unit)

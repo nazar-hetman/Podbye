@@ -2,6 +2,7 @@
 
 import sys
 import os
+import threading
 import time
 import logging
 
@@ -106,6 +107,28 @@ class VigilWindow(QMainWindow):
                              removed, reclaimed / (1024 * 1024))
         except Exception:
             logging.exception("[session] leftover sweep failed")
+        self._compact_oversized_sessions()
+
+    def _compact_oversized_sessions(self):
+        """Shrink retained sessions whose findings the loader already discards.
+
+        Off the UI thread, unlike the sweep above: compaction byte-scans each
+        oversized file end to end, and the profile that prompted this held
+        3.42 GB across three of them — seconds of scanning before the window
+        would have appeared. A daemon thread killed mid-write only orphans a
+        temp file, which the next launch's sweep reclaims.
+        """
+        def _run():
+            try:
+                from app.state.session_store import compact_oversized_sessions
+                count, reclaimed = compact_oversized_sessions()
+                if count:
+                    logging.info("[session] compacted %d oversized session(s), "
+                                 "%.1f MB reclaimed", count, reclaimed / (1024 * 1024))
+            except Exception:
+                logging.exception("[session] compaction failed")
+
+        threading.Thread(target=_run, name="session-compact", daemon=True).start()
 
     def _build_ui(self):
         """Build (or rebuild) the entire UI. Safe to call again for language changes."""
@@ -184,9 +207,20 @@ class VigilWindow(QMainWindow):
 
         settings.settings_saved.connect(self._on_settings_saved)
 
-        # Replace central widget; schedule old one for deletion
+        # Replace central widget; hide the old one before scheduling its
+        # deletion. setCentralWidget only drops it from the layout — left
+        # visible, the previous language's entire UI paints over the new one
+        # until the deferred delete runs. Hide rather than setParent(None):
+        # unparenting would make the whole outgoing UI a top-level window.
         self.setCentralWidget(central)
         if old_central:
+            # Safety net, not the primary guard. Deleting this tree destroys
+            # every QThread parented to a screen inside it, and destroying a
+            # RUNNING QThread aborts the process (0xC0000409) with no
+            # traceback. Callers are expected to have stopped work first; this
+            # makes it impossible to crash even when one forgets.
+            self._stop_all_background_work()
+            old_central.hide()
             old_central.deleteLater()
 
         self._refresh_shell_chrome()
@@ -194,6 +228,35 @@ class VigilWindow(QMainWindow):
     def _add_screen(self, name: str, widget: QWidget):
         self._screens[name] = widget
         self._stack.addWidget(widget)
+
+    # ── Background work across screens ────────────────────────────
+
+    def _busy_reason(self) -> str:
+        """What is running that a shell rebuild would destroy, or "".
+
+        Screens own their own threads, so each one answers for itself.
+        """
+        for screen in self._screens.values():
+            reason = getattr(screen, "busy_reason", None)
+            if callable(reason):
+                try:
+                    text = reason()
+                except RuntimeError:
+                    continue
+                if text:
+                    return text
+        return ""
+
+    def _stop_all_background_work(self, timeout_ms: int = 3000) -> bool:
+        stopped = True
+        for screen in list(self._screens.values()):
+            stop = getattr(screen, "stop_background_work", None)
+            if callable(stop):
+                try:
+                    stopped = bool(stop(timeout_ms)) and stopped
+                except RuntimeError:
+                    pass
+        return stopped
 
     def _navigate(self, name: str):
         if name in self._screens:
@@ -227,12 +290,17 @@ class VigilWindow(QMainWindow):
         from app.i18n import get_language
         stored_lang = self._settings_store.get("ui_language", "English")
         if stored_lang != get_language():
-            if self._scan_state.is_analysis_active:
-                # Rebuilding the whole UI mid-analysis would tear down the live
-                # scan/findings view, so defer the switch until work settles.
+            # Rebuilding the whole UI tears down every screen and the threads
+            # they own. Deferring covers the live scan/findings view, and —
+            # the case that used to kill the process outright — a Quick
+            # Cleanup deletion in flight.
+            busy = (tr("an analysis is running")
+                    if self._scan_state.is_analysis_active else self._busy_reason())
+            if busy:
                 # _maybe_apply_pending_language() picks it up on completion/stop.
                 self._pending_lang = stored_lang
-                self._warn_language_deferred()
+                self._start_pending_language_poll()
+                self._warn_language_deferred(busy)
                 return
             self._apply_language_change(stored_lang)
 
@@ -245,15 +313,16 @@ class VigilWindow(QMainWindow):
         self._navigate(self._current_screen_name)
         self._apply_theme(self._current_theme)
 
-    def _warn_language_deferred(self):
-        """Tell the user the language switch waits for the running analysis."""
+    def _warn_language_deferred(self, reason: str = ""):
+        """Tell the user the language switch waits for the work in progress."""
         from PySide6.QtWidgets import QMessageBox
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Information)
         box.setWindowTitle(tr("Language change pending"))
         box.setText(
-            tr("An analysis is running. The language will change "
-               "automatically once it finishes or you stop it.")
+            tr("Vigil is busy: {reason}. The language will change "
+               "automatically once that finishes or you stop it.",
+               reason=reason or tr("an analysis is running"))
         )
         box.setStandardButtons(QMessageBox.StandardButton.Ok)
         box.exec()
@@ -274,9 +343,31 @@ class VigilWindow(QMainWindow):
             return
         if self._ai_explainer and self._ai_explainer.is_running:
             return
+        # A screen's own thread — a Quick Cleanup deletion, say — is not
+        # visible in scan state, and rebuilding while one runs is fatal.
+        # Nothing signals us when those finish, so poll until they do.
+        if self._busy_reason():
+            self._start_pending_language_poll()
+            return
+        self._stop_pending_language_poll()
         lang = self._pending_lang
         self._pending_lang = None
         QTimer.singleShot(0, lambda: self._apply_language_change(lang))
+
+    def _start_pending_language_poll(self):
+        timer = getattr(self, "_lang_poll_timer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setInterval(1000)
+            timer.timeout.connect(self._maybe_apply_pending_language)
+            self._lang_poll_timer = timer
+        if not timer.isActive():
+            timer.start()
+
+    def _stop_pending_language_poll(self):
+        timer = getattr(self, "_lang_poll_timer", None)
+        if timer is not None and timer.isActive():
+            timer.stop()
 
     def _connect_shell_status_signals(self):
         """Keep the shared shell chrome in sync with scan and AI activity."""

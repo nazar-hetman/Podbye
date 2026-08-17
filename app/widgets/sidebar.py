@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Signal, Qt
 from app.i18n import tr
+from app.widgets.controls import ElidedLabel
 from app.widgets.panels import apply_tactical_label
 from app.widgets.logo import logo_pixmap
 from app.themes.theme_manager import get_palette, theme_signaller
@@ -41,7 +42,11 @@ class SidebarButton(QPushButton):
         lay.addWidget(icon)
         self._icon_lbl = icon
 
-        name = QLabel(text)
+        # Elided, not plain: the sidebar is a fixed 196px and leaves the name
+        # ~119px, so a long translation was cut mid-glyph with no ellipsis and
+        # no tooltip ("Автозавантаження" needed 129px). A shorter term is the
+        # real fix per language; this is the guard for the next one.
+        name = ElidedLabel(text)
         name.setStyleSheet(
             "font-size: 13px; letter-spacing: 0.4px; background: transparent; border: none;"
         )
@@ -76,10 +81,18 @@ class Sidebar(QFrame):
             ("Analyze",       "◎",  "⌘3"),
             ("Findings",      "≡",  "⌘4"),
             ("Startups",      "⏻",  "⌘5"),
-            ("History",       "◷",  "⌘6"),
+            # Not U+25F7 (◷): absent from both bundled fonts, so it rendered
+            # as a .notdef box — the same failure the Settings icon hit below.
+            # U+21BA is in the font and reads as "go back over what happened".
+            ("History",       "↺",  "⌘6"),
         ],
         "SYSTEM": [
-            ("Settings",      "⚙",  "⌘7"),
+            # Not a gear: the bundled UI font has no U+2699, so Windows fell
+            # back to the colour emoji font, whose glyphs are bitmaps and
+            # ignore the label's colour. It stayed pale lavender on the light
+            # Paper theme while every other icon followed the palette. U+229B
+            # is in the font, so it inherits the colour like the rest.
+            ("Settings",      "⊛",  "⌘7"),
         ],
     }
 

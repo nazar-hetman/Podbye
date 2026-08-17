@@ -65,6 +65,17 @@ def available_languages() -> list[str]:
     return names
 
 
+def explanation_languages() -> list[str]:
+    """Languages the AI can be asked to answer in.
+
+    Deliberately not available_languages(): what the model writes has nothing to
+    do with whether Vigil ships a locale file. Gating this on a UI translation
+    meant a user running a multilingual model could not ask for German simply
+    because de.json did not exist yet.
+    """
+    return list(LANGUAGES)
+
+
 def coverage(lang: str, keys: list[str] | None = None) -> float:
     """Fraction of *keys* translated for *lang* (1.0 for English)."""
     code = LANGUAGES.get(lang, "en")

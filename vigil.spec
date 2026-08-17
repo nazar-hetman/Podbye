@@ -14,6 +14,10 @@ block_cipher = None
 datas = [
     ("app/services/classification_rules.json", "app/services"),
     ("app/assets/logo.svg", "app/assets"),
+    # Licensing must travel with the binary: the LGPL and the OFL both
+    # require their text to accompany every distribution.
+    ("LICENSE", "."),
+    ("THIRD-PARTY-NOTICES.md", "."),
 ]
 
 
@@ -32,6 +36,7 @@ def _bundle_dir(src_dir: str, suffix: str):
 _bundle_dir("app/locales", ".json")   # translations (uk.json, …)
 _bundle_dir("app/themes", ".qss")     # themes (forest, amber, mono, paper, …)
 _bundle_dir("app/fonts", ".ttf")      # shipped fonts
+_bundle_dir("licenses", ".txt")       # LGPL/GPL/OFL/BSD texts
 
 _icon = "app/assets/vigil.ico" if os.path.exists("app/assets/vigil.ico") else None
 
@@ -56,10 +61,8 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
+    exclude_binaries=True,      # binaries live beside the exe, see COLLECT
     name="Vigil",
     debug=False,
     bootloader_ignore_signals=False,
@@ -73,4 +76,16 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=_icon,
+)
+
+# The Qt DLLs land here as replaceable files rather than inside the exe.
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name="Vigil",
 )

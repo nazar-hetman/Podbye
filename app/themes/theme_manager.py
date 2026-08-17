@@ -162,93 +162,88 @@ _current_theme_key = "forest"
 
 _CATEGORY_COLORS = {
     "forest": {
-        # Muted tactical — dark greens, navies, violets on near-black bg
-        "Media":                "#4a1a6b",   # deep violet-purple
-        "Applications":         "#0d3a5c",   # steel navy
-        "Documents":            "#1a3d2b",   # dark forest green
-        "Dev Artifacts":        "#1c3a4a",   # muted steel cyan
-        "AI / ML":              "#2d1a4a",   # deep violet
-        "Databases & Saves":    "#1a2a4a",   # slate blue
-        "Cache & Temp":         "#4a2500",   # dark amber-orange
-        "Archives":             "#3d2a1a",   # dark warm brown
-        "Browser Data":         "#0a2a4a",   # deep ocean blue
-        "System":               "#4a0d0d",   # dark crimson
-        "System Logs":          "#2a2010",   # muted olive-gray
-        "Unknown":              "#1e2832",   # dark neutral blue-gray
-        "Other":                "#252d2a",   # very dark neutral
-        "Protected / Restricted": "#5a0f0f", # dark crimson
-        "Games":                "#143a26",   # deep emerald
-        "Application Data":     "#16304a",   # muted navy
-        "User Profile":         "#2e2a14",   # warm olive
-        "Virtual Machines":     "#20304a",   # steel blue
-        "Duplicates":           "#3a2a0a",   # dark amber
+        "Applications": "#086798",
+        "Application Data": "#11a5b1",
+        "System": "#b00f50",
+        "Dev Artifacts": "#409e02",
+        "Cache & Temp": "#8f6304",
+        "AI / ML": "#6e33ce",
+        "Browser Data": "#8f80e7",
+        "Databases & Saves": "#d46d7c",
+        "Media": "#33546b",
+        "Documents": "#578a8f",
+        "Archives": "#7a3748",
+        "Games": "#578149",
+        "Virtual Machines": "#6d5837",
+        "User Profile": "#554286",
+        "System Logs": "#7d79aa",
+        "Duplicates": "#a27075",
+        "Protected / Restricted": "#33546b",
+        "Unknown": "#578a8f",
+        "Other": "#d1d1d1"
     },
     "amber": {
-        # Warm tactical — bronze/olive/ochre tints
-        "Media":                "#4a2860",   # warm dusty violet
-        "Applications":         "#1a3050",   # warm steel blue
-        "Documents":            "#2a3818",   # olive-green
-        "Dev Artifacts":        "#1e3430",   # warm steel teal
-        "AI / ML":              "#321a38",   # warm deep purple
-        "Databases & Saves":    "#1e2838",   # warm dark blue
-        "Cache & Temp":         "#4a2c00",   # dark amber
-        "Archives":             "#3c2c14",   # dark warm brown
-        "Browser Data":         "#0e2440",   # warm dark ocean
-        "System":               "#42100a",   # dark warm crimson
-        "System Logs":          "#2e2408",   # dark khaki
-        "Unknown":              "#2a2418",   # warm dark neutral
-        "Other":                "#262018",   # warm near-black
-        "Protected / Restricted": "#501008", # deep burnt red
-        "Games":                "#2a3a1a",   # warm olive-green
-        "Application Data":     "#1a2838",   # warm dark blue
-        "User Profile":         "#34280f",   # dark ochre
-        "Virtual Machines":     "#1e2a40",   # warm steel
-        "Duplicates":           "#3a2a0c",   # dark amber
+        "Applications": "#086798",
+        "Application Data": "#11a5b1",
+        "System": "#b00f50",
+        "Dev Artifacts": "#409e02",
+        "Cache & Temp": "#8f6304",
+        "AI / ML": "#6e33ce",
+        "Browser Data": "#8f80e7",
+        "Databases & Saves": "#d46d7c",
+        "Media": "#33546b",
+        "Documents": "#578a8f",
+        "Archives": "#7a3748",
+        "Games": "#578149",
+        "Virtual Machines": "#6d5837",
+        "User Profile": "#554286",
+        "System Logs": "#7d79aa",
+        "Duplicates": "#a27075",
+        "Protected / Restricted": "#33546b",
+        "Unknown": "#578a8f",
+        "Other": "#d1d1d1"
     },
     "mono": {
-        # Grayscale — subtle lightness differences only
-        "Media":                "#323232",   # mid-dark gray
-        "Applications":         "#2a2a2a",   # darker gray
-        "Documents":            "#2e2e2e",   # dark gray
-        "Dev Artifacts":        "#272727",   # very dark gray
-        "AI / ML":              "#303030",   # mid gray
-        "Databases & Saves":    "#262626",   # dark
-        "Cache & Temp":         "#3a3a3a",   # slightly lighter
-        "Archives":             "#353535",   # mid-dark
-        "Browser Data":         "#242424",   # very dark
-        "System":               "#1e1e1e",   # near-black
-        "System Logs":          "#222222",   # near-black
-        "Unknown":              "#1a1a1a",   # darkest
-        "Other":                "#1c1c1c",   # darkest
-        "Protected / Restricted": "#404040", # lighter gray for contrast
-        "Games":                "#2c2c2c",   # mid-dark gray
-        "Application Data":     "#242424",   # dark gray
-        "User Profile":         "#2e2e2e",   # mid gray
-        "Virtual Machines":     "#282828",   # dark gray
-        "Duplicates":           "#383838",   # lighter gray
+        "Applications": "#dedede",
+        "Application Data": "#c9c9c9",
+        "System": "#b5b5b5",
+        "Dev Artifacts": "#a2a2a2",
+        "Cache & Temp": "#8f8f8f",
+        "AI / ML": "#7c7c7c",
+        "Browser Data": "#6a6a6a",
+        "Databases & Saves": "#585858",
+        "Media": "#dedede",
+        "Documents": "#c9c9c9",
+        "Archives": "#b5b5b5",
+        "Games": "#a2a2a2",
+        "Virtual Machines": "#8f8f8f",
+        "User Profile": "#7c7c7c",
+        "System Logs": "#6a6a6a",
+        "Duplicates": "#585858",
+        "Protected / Restricted": "#dedede",
+        "Unknown": "#c9c9c9",
+        "Other": "#1c1c1c"
     },
     "paper": {
-        # Paper / dusty — soft muted tones on warm light bg
-        # Use deeper/saturated tones so they read against #faf6ec
-        "Media":                "#7b4a9e",   # dusty lavender
-        "Applications":         "#2e5f8a",   # muted steel blue
-        "Documents":            "#3a6b42",   # muted forest green
-        "Dev Artifacts":        "#2e5c6e",   # dusty teal
-        "AI / ML":              "#5e3878",   # muted purple
-        "Databases & Saves":    "#2a4a6e",   # muted slate
-        "Cache & Temp":         "#8a5a1a",   # warm dark amber
-        "Archives":             "#7a4a28",   # warm brown
-        "Browser Data":         "#1e4a70",   # dusty ocean
-        "System":               "#8a2020",   # muted crimson
-        "System Logs":          "#5a5020",   # muted olive
-        "Unknown":              "#5a5e58",   # muted warm gray
-        "Other":                "#52564e",   # slightly darker
-        "Protected / Restricted": "#922020", # deep muted red
-        "Games":                "#3a7a4a",   # muted emerald
-        "Application Data":     "#3a5a7a",   # dusty navy
-        "User Profile":         "#6a5a3a",   # warm tan
-        "Virtual Machines":     "#4a5a7a",   # dusty steel
-        "Duplicates":           "#9a6a2a",   # warm amber
+        "Applications": "#1d8ac7",
+        "Application Data": "#2b9860",
+        "System": "#91006f",
+        "Dev Artifacts": "#8b3305",
+        "Cache & Temp": "#ca5d30",
+        "AI / ML": "#8e5bf5",
+        "Browser Data": "#2c37c9",
+        "Databases & Saves": "#d83299",
+        "Media": "#4c7592",
+        "Documents": "#507c60",
+        "Archives": "#632b51",
+        "Games": "#603626",
+        "Virtual Machines": "#96614d",
+        "User Profile": "#7563aa",
+        "System Logs": "#2d3c7c",
+        "Duplicates": "#9e547c",
+        "Protected / Restricted": "#4c7592",
+        "Unknown": "#507c60",
+        "Other": "#1f1f1f"
     },
 }
 
@@ -664,7 +659,10 @@ QCheckBox::indicator:hover {{
 QCheckBox::indicator:checked {{
     background: {accent_soft};
     border-color: {accent};
-    image: none;  /* Qt draws default checkmark */
+    /* NB Qt does NOT draw a checkmark once ::indicator carries a background
+       and border — a checked box styled this way is an empty filled square.
+       app.widgets.controls.TacticalCheckBox paints its own tick and is what
+       the app uses; this block only covers any stray plain QCheckBox. */
 }}
 QCheckBox::indicator:checked:hover {{
     background: {panel_hover};

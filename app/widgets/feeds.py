@@ -48,6 +48,10 @@ class OperatorFeed(QFrame):
             "}"
         )
         self._text.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # Says what it is waiting for, like the findings table beside it does.
+        # An empty panel next to one reading "Waiting for scan" looks like the
+        # feed failed rather than like it has nothing to report yet.
+        self._text.setPlaceholderText(tr("Scan output appears here."))
         outer.addWidget(self._text)
 
         # Batch buffer
