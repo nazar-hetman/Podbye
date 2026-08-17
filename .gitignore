@@ -53,3 +53,8 @@ vigil_design.tar
 # Scratch output
 crash.log
 scratch_tr_report.json
+
+# Release artifacts — produced by the build, published to GitHub Releases,
+# never committed.
+SHA256SUMS.txt
+installer/Output/
