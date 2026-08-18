@@ -918,7 +918,12 @@ class DonutChartWidget(QWidget):
             painter.drawPie(draw_rect, qt_start, qt_span)
 
         # ── Donut hole ──────────────────────────────────────────────
-        hole_color = QColor(get_palette().get("bg_deep", "#0b140d"))
+        # panel_alt, not bg_deep: the donut sits inside a PanelAlt, and
+        # bg_deep is far darker than that on every dark theme (#070c09 against
+        # #19231c on forest), so the hole read as a black puck stuck in the
+        # middle of the chart. On the light theme the two happen to be close,
+        # which is why it looked right there and wrong everywhere else.
+        hole_color = QColor(get_palette().get("panel_alt", "#19231c"))
         painter.setBrush(hole_color)
         painter.setPen(QPen(hole_color, 1))
         painter.drawEllipse(hole_rect)
@@ -4508,6 +4513,17 @@ class FindingsDashboard(QWidget):
                 cv = self._category_view
                 if hasattr(cv, "_detail_widget") and cv._detail_widget is not None:
                     cv._detail_widget._apply_block_styles()
+                    # Built with the palette that was live at construction, so
+                    # without this the Ask AI button kept the old theme's
+                    # accent and border after a switch.
+                    btn = getattr(cv._detail_widget, "_ai_ask_btn", None)
+                    if btn is not None:
+                        btn.setStyleSheet(_ask_ai_button_qss())
+                # Same for the sort dropdown: apply_reference_style() bakes the
+                # palette in, and nothing re-applied it.
+                combo = getattr(cv, "_sort_combo", None)
+                if combo is not None:
+                    combo.apply_reference_style(get_palette(), compact=True)
         except Exception:
             pass
 
