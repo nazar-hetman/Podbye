@@ -42,7 +42,7 @@ PALETTES = {
         "border_hover": "#486252",
         "text":         "#d9e1db",
         "text_dim":     "#93a297",
-        "text_faint":   "#5f6f65",
+        "text_faint":   "#6a7c71",
         "accent":       "#7aa88a",
         "accent_hover": "#96bd9f",
         "accent_soft":  "#1c2d23",
@@ -71,7 +71,7 @@ PALETTES = {
         "border_hover": "#61492a",
         "text":         "#ebdbbd",
         "text_dim":     "#aa9370",
-        "text_faint":   "#6b5941",
+        "text_faint":   "#897253",
         "accent":       "#d79c54",
         "accent_hover": "#e4b572",
         "accent_soft":  "#2b2114",
@@ -100,7 +100,7 @@ PALETTES = {
         "border_hover": "#4a4a4a",
         "text":         "#f0f0f0",
         "text_dim":     "#9a9a9a",
-        "text_faint":   "#606060",
+        "text_faint":   "#707070",
         "accent":       "#d9d9d9",
         "accent_hover": "#f2f2f2",
         "accent_soft":  "#1a1a1a",
@@ -129,7 +129,7 @@ PALETTES = {
         "border_hover": "#817360",
         "text":         "#232621",
         "text_dim":     "#636558",
-        "text_faint":   "#8d897d",
+        "text_faint":   "#7b776b",
         "accent":       "#6a7562",
         "accent_hover": "#525b4d",
         "accent_soft":  "#d8cfbe",
@@ -307,6 +307,16 @@ _BASE_QSS = """
  * filled itself with bg colour and read as a darker rectangle on top
  * of its parent panel. */
 QMainWindow {{
+    background-color: {bg};
+}}
+/* Dialogs are top-level windows, so the QMainWindow rule above never reached
+ * them: every dialog painted Qt's default #efefef while inheriting the light
+ * text colour from the QWidget rule below. On the three dark themes that put
+ * near-white text on light grey — the close prompt, the cleanup confirmation
+ * and the Ask AI dialog were all barely readable. Naming QDialog explicitly
+ * is safe in a way that styling QWidget is not: it matches only real dialogs,
+ * not the custom containers described above. */
+QDialog, QMessageBox {{
     background-color: {bg};
 }}
 QMainWindow, QWidget {{

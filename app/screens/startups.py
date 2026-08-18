@@ -1140,7 +1140,11 @@ class StartupsScreen(QWidget):
 
         self._queue_lbl = QLabel()
         self._queue_lbl.setObjectName("Muted")
-        self._queue_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 10px; color: #d8b46a;")
+        # From the palette, not a literal: #d8b46a is a dark-theme amber
+        # and sat almost invisibly on the light "paper" theme.
+        self._queue_lbl.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 10px; "
+            f"color: {get_palette().get('review', '#d8b46a')};")
         self._queue_lbl.setVisible(False)
         header.addWidget(self._queue_lbl)
 
