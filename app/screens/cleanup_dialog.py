@@ -12,10 +12,11 @@ from __future__ import annotations
 import os
 import re
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QWidget, QCheckBox, QProgressBar,
+    QSpacerItem, QSizePolicy,
 )
 
 from app.widgets.controls import ElidedLabel, TacticalCheckBox
@@ -202,6 +203,28 @@ class CleanupConfirmDialog(QDialog):
         root.setContentsMargins(24, 22, 24, 22)
         root.setSpacing(0)
 
+        # Everything here that describes what *will* happen. Once it has
+        # happened these stop being true, so they are collected on the way in
+        # and taken down in one go when the result arrives — see
+        # _present_as_result(). Before that fix the finished dialog stacked
+        # "203 items · 13.1 GB will be sent" directly above "135 moved · 42
+        # issues": the plan and the outcome, contradicting each other, in one
+        # scroll.
+        self._confirm_only: list = []
+        self._confirm_spacers: list = []
+
+        def _confirm_gap(px: int):
+            """A gap that belongs to the confirmation, and goes down with it.
+
+            addSpacing() plants a fixed spacer that outlives the widget it was
+            meant to separate, so hiding the risk panel, the review list and
+            the "don't ask again" tick still left ~30px of nothing between the
+            result headline and the issue list.
+            """
+            spacer = QSpacerItem(0, px, QSizePolicy.Minimum, QSizePolicy.Fixed)
+            root.addItem(spacer)
+            self._confirm_spacers.append(spacer)
+
         # ── Header ───────────────────────────────────────────────
         self._header_lbl = QLabel(tr("Move to Recycle Bin"))
         self._header_lbl.setStyleSheet(
@@ -247,7 +270,8 @@ class CleanupConfirmDialog(QDialog):
             risk_layout.addLayout(row)
 
         root.addWidget(risk_frame)
-        root.addSpacing(10)
+        self._confirm_only.append(risk_frame)
+        _confirm_gap(10)
 
         # ── Protected exclusion note ──────────────────────────────
         if self._protected:
@@ -259,7 +283,8 @@ class CleanupConfirmDialog(QDialog):
             )
             prot_lbl.setWordWrap(True)
             root.addWidget(prot_lbl)
-            root.addSpacing(6)
+            self._confirm_only.append(prot_lbl)
+            _confirm_gap(6)
 
         if self._manual_review:
             manual_lbl = QLabel(tr(
@@ -271,7 +296,8 @@ class CleanupConfirmDialog(QDialog):
             )
             manual_lbl.setWordWrap(True)
             root.addWidget(manual_lbl)
-            root.addSpacing(6)
+            self._confirm_only.append(manual_lbl)
+            _confirm_gap(6)
 
         # ── Cloud-sync warning (requires explicit acknowledgment) ────
         self._cloud_cb: QCheckBox | None = None
@@ -308,7 +334,8 @@ class CleanupConfirmDialog(QDialog):
             cloud_layout.addWidget(self._cloud_cb)
 
             root.addWidget(cloud_frame)
-            root.addSpacing(10)
+            self._confirm_only.append(cloud_frame)
+            _confirm_gap(10)
 
         # ── Scrollable preview of the review/uncertain items ──────────
         if self._review_targets:
@@ -319,6 +346,7 @@ class CleanupConfirmDialog(QDialog):
             list_header.setObjectName("Dim")
             list_header.setStyleSheet("font-size: 11px; margin-bottom: 4px;")
             root.addWidget(list_header)
+            self._confirm_only.append(list_header)
 
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
@@ -360,7 +388,8 @@ class CleanupConfirmDialog(QDialog):
             scroll.setMaximumHeight(140)
             scroll.setFixedHeight(min(140, container.sizeHint().height() + 4))
             root.addWidget(scroll)
-            root.addSpacing(8)
+            self._confirm_only.append(scroll)
+            _confirm_gap(8)
 
         # ── "Don't ask again" (only when review/uncertain items are present) ─
         # Review items are already armed; this simply lets the user skip this
@@ -373,7 +402,7 @@ class CleanupConfirmDialog(QDialog):
             )
             self._dont_ask_cb.setStyleSheet("font-size: 12px;")
             root.addWidget(self._dont_ask_cb)
-            root.addSpacing(10)
+            _confirm_gap(10)
 
         # ── Progress area (hidden until worker starts) ────────────
         self._progress_frame = QFrame()
@@ -408,13 +437,67 @@ class CleanupConfirmDialog(QDialog):
         self._progress_path_lbl.setWordWrap(False)
         prog_layout.addWidget(self._progress_path_lbl)
 
+        root.addWidget(self._progress_frame)
+
+        # ── Issue list (hidden until there is something in it) ────
+        # "42 unexpected issue(s) need attention" is not something a user can
+        # act on. Which 42, and why, is. The paths live behind a chevron so a
+        # clean run stays a two-line dialog, and Copy list exists because the
+        # next step for a locked file usually happens outside Vigil.
+        self._issues_frame = QFrame()
+        self._issues_frame.setVisible(False)
+        iss_layout = QVBoxLayout(self._issues_frame)
+        iss_layout.setContentsMargins(0, 8, 0, 0)
+        iss_layout.setSpacing(4)
+
+        iss_head = QHBoxLayout()
+        iss_head.setSpacing(8)
+        self._btn_issues = QPushButton("")
+        self._btn_issues.setObjectName("Subtle")
+        self._btn_issues.setCursor(Qt.PointingHandCursor)
+        self._btn_issues.setStyleSheet(
+            "QPushButton { background: transparent; border: none; "
+            "text-align: left; font-size: 11px; padding: 0; }")
+        self._btn_issues.clicked.connect(self._toggle_issues)
+        iss_head.addWidget(self._btn_issues, stretch=1)
+        self._btn_copy_issues = QPushButton(tr("Copy list"))
+        self._btn_copy_issues.setObjectName("Subtle")
+        self._btn_copy_issues.setCursor(Qt.PointingHandCursor)
+        self._btn_copy_issues.setStyleSheet("font-size: 10px; padding: 2px 10px;")
+        self._btn_copy_issues.clicked.connect(self._copy_issue_list)
+        iss_head.addWidget(self._btn_copy_issues)
+        iss_layout.addLayout(iss_head)
+
+        self._issues_scroll = QScrollArea()
+        self._issues_scroll.setWidgetResizable(True)
+        self._issues_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._issues_scroll.setStyleSheet("QScrollArea { border: none; }")
+        self._issues_scroll.setVisible(False)
+        self._issues_body = QWidget()
+        self._issues_body_layout = QVBoxLayout(self._issues_body)
+        self._issues_body_layout.setContentsMargins(0, 2, 0, 0)
+        self._issues_body_layout.setSpacing(2)
+        self._issues_scroll.setWidget(self._issues_body)
+        iss_layout.addWidget(self._issues_scroll)
+
+        self._issues: list[tuple[str, str, str]] = []   # (reason, path, detail)
+        self._issue_colors: dict[str, str] = {}
+        self._issues_open = False
+        root.addWidget(self._issues_frame)
+
+        # Below the issue list, and quieter than it. This is the "what to do
+        # about it" prose, and it is written per failure *class*, not per file
+        # — bold, above the paths, it read as the answer while the three
+        # specific paths underneath read as a footnote. It is the other way
+        # round. It is also a sibling of the progress frame rather than a
+        # child: a result is not progress, and parented inside it inherited
+        # that frame's visibility and never appeared at all.
         self._result_lbl = QLabel("")
-        self._result_lbl.setStyleSheet("font-size: 12px; font-weight: bold;")
+        self._result_lbl.setObjectName("Dim")
+        self._result_lbl.setStyleSheet("font-size: 11px; margin-top: 10px;")
         self._result_lbl.setWordWrap(True)
         self._result_lbl.setVisible(False)
-        prog_layout.addWidget(self._result_lbl)
-
-        root.addWidget(self._progress_frame)
+        root.addWidget(self._result_lbl)
 
         # ── Button row ────────────────────────────────────────────
         root.addSpacing(10)
@@ -445,7 +528,6 @@ class CleanupConfirmDialog(QDialog):
         # When the user has turned confirmation off, skip straight to the move
         # (still showing progress/result in this dialog) instead of asking.
         if self._auto_confirm and self._armed_targets():
-            from PySide6.QtCore import QTimer
             # Dress the dialog as progress *before* it is shown. It used to open
             # wearing its full confirmation face — title "Confirm Cleanup", a
             # "Don't ask again" tick, an armed "Move to Recycle Bin" button —
@@ -468,6 +550,142 @@ class CleanupConfirmDialog(QDialog):
         if self._dont_ask_cb:
             self._dont_ask_cb.setVisible(False)
         self._progress_frame.setVisible(True)
+
+    def _present_as_result(self, headline: str, subline: str):
+        """Swap the dialog from "what will happen" to "what happened".
+
+        One state at a time. The risk breakdown, the review list, the cloud
+        acknowledgment and the "will be sent" line all describe a plan; the
+        moment the worker finishes they describe a plan that is no longer
+        pending, and leaving them on screen above the outcome asked the user
+        to work out which half was current.
+        """
+        self.setWindowTitle(headline)
+        self._header_lbl.setText(headline)
+        self._sub_lbl.setText(subline)
+        for w in self._confirm_only:
+            w.setVisible(False)
+        for spacer in self._confirm_spacers:
+            spacer.changeSize(0, 0, QSizePolicy.Minimum, QSizePolicy.Fixed)
+        self.layout().invalidate()
+        if self._dont_ask_cb:
+            self._dont_ask_cb.setVisible(False)
+        if self._cloud_cb:
+            self._cloud_cb.setVisible(False)
+        # Deliberately no adjustSize() here. The dialog is only half rebuilt at
+        # this point — the result text and the issue list are still to come —
+        # and resizing to the half-built state pinned a geometry the eight-line
+        # explanation then had to fit inside, so it was squeezed out of the
+        # dialog entirely. _on_finished resizes once, at the end.
+
+    # ── Issue list ────────────────────────────────────────────────
+
+    def _populate_issues(self, result):
+        """Turn the failure counts into named paths with a reason each."""
+        errors = getattr(result, "errors_by_path", {}) or {}
+        self._issues = []
+        self._issue_colors = {}
+        # Ordered worst-first: an irreversible deletion is the one line here a
+        # user must not scroll past, and a protected skip — which is Vigil
+        # working correctly — is the one they can ignore.
+        for path in getattr(result, "not_recycled", []) or []:
+            reason = tr("Deleted permanently")
+            self._issue_colors[reason] = _risk_fg("Protected")
+            self._issues.append((
+                reason, path,
+                tr("Too large for the Recycle Bin — this cannot be restored")))
+        for path in result.failed:
+            reason = tr("Failed")
+            self._issue_colors[reason] = _risk_fg("Protected")
+            self._issues.append((
+                reason, path, errors.get(path) or tr("Unexpected error")))
+        for path in result.in_use:
+            reason = tr("In use")
+            self._issue_colors[reason] = _risk_fg("Review")
+            self._issues.append((
+                reason, path,
+                errors.get(path)
+                or tr("A running program is holding this file open")))
+        for path in result.skipped_protected:
+            reason = tr("Protected")
+            self._issue_colors[reason] = _risk_fg("Optional")
+            self._issues.append((
+                reason, path,
+                tr("System-critical path — never deleted")))
+
+        while self._issues_body_layout.count():
+            item = self._issues_body_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+
+        if not self._issues:
+            self._issues_frame.setVisible(False)
+            return
+
+        pal = get_palette()
+        dim = pal.get("text_dim", "#8a9b8f")
+        # One column for the reason so the paths line up under each other. Run
+        # together in a single label they started at three different offsets,
+        # which is the one thing a monospaced list is supposed to prevent.
+        reason_w = max(
+            (QLabel(r).fontMetrics().horizontalAdvance(r)
+             for r, _p, _d in self._issues), default=0) + 12
+        for reason, path, detail in self._issues[:200]:
+            row = QWidget()
+            rl = QHBoxLayout(row)
+            rl.setContentsMargins(0, 0, 0, 0)
+            rl.setSpacing(8)
+            reason_lbl = QLabel(reason)
+            reason_lbl.setFixedWidth(reason_w)
+            reason_lbl.setStyleSheet(
+                f"font-family: 'JetBrains Mono'; font-size: 10px; "
+                f"color: {self._issue_colors.get(reason, dim)};")
+            rl.addWidget(reason_lbl)
+            lbl = ElidedLabel(path, mode=Qt.ElideMiddle)
+            lbl.setStyleSheet(
+                f"font-family: 'JetBrains Mono'; font-size: 10px; color: {dim};")
+            lbl.setToolTip(f"{path}\n{detail}")
+            rl.addWidget(lbl, stretch=1)
+            self._issues_body_layout.addWidget(row)
+        if len(self._issues) > 200:
+            more = QLabel(tr("  … and {n} more", n=len(self._issues) - 200))
+            more.setObjectName("Dim")
+            more.setStyleSheet("font-size: 10px;")
+            self._issues_body_layout.addWidget(more)
+        self._issues_body_layout.addStretch()
+
+        self._issues_frame.setVisible(True)
+        self._update_issues_button()
+
+    def _update_issues_button(self):
+        self._btn_issues.setText(
+            ("▼  " if self._issues_open else "▶  ")
+            + tr("{n} item(s) need attention", n=len(self._issues)))
+
+    def _toggle_issues(self):
+        self._issues_open = not self._issues_open
+        self._issues_scroll.setVisible(self._issues_open)
+        if self._issues_open:
+            self._issues_scroll.setFixedHeight(
+                min(160, self._issues_body.sizeHint().height() + 4))
+        self._update_issues_button()
+        self.adjustSize()
+
+    def _copy_issue_list(self):
+        """Put the paths on the clipboard — the fix usually happens elsewhere."""
+        from PySide6.QtWidgets import QApplication
+        text = "\n".join(f"{reason}\t{path}\t{detail}"
+                         for reason, path, detail in self._issues)
+        clip = QApplication.clipboard()
+        if clip is not None:
+            clip.setText(text)
+        # Restored, so a second copy gets the same confirmation as the first —
+        # a button stuck on "Copied" says nothing about the click just made.
+        self._btn_copy_issues.setText(tr("Copied"))
+        QTimer.singleShot(
+            1500, lambda: self._btn_copy_issues.setText(tr("Copy list")))
 
     # ── Event handlers ────────────────────────────────────────────
 
@@ -609,24 +827,25 @@ class CleanupConfirmDialog(QDialog):
         else:
             ok_msg = tr("No items were moved")
 
-        parts = [ok_msg]
+        # The outcome is stated once, in the dialog's own header and subtitle,
+        # instead of being appended under a plan that is no longer pending.
+        # The individual paths behind each count live in the issue list below,
+        # so they are not summarised as numbers a second time here.
+        self._present_as_result(
+            tr("Cleanup complete") if not (n_in_use or n_fail)
+            else tr("Cleanup finished with issues"),
+            ok_msg,
+        )
+        self._populate_issues(result)
+
+        parts = []
         if n_gone:
             parts.append(tr(
                 "!  {n} item(s) were too large for the Recycle Bin and were "
                 "removed permanently — these cannot be restored",
                 n=n_gone,
             ))
-            for path in gone[:3]:
-                parts.append(f"     {_elide_middle(path, 64)}")
-            if n_gone > 3:
-                parts.append(tr("     +{n} more", n=n_gone - 3))
-        if n_in_use:
-            parts.append(f"•  {n_in_use} file(s) currently in use")
-        if n_fail:
-            parts.append(f"•  {n_fail} unexpected issue(s) need attention")
-        if n_skip:
-            parts.append(f"•  {n_skip} protected item(s) skipped")
-        parts.append("")
+            parts.append("")
         parts.append(assessment.explanation_text)
 
         self._result_lbl.setText("\n".join(parts))
@@ -692,6 +911,10 @@ class CleanupConfirmDialog(QDialog):
         self._btn_confirm.setText(tr("Close"))
         self._btn_confirm.clicked.disconnect()
         self._btn_confirm.clicked.connect(self.accept)
+
+        # Resize once, now that the dialog is finally in its finished state:
+        # the plan is hidden, the result text is set and the issue list exists.
+        self.adjustSize()
 
     # ── Prevent accidental close during operation ─────────────────
 

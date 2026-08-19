@@ -78,33 +78,41 @@ def test_single_file_group_does_not_expand(qapp):
     assert panel._tabs.isTabEnabled(1) is False
 
 
-def test_pagination_and_cross_page_selection(qapp):
-    panel = _panel(qapp)
+def test_a_long_bucket_is_sliced_and_extends_on_request(qapp):
+    """Buckets are capped one at a time, not cut into global pages: a bucket
+    of 713 DLLs used to own every early page and hide every other bucket."""
     paths = [f"C:/Photos/img_{i:03d}.jpg" for i in range(150)]
     ent = {
         "path": "C:/Photos", "name": "Photos", "risk": "Review",
         "entity_type": "photo_collection", "actionability": "review_only",
         "removable_file_paths": paths,
     }
+    panel = _panel(qapp)
     panel.populate(ent)
     assert panel._tabs.isTabEnabled(1) is True
-    assert panel._file_page_count() == 3
-    assert len(panel._file_checks) == 50          # one page at a time
+    assert len(panel._file_checks) == 50           # first slice only
+    panel._show_more_in_group("Images")
+    assert len(panel._file_checks) == 100
+    panel._show_more_in_group("Images")
+    assert len(panel._file_checks) == 150          # no "more" row left
 
-    # Select 20 on page 1, then 10 on page 2 → counter persists at 30.
+
+def test_selection_survives_the_rows_being_redrawn(qapp):
+    paths = [f"C:/Photos/img_{i:03d}.jpg" for i in range(150)]
+    panel = _panel(qapp)
+    panel.populate({
+        "path": "C:/Photos", "name": "Photos", "risk": "Review",
+        "entity_type": "photo_collection", "actionability": "review_only",
+        "removable_file_paths": paths,
+    })
     for cb, _p in panel._file_checks[:20]:
         cb.setChecked(True)
-    panel._files_change_page(1)
-    for cb, _p in panel._file_checks[:10]:
-        cb.setChecked(True)
-    assert len(panel._selected_files) == 30
-
-    # Returning to page 1 restores the earlier checkboxes.
-    panel._files_change_page(-1)
+    panel._show_more_in_group("Images")
+    assert len(panel._selected_files) == 20
     assert sum(1 for cb, _ in panel._file_checks if cb.isChecked()) == 20
 
 
-def test_select_page_then_recycle_all_selected(qapp):
+def test_select_shown_then_recycle_all_selected(qapp):
     captured: dict = {}
     panel = _panel(qapp, recycle_into=captured)
     paths = [f"C:/x/f{i}.zip" for i in range(120)]
@@ -114,7 +122,7 @@ def test_select_page_then_recycle_all_selected(qapp):
         "removable_file_paths": paths,
     }
     panel.populate(ent)
-    panel._files_select_page()                    # selects the 50 on page 1
+    panel._files_select_shown()                   # the 50 currently drawn
     assert len(panel._selected_files) == 50
     panel._on_recycle_files()
     assert len(captured["removable_file_paths"]) == 50

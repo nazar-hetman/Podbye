@@ -172,6 +172,7 @@ def _dynamic_tables() -> dict[str, set[str]]:
     from app.screens.history import CLEANUP_TARGET_LABELS
     from app.screens.findings_dashboard import INSPECTOR_FIELD_LABELS
     from app.services.entity_detector import detector_reason_templates
+    from app.models.file_grouping import OTHER_KIND, _KIND_BY_EXT
     import app.services.quick_cleanup_detector as qc_detector
 
     tables = {
@@ -188,6 +189,9 @@ def _dynamic_tables() -> dict[str, set[str]]:
         # The evidence line under every finding.
         "detector reasons": detector_reason_templates(),
         "quick cleanup categories": set(qc_detector.CATEGORY_LABELS),
+        # The bucket names on the inspector's per-file list, reached as
+        # tr(group.kind).
+        "file kinds": set(_KIND_BY_EXT.values()) | {OTHER_KIND},
     }
     subs = getattr(st, "_SECTION_SUBS", None)
     if isinstance(subs, dict):

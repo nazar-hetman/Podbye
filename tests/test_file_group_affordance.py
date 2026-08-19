@@ -139,8 +139,11 @@ def _panel_with(entity, starting_tab=0):
             self._tabs = _FakeTabs(starting_tab)
             self._all_file_paths = []
             self._selected_files = set()
-            self._files_page_idx = 0
             self._file_checks = []
+            self._file_groups = []
+            self._file_stats = {}
+            self._files_expanded = set()
+            self._group_limit = {}
 
         def _render_files_page(self):
             pass
