@@ -130,6 +130,7 @@ def assess_cleanup_counts(
     category_key: str | None = None,
     category_label: str | None = None,
     retry_label: str = "Quick Cleanup",
+    all_recoverable: bool = True,
 ) -> CleanupAssessment:
     """Convert cleanup counters into calm, user-facing result language.
 
@@ -277,8 +278,14 @@ def assess_cleanup_counts(
         summary_value=tr("Cleaned successfully"),
         explanation_text=(
             tr("{label} was cleaned successfully.", label=label) + "\n\n"
-            + tr("All removable files in this category were moved safely. "
-                 "Anything that was cleaned remains recoverable in the "
-                 "Recycle Bin.")
+            + (tr("All removable files in this category were moved safely. "
+                  "Anything that was cleaned remains recoverable in the "
+                  "Recycle Bin.")
+               if all_recoverable else
+               # Something in this batch never reached the bin, so the blanket
+               # promise would contradict the warning printed beside it.
+               tr("All removable files in this category were removed. Items "
+                  "the Recycle Bin could not hold were deleted permanently "
+                  "and are listed above; the rest can still be restored."))
         ),
     )

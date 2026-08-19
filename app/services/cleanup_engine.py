@@ -59,6 +59,10 @@ class CleanupResult:
     in_use: list = field(default_factory=list)             # paths skipped because Windows/app still uses them
     failed: list = field(default_factory=list)             # paths that hit unexpected errors
     skipped_protected: list = field(default_factory=list)  # paths skipped (protected)
+    # Paths that were removed from disk but did NOT land in the Recycle Bin,
+    # so they are gone for good. Subset of `succeeded` — the removal did work,
+    # it just was not recoverable. Callers must not describe these as restorable.
+    not_recycled: list = field(default_factory=list)
     total_bytes_freed: int = 0
     errors_by_path: dict = field(default_factory=dict)     # path → error string
     error_codes_by_path: dict = field(default_factory=dict)  # path → parsed Windows error code
@@ -187,11 +191,40 @@ def _delete_one(path: str) -> Optional[str]:
 
 # ── Public API ───────────────────────────────────────────────────
 
+# Above this, an item is verified to have actually reached the bin. Windows
+# deletes permanently — without asking, because we pass FOF_NOCONFIRMATION —
+# when an item does not fit the volume's Recycle Bin quota, and
+# SHFileOperationW still reports success. Only large items can hit that quota,
+# so bracketing just those with a bin query costs a handful of shell calls
+# instead of one per file, and catches the case that actually loses data.
+_VERIFY_RECYCLED_MIN_BYTES = 256 * 1024 * 1024   # 256 MB
+
+
+def _bin_size_for(path: str) -> Optional[int]:
+    """Bytes currently in the Recycle Bin of *path*'s volume, or None."""
+    drive = os.path.splitdrive(os.path.abspath(path))[0]
+    if not drive:
+        return None
+    try:
+        from app.services.recycle_bin import recycle_bin_status
+        size, count = recycle_bin_status(drive + "\\")
+    except Exception:
+        return None
+    # recycle_bin_status reports (0, 0) both for an empty bin and for an
+    # unavailable API. An unavailable API must not be read as "nothing
+    # arrived", so treat the all-zero answer as "no measurement".
+    return None if (size == 0 and count == 0) else size
+
+
 def move_to_recycle_bin(paths: list) -> CleanupResult:
     """Move each path to the Windows Recycle Bin.
 
     Protected paths are silently skipped (counted in skipped_protected).
     Errors on individual paths do not abort the rest of the batch.
+
+    Large items are verified to have actually reached the bin; any that did
+    not are recorded in ``not_recycled`` so the caller can stop promising they
+    are recoverable.
     """
     result = CleanupResult()
     for path in paths:
@@ -199,7 +232,16 @@ def move_to_recycle_bin(paths: list) -> CleanupResult:
             result.skipped_protected.append(path)
             continue
         size = _get_size(path)
+        verify = size >= _VERIFY_RECYCLED_MIN_BYTES
+        bin_before = _bin_size_for(path) if verify else None
         err = _recycle_one(path)
+        if not err and bin_before is not None:
+            bin_after = _bin_size_for(path)
+            # Require the bin to have absorbed most of the item. An exact match
+            # is wrong to demand: another process can empty or add to the bin
+            # while we work, and the shell rounds folder sizes.
+            if bin_after is not None and bin_after - bin_before < size * 0.5:
+                result.not_recycled.append(path)
         if err:
             result.errors_by_path[path] = err
             code = _extract_windows_error_code(err)
@@ -304,7 +346,20 @@ class CleanupWorker(QThread):
                     continue
                 err = _delete_one(path)
             else:
+                # See move_to_recycle_bin: a large item can be deleted outright
+                # when it does not fit the bin's quota, and the API still
+                # reports success. Verify the big ones actually landed.
+                verify = size >= _VERIFY_RECYCLED_MIN_BYTES
+                bin_before = _bin_size_for(path) if verify else None
                 err = _recycle_one(path)
+                if not err and bin_before is not None:
+                    bin_after = _bin_size_for(path)
+                    if bin_after is not None and bin_after - bin_before < size * 0.5:
+                        result.not_recycled.append(path)
+                        self.log_line.emit(
+                            f"[cleanup] NOT recoverable: {os.path.basename(path)} "
+                            f"— too large for the Recycle Bin, removed permanently"
+                        )
 
             if err:
                 result.errors_by_path[path] = err

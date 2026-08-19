@@ -421,15 +421,18 @@ class CleanupConfirmDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.addStretch()
 
+        # Minimum, not fixed: these widths were measured against the English
+        # labels, and a fixed width clips every language whose word is longer
+        # (Ukrainian "Скасувати" needs 94px in the 90px this used to pin).
         self._btn_cancel = QPushButton(tr("Cancel"))
         self._btn_cancel.setObjectName("Subtle")
-        self._btn_cancel.setFixedWidth(90)
+        self._btn_cancel.setMinimumWidth(90)
         self._btn_cancel.clicked.connect(self._on_cancel)
         btn_row.addWidget(self._btn_cancel)
 
         self._btn_confirm = QPushButton(tr("Move to Recycle Bin"))
         self._btn_confirm.setObjectName("Primary")
-        self._btn_confirm.setFixedWidth(180)
+        self._btn_confirm.setMinimumWidth(180)
         self._btn_confirm.clicked.connect(self._on_confirm)
         btn_row.addWidget(self._btn_confirm)
 
@@ -584,16 +587,39 @@ class CleanupConfirmDialog(QDialog):
             skipped_count=n_skip,
             category_label="Selected items",
             retry_label="the cleanup",
+            all_recoverable=not getattr(result, "not_recycled", None),
         )
+
+        # Items the bin refused to absorb were removed for good. Reporting them
+        # inside the "moved to Recycle Bin" count would print a recoverability
+        # promise over a permanent deletion, so they are stated separately and
+        # counted out of the recycled total.
+        gone = list(getattr(result, "not_recycled", []))
+        n_gone = len(gone)
+        n_recycled = max(n_ok - n_gone, 0)
 
         # Build result text
         freed = _format_size(result.total_bytes_freed)
-        if n_ok:
-            ok_msg = f"✓  {n_ok} item(s) moved to Recycle Bin · {freed} freed"
+        if n_recycled:
+            ok_msg = tr("✓  {count} item(s) moved to Recycle Bin · {freed} freed",
+                        count=n_recycled, freed=freed)
+        elif n_ok:
+            ok_msg = tr("✓  {count} item(s) removed · {freed} freed",
+                        count=n_ok, freed=freed)
         else:
             ok_msg = tr("No items were moved")
 
         parts = [ok_msg]
+        if n_gone:
+            parts.append(tr(
+                "!  {n} item(s) were too large for the Recycle Bin and were "
+                "removed permanently — these cannot be restored",
+                n=n_gone,
+            ))
+            for path in gone[:3]:
+                parts.append(f"     {_elide_middle(path, 64)}")
+            if n_gone > 3:
+                parts.append(tr("     +{n} more", n=n_gone - 3))
         if n_in_use:
             parts.append(f"•  {n_in_use} file(s) currently in use")
         if n_fail:
