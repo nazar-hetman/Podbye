@@ -120,6 +120,27 @@ _CATEGORY_COLOR_PARENT = {
 }
 
 
+# Category strings reach the dashboard from several places — live findings,
+# entities, restored session files — with inconsistent casing, so they are
+# normalised before grouping. That normalisation used to be a plain .title(),
+# which rewrites "AI / ML" to "Ai / Ml": a name that matches no colour key and
+# no parent, so the category fell through to the "Other" swatch and its own
+# colour was never drawn anywhere. Resolve through the registered spellings
+# instead, and only fall back to .title() for a name nobody has registered.
+_CANONICAL_CATEGORIES = {
+    name.casefold(): name
+    for name in (*get_category_colors("forest"), *_CATEGORY_COLOR_PARENT)
+}
+
+
+def canonical_category(name: str) -> str:
+    """Return the registered spelling of *name*, else its title-case form."""
+    cleaned = (name or "").strip()
+    if not cleaned:
+        return "Unknown"
+    return _CANONICAL_CATEGORIES.get(cleaned.casefold(), cleaned.title())
+
+
 def _get_category_color(category: str) -> str:
     """Return the theme-aware color for a category."""
     colors = get_category_colors()
@@ -811,14 +832,19 @@ class DonutChartWidget(QWidget):
         total = sum(d["size_bytes"] for _, d in cats) or 1
         angle = 0.0
 
-        def _add(cat, size_bytes, pct, color, is_other=False, pooled=0):
+        def _add(cat, size_bytes, pct, color_key, is_other=False, pooled=0):
             nonlocal angle
             span = 360.0 * size_bytes / total
             self._segments.append({
                 "cat": cat,
                 "pct": pct,
                 "size_bytes": size_bytes,
-                "color": color,
+                # The category to resolve a colour FROM, which is not always
+                # what the wedge is labelled: the pooled wedge is labelled in
+                # the user's language and would never match a palette key.
+                # Resolved at paint time, never cached — a cached hex survives
+                # a theme switch and leaves the chart wearing the old palette.
+                "color_key": color_key,
                 "angle_start": angle,
                 "angle_span": span,
                 "is_other": is_other,
@@ -827,14 +853,13 @@ class DonutChartWidget(QWidget):
             angle += span
 
         for cat, data in head:
-            _add(cat, data["size_bytes"], data.get("percentage", 0),
-                 _get_category_color(cat))
+            _add(cat, data["size_bytes"], data.get("percentage", 0), cat)
 
         if tail:
             pooled_bytes = sum(d["size_bytes"] for _, d in tail)
             _add(tr("Other"), pooled_bytes,
                  sum(d.get("percentage", 0) for _, d in tail),
-                 _get_category_color("Other"), is_other=True, pooled=len(tail))
+                 "Other", is_other=True, pooled=len(tail))
         self.update()
 
     # Angular separator carved between neighbouring wedges.
@@ -891,7 +916,7 @@ class DonutChartWidget(QWidget):
             is_sel = seg["cat"] == self._selected
             is_hov = seg["cat"] == self._hovered
 
-            color = QColor(seg["color"])
+            color = QColor(_get_category_color(seg["color_key"]))
             if is_sel:
                 color = color.lighter(138)
             elif is_hov:
@@ -3523,6 +3548,19 @@ class CategoryDetailView(QFrame):
         self._proxy.rowsInserted.connect(self._update_footer)
         self._proxy.rowsRemoved.connect(self._update_footer)
 
+    def _apply_title_color(self):
+        """Re-tint the category title from the live palette.
+
+        Separate from set_category so a theme switch can call it: the colour is
+        baked into a stylesheet, and nothing re-applied it, so the drill-down
+        heading kept the previous theme's hue until you navigated away.
+        """
+        color = _get_category_color(self.category)
+        self._title_lbl.setStyleSheet(
+            f"font-family: 'Silkscreen', 'JetBrains Mono'; font-size: 14px; "
+            f"letter-spacing: 3px; color: {color};"
+        )
+
     def set_category(self, category: str, entities: list, cap_notice: str = ""):
         """Set the category and entities to display."""
         self.category = category
@@ -3532,12 +3570,8 @@ class CategoryDetailView(QFrame):
         self._clear_detail_sidebar()
         self._btn_select_all.setVisible(category in _BULK_SELECT_CATEGORIES)
 
-        color = _get_category_color(category)
-
         self._title_lbl.setText(category.upper())
-        self._title_lbl.setStyleSheet(
-            f"font-family: 'Silkscreen', 'JetBrains Mono'; font-size: 14px; letter-spacing: 3px; color: {color};"
-        )
+        self._apply_title_color()
 
         total_size = sum(e.get("size_bytes", 0) for e in entities)
         self._stats_lbl.setText(tr("// {n} entities · {size}",
@@ -4511,6 +4545,9 @@ class FindingsDashboard(QWidget):
                     self._overview_view._donut.update()
             if hasattr(self, "_category_view") and self._category_view is not None:
                 cv = self._category_view
+                # The category heading bakes its hue into a stylesheet too.
+                if getattr(cv, "category", ""):
+                    cv._apply_title_color()
                 if hasattr(cv, "_detail_widget") and cv._detail_widget is not None:
                     cv._detail_widget._apply_block_styles()
                     # Built with the palette that was live at construction, so
@@ -4779,9 +4816,7 @@ class FindingsDashboard(QWidget):
 
     def open_category(self, category_name: str) -> bool:
         """Open Findings directly to a specific category (called from Analyze category click)."""
-        normalized = category_name.strip()
-        if normalized.lower() != "unknown":
-            normalized = normalized.title()
+        normalized = canonical_category(category_name)
 
         if not self._scan_state:
             return False
@@ -4843,8 +4878,7 @@ class FindingsDashboard(QWidget):
             entity = item.to_dict() if hasattr(item, "to_dict") else dict(item)
         except Exception:
             return
-        cat = (entity.get("category") or "Unknown").strip()
-        cat_norm = cat.title() if cat.lower() != "unknown" else "Unknown"
+        cat_norm = canonical_category(entity.get("category"))
         if cat_norm != self._current_category:
             return
         self._category_view.update_entity(entity)
@@ -4893,7 +4927,7 @@ class FindingsDashboard(QWidget):
             summary = self._scan_state.category_summary()
             categories: dict[str, dict] = {}
             for cat, data in summary.items():
-                cat_norm = cat.strip().title() if cat.lower() != "unknown" else "Unknown"
+                cat_norm = canonical_category(cat)
                 if cat_norm not in categories:
                     categories[cat_norm] = {
                         "size_bytes": 0,
@@ -4911,9 +4945,7 @@ class FindingsDashboard(QWidget):
 
         categories = {}
         for item in items:
-            cat = (item.get("category") or "Unknown").strip()
-            if cat.lower() != "unknown":
-                cat = cat.title()
+            cat = canonical_category(item.get("category"))
             if cat not in categories:
                 categories[cat] = {
                     "size_bytes": 0,
@@ -4949,10 +4981,10 @@ class FindingsDashboard(QWidget):
 
         # Fallback: iterate pre-built dict list (safe only when not a 2M+ scan)
         all_items = self._scan_state.display_items() if hasattr(self._scan_state, "display_items") else []
-        cat_norm = category.strip().title()
+        cat_norm = canonical_category(category)
         matched = []
         for e in all_items:
-            if (e.get("category", "Unknown") or "Unknown").strip().title() == cat_norm:
+            if canonical_category(e.get("category")) == cat_norm:
                 matched.append(e)
                 if len(matched) >= self._ENTITY_CAP * 2:
                     break
