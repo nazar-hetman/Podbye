@@ -15,7 +15,7 @@ from PySide6.QtGui import QColor
 
 from app.models.risk import RISK_ORDER
 from app.models.startup_entry import StartupEntry
-from app.widgets.controls import ElidedLabel
+from app.widgets.controls import ask_ai_button_qss, ElidedLabel
 from app.widgets.panels import Panel, apply_tactical_label
 from app.widgets.pills import Badge
 from app.themes.theme_manager import get_palette, theme_signaller
@@ -41,26 +41,6 @@ _IMPACT_COLOR = {
     "Light utility": "#7cc596",
     "Startup item": "#8a9b8f",
 }
-
-
-def _ask_ai_button_qss() -> str:
-    """Accent-tinted style so an 'Ask AI' button reads clearly as an action.
-    Mirrors the Findings inspector button so the two feel identical."""
-    p = get_palette()
-    accent = p.get("accent", "#7cc596")
-    soft = p.get("accent_soft", "#1b2e22")
-    bg = p.get("panel", "#141d18")
-    faint = p.get("text_faint", "#57685e")
-    border = p.get("border", "#213028")
-    return (
-        f"QPushButton {{ background: {soft}; color: {accent}; "
-        f"border: 1px solid {accent}; border-radius: 3px; "
-        f"padding: 3px 12px; font-size: 11px; font-weight: 600; }}"
-        f"QPushButton:hover {{ background: {accent}; color: {bg}; }}"
-        f"QPushButton:pressed {{ background: {accent}; color: {bg}; }}"
-        f"QPushButton:disabled {{ background: transparent; color: {faint}; "
-        f"border-color: {border}; }}"
-    )
 
 
 def _separator() -> QFrame:
@@ -714,7 +694,7 @@ class StartupInspectorPanel(QFrame):
         # off. Shown only when there is no AI answer yet (set in set_entry()).
         self._ask_ai_btn = QPushButton(tr("Ask AI"))
         self._ask_ai_btn.setCursor(Qt.PointingHandCursor)
-        self._ask_ai_btn.setStyleSheet(_ask_ai_button_qss())
+        self._ask_ai_btn.setStyleSheet(ask_ai_button_qss())
         self._ask_ai_btn.setVisible(False)
         self._ask_ai_btn.clicked.connect(self._on_ask_ai_clicked)
         expl_hdr_row.addWidget(self._ask_ai_btn)

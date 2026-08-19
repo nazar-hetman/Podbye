@@ -602,10 +602,16 @@ class CleanupConfirmDialog(QDialog):
         for path in result.in_use:
             reason = tr("In use")
             self._issue_colors[reason] = _risk_fg("Review")
-            self._issues.append((
-                reason, path,
-                errors.get(path)
-                or tr("A running program is holding this file open")))
+            # Sentence first, code second. A locked file is an *expected*
+            # outcome with a known cause, and "SHFileOperationW error 0x0020"
+            # -- which is what the raw error actually says -- tells the person
+            # reading it nothing they can act on. The code is kept after it so
+            # Copy list still carries something diagnosable.
+            detail = tr("A running program is holding this file open")
+            raw = errors.get(path)
+            if raw:
+                detail = f"{detail}  ({raw})"
+            self._issues.append((reason, path, detail))
         for path in result.skipped_protected:
             reason = tr("Protected")
             self._issue_colors[reason] = _risk_fg("Optional")

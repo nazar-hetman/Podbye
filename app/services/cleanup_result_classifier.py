@@ -110,9 +110,15 @@ CALLER_LABELS = (
 
 
 def _fallback_expected_rule() -> dict:
+    # Every rule's "context" explains the *mechanism*; the reassurance that
+    # follows it is added once, generically, by assess_cleanup_counts. This one
+    # used to be the reassurance itself, so a locked-file result printed
+    # "Windows file locks are normal and do not mean cleanup failed." directly
+    # above "This is normal and does not mean cleanup failed."
     return {
         "intro": "Some files are still being used by Windows or another app.",
-        "context": "Windows file locks are normal and do not mean cleanup failed.",
+        "context": ("A file that is open cannot be moved, so Vigil left those "
+                    "where they are rather than forcing them."),
         "actions": [
             "close the app using the files, if known",
             "or restart Windows",

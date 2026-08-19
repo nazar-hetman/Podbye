@@ -34,6 +34,7 @@ from app.widgets.pills import Badge
 from app.models.finding import _format_size
 from app.themes.theme_manager import get_category_colors, get_palette
 from app.screens.cleanup_dialog import CleanupConfirmDialog
+from app.screens.file_list_panel import FileListPanel
 from app.models.findings_table_model import (
     FindingsTableModel, FindingsFilterProxy, COL_CHECK, COL_NAME,
 )
@@ -42,63 +43,17 @@ from app.models.risk import (
 )
 from app.models.smart_entity import actionability_for_type
 from app.models.entity_grouping import group_entities, group_label, owner_key
-from app.models.file_grouping import (
-    default_expanded, group_files, stat_files,
-)
 from app.models.reasons import translate_reason
 from app.models.path_tree import PathNode, build_tree, collapse_single_child_chains
 from app.widgets.tables import install_header_fit
 from app.i18n import tr
 from app.widgets.panels import apply_tactical_label
-from app.widgets.controls import ElidedLabel, TacticalCheckBox, TacticalComboBox
+from app.widgets.controls import (
+    ElidedLabel, TacticalCheckBox, TacticalComboBox, ask_ai_button_qss,
+)
 
 
 # ── Performance Constants ───────────────────────────────────────────
-
-def _ask_ai_button_qss() -> str:
-    """Accent-tinted style so an 'Ask AI' button reads clearly as an action,
-    not as a run of plain text. Themed via the live palette, with a filled
-    hover state."""
-    p = get_palette()
-    accent = p.get("accent", "#7cc596")
-    soft = p.get("accent_soft", "#1b2e22")
-    bg = p.get("panel", "#141d18")
-    faint = p.get("text_faint", "#57685e")
-    border = p.get("border", "#213028")
-    return (
-        f"QPushButton {{ background: {soft}; color: {accent}; "
-        f"border: 1px solid {accent}; border-radius: 3px; "
-        f"padding: 3px 12px; font-size: 11px; font-weight: 600; }}"
-        f"QPushButton:hover {{ background: {accent}; color: {bg}; }}"
-        f"QPushButton:pressed {{ background: {accent}; color: {bg}; }}"
-        f"QPushButton:disabled {{ background: transparent; color: {faint}; "
-        f"border-color: {border}; }}"
-    )
-
-
-def _ask_ai_quiet_qss() -> str:
-    """The same action, one rung down the hierarchy.
-
-    A per-file 'Ask AI' rendered in the outlined style above out-shouted the
-    file it referred to: five 800-byte icons became five bordered accent
-    buttons and one faint filename each. This keeps the affordance on every
-    row — no hover-to-reveal, so nothing becomes undiscoverable, and no layout
-    shift — but draws it as text until the pointer is on it. The group header
-    keeps the loud version, so the pattern is still taught somewhere.
-    """
-    p = get_palette()
-    accent = p.get("accent", "#7cc596")
-    soft = p.get("accent_soft", "#1b2e22")
-    faint = p.get("text_faint", "#57685e")
-    return (
-        f"QPushButton {{ background: transparent; color: {faint}; "
-        f"border: 1px solid transparent; border-radius: 3px; "
-        f"padding: 1px 6px; font-size: 10px; font-weight: 500; }}"
-        f"QPushButton:hover {{ background: {soft}; color: {accent}; "
-        f"border-color: {accent}; }}"
-        f"QPushButton:pressed {{ background: {soft}; color: {accent}; }}"
-    )
-
 
 # Maximum number of blocks to render (prevent UI freeze with many categories)
 MAX_BLOCKS = 20
@@ -1561,32 +1516,6 @@ class StorageOverviewWidget(QFrame):
 
 
 
-class _FileGroupRow(QWidget):
-    """Header row for one file bucket — the whole row toggles it.
-
-    Not a QPushButton carrying the bucket name: a button reports its label as
-    its minimum width, and "Programmes et bibliothèques" plus a French
-    "Demander à l'IA" pushed the row 33 px past a 365 px inspector, where the
-    scrollbar is off and the overflow is simply cut. An ElidedLabel accepts
-    whatever width it is given; the click target moves to the row, which is
-    also what the entity list does one level up — a 10 px chevron is an unkind
-    target for the row's primary action.
-
-    Child widgets that accept the press (the checkbox, Ask AI) keep it; labels
-    do not, so they fall through to here.
-    """
-
-    def __init__(self, on_toggle, parent=None):
-        super().__init__(parent)
-        self._on_toggle = on_toggle
-        self.setCursor(Qt.PointingHandCursor)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self._on_toggle()
-        super().mousePressEvent(event)
-
-
 class _PreallocDetailPanel(QWidget):
     """Pre-allocated detail panel — all widgets built once, updated in place.
 
@@ -1882,7 +1811,7 @@ class _PreallocDetailPanel(QWidget):
         # wasn't run. Hidden unless the item has no answer yet (set in update()).
         self._ai_ask_btn = QPushButton(tr("Ask AI"))
         self._ai_ask_btn.setCursor(Qt.PointingHandCursor)
-        self._ai_ask_btn.setStyleSheet(_ask_ai_button_qss())
+        self._ai_ask_btn.setStyleSheet(ask_ai_button_qss())
         self._ai_ask_btn.setVisible(False)
         self._ai_ask_btn.clicked.connect(self._on_ask_ai_clicked)
         ai_hdr_row.addWidget(self._ai_ask_btn)
@@ -1974,7 +1903,9 @@ class _PreallocDetailPanel(QWidget):
         root.addLayout(action_stack)
 
         self._tabs.addTab(self._info_page, tr("Information"))
-        self._tabs.addTab(self._build_files_page(), tr("Files"))
+        self._files_panel = FileListPanel(
+            recycle_cb=recycle_cb, ask_ai_file_cb=ask_ai_file_cb)
+        self._tabs.addTab(self._files_panel, tr("Files"))
         # Hidden (not just disabled) until an entity with browsable files is
         # selected — a greyed-out empty tab reads as "broken" to users.
         self._tabs.setTabEnabled(1, False)
@@ -1985,72 +1916,6 @@ class _PreallocDetailPanel(QWidget):
     # ── Files tab (paginated per-file browser) ────────────────────────
 
     _FILES_PER_PAGE = 50
-
-    def _build_files_page(self) -> QWidget:
-        page = QWidget()
-        lay = QVBoxLayout(page)
-        lay.setContentsMargins(12, 10, 12, 10)
-        lay.setSpacing(6)
-
-        # Top row: live selection counter + per-page select / clear.
-        top = QHBoxLayout()
-        top.setSpacing(8)
-        self._files_count_lbl = QLabel(tr("0 selected"))
-        self._files_count_lbl.setStyleSheet(
-            "font-family: 'JetBrains Mono'; font-size: 12px; font-weight: bold;"
-        )
-        top.addWidget(self._files_count_lbl)
-        top.addStretch()
-        # Not "Select page" any more: buckets are sliced individually, so
-        # there is no page for it to mean.
-        self._btn_files_select_shown = QPushButton(tr("Select shown"))
-        self._btn_files_select_shown.setObjectName("Subtle")
-        self._btn_files_select_shown.setStyleSheet("font-size: 10px; padding: 2px 8px;")
-        self._btn_files_select_shown.setCursor(Qt.PointingHandCursor)
-        self._btn_files_select_shown.clicked.connect(self._files_select_shown)
-        top.addWidget(self._btn_files_select_shown)
-        self._btn_files_clear = QPushButton(tr("Clear"))
-        self._btn_files_clear.setObjectName("Subtle")
-        self._btn_files_clear.setStyleSheet("font-size: 10px; padding: 2px 8px;")
-        self._btn_files_clear.setCursor(Qt.PointingHandCursor)
-        self._btn_files_clear.clicked.connect(self._files_clear_selection)
-        top.addWidget(self._btn_files_clear)
-        lay.addLayout(top)
-
-        # File rows.
-        self._files_scroll = QScrollArea()
-        self._files_scroll.setWidgetResizable(True)
-        self._files_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._files_scroll.setStyleSheet("QScrollArea { border: none; }")
-        self._files_container = QWidget()
-        self._files_clay = QVBoxLayout(self._files_container)
-        self._files_clay.setContentsMargins(0, 0, 0, 0)
-        self._files_clay.setSpacing(2)
-        self._files_clay.addStretch()
-        self._files_scroll.setWidget(self._files_container)
-        lay.addWidget(self._files_scroll, stretch=1)
-
-        # Action.
-        self._btn_recycle_files = QPushButton(tr("Recycle selected files"))
-        self._btn_recycle_files.setObjectName("Primary")
-        self._btn_recycle_files.setCursor(Qt.PointingHandCursor)
-        self._btn_recycle_files.setEnabled(False)
-        self._btn_recycle_files.clicked.connect(self._on_recycle_files)
-        lay.addWidget(self._btn_recycle_files)
-
-        # State.
-        self._all_file_paths: list = []
-        self._selected_files: set = set()
-        self._file_checks: list = []   # (QCheckBox, path) for the drawn rows
-        # Grouping state. `_file_groups` is the ordered bucket list,
-        # `_files_expanded` the kinds currently open, `_group_limit` how far
-        # into each open bucket the list is drawn so far.
-        self._file_groups: list = []
-        self._file_stats: dict = {}
-        self._files_expanded: set = set()
-        self._group_limit: dict = {}   # kind -> how many of its files to draw
-        self._group_checks: list = []  # (QCheckBox, kind) for the drawn rows
-        return page
 
     # ── Slot helpers ──────────────────────────────────────────────────
 
@@ -2162,19 +2027,13 @@ class _PreallocDetailPanel(QWidget):
         return out
 
     def _populate_files_section(self, entity: dict):
-        """Load the entity's files into the paginated Files tab (or disable it)."""
+        """Hand the entity's files to the Files tab, or hide the tab."""
         is_app = _is_application_action_target(entity)
         paths = [] if is_app else self._collect_entity_files(entity)
+        count = self._files_panel.load(entity, paths)
 
         # A single-file or contentless entity adds no insight — keep Files off.
-        if len(paths) < 2:
-            self._all_file_paths = []
-            self._selected_files = set()
-            self._file_checks = []
-            self._file_groups = []
-            self._file_stats = {}
-            self._files_expanded = set()
-            self._group_limit = {}
+        if not count:
             self._tabs.setTabEnabled(1, False)
             self._tabs.setTabVisible(1, False)
             self._tabs.setTabText(1, tr("Files"))
@@ -2182,19 +2041,9 @@ class _PreallocDetailPanel(QWidget):
                 self._tabs.setCurrentIndex(0)
             return
 
-        self._all_file_paths = paths
-        self._selected_files = set()
-        self._group_limit = {}
-        # One stat pass for the whole list — it feeds the bucket order, the
-        # per-file order and every size label, so the old per-row getsize on
-        # each re-render is gone with it.
-        self._file_stats = stat_files(paths)
-        self._file_groups = group_files(paths, self._file_stats)
-        self._files_expanded = default_expanded(self._file_groups)
         self._tabs.setTabEnabled(1, True)
         self._tabs.setTabVisible(1, True)
-        self._tabs.setTabText(1, tr("Files ({n})").format(n=len(paths)))
-        self._render_files_page()
+        self._tabs.setTabText(1, tr("Files ({n})").format(n=count))
 
         # Open on the list for entities whose meaning *is* the list. A loose
         # bucket's Information tab can say little beyond which folder the files
@@ -2207,342 +2056,6 @@ class _PreallocDetailPanel(QWidget):
             self._tabs.setCurrentIndex(1)
         elif self._tabs.currentIndex() == 1:
             self._tabs.setCurrentIndex(0)
-
-    def _group_shown(self, group) -> int:
-        """How many of this bucket's files are drawn right now."""
-        if group.kind not in self._files_expanded:
-            return 0
-        return min(group.count,
-                   self._group_limit.get(group.kind, self._FILES_PER_PAGE))
-
-    def _page_units(self) -> list:
-        """Every bucket header, plus the slice of files each one is showing.
-
-        Buckets are capped separately instead of the list being cut into
-        global pages. Under global paging one large bucket owned every early
-        page: on a folder of 713 DLLs beside 33 images and 7 config files the
-        other buckets did not appear until page fifteen, so a user looking at
-        page one had no way to know they were there. Per-bucket slices keep
-        every header on screen from the first frame, and "show more" extends
-        one bucket without moving any of the others.
-        """
-        units: list = []
-        for g in self._file_groups:
-            units.append(("header", g))
-            shown = self._group_shown(g)
-            units.extend(("file", path) for path in g.paths[:shown])
-            if shown and shown < g.count:
-                units.append(("more", g))
-        return units
-
-    def _show_more_in_group(self, kind: str):
-        group = self._group_by_kind(kind)
-        if group is None:
-            return
-        self._group_limit[kind] = self._group_shown(group) + self._FILES_PER_PAGE
-        self._render_files_page()
-
-    def _make_more_row(self, group) -> QWidget:
-        """The "show N more" line at the foot of a truncated bucket."""
-        remaining = group.count - self._group_shown(group)
-        row = QWidget()
-        rl = QHBoxLayout(row)
-        rl.setContentsMargins(22, 0, 0, 6)
-        rl.setSpacing(8)
-        btn = QPushButton(tr("Show {n} more", n=remaining))
-        btn.setCursor(Qt.PointingHandCursor)
-        btn.setStyleSheet(_ask_ai_quiet_qss())
-        btn.clicked.connect(
-            lambda _c=False, kind=group.kind: self._show_more_in_group(kind))
-        rl.addWidget(btn)
-        rl.addStretch()
-        return row
-
-    def _render_files_page(self):
-        """Draw every bucket header and its current slice; selection persists."""
-        while self._files_clay.count() > 1:
-            item = self._files_clay.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                w.hide()   # else the old rows paint over the new ones
-                w.deleteLater()
-        self._file_checks = []
-        self._group_checks = []
-
-        builders = {"header": self._make_group_header,
-                    "file": self._make_file_row,
-                    "more": self._make_more_row}
-        for kind, payload in self._page_units():
-            self._files_clay.insertWidget(self._files_clay.count() - 1,
-                                          builders[kind](payload))
-        self._update_files_counter()
-
-    def _make_group_header(self, group) -> QWidget:
-        """One bucket's row: what it is, how much of it, and how old."""
-        p = get_palette()
-        accent = p.get("accent", "#7cc596")
-        faint = p.get("text_faint", "#57685e")
-        open_now = group.kind in self._files_expanded
-
-        row = _FileGroupRow(lambda kind=group.kind: self._toggle_file_group(kind))
-        rl = QHBoxLayout(row)
-        rl.setContentsMargins(0, 4, 0, 2)
-        rl.setSpacing(8)
-
-        cb = TacticalCheckBox("")
-        cb.setChecked(self._group_fully_selected(group))
-        cb.setToolTip(tr("Select every file in this group"))
-        cb.toggled.connect(
-            lambda checked, kind=group.kind: self._on_group_toggle(kind, checked))
-        rl.addWidget(cb, alignment=Qt.AlignVCenter)
-
-        # U+25BC / U+25B6, matching the entity list's chevron: the "small
-        # triangle" pair renders at roughly half height at any font size and
-        # disappears, which the entity list already learned the hard way.
-        hint = (tr("Hide the {n} items inside", n=group.count) if open_now
-                else tr("Show the {n} items inside", n=group.count))
-        chevron = QLabel("▼" if open_now else "▶")
-        chevron.setFixedWidth(12)
-        chevron.setStyleSheet(f"font-size: 9px; color: {accent};")
-        chevron.setToolTip(hint)
-        rl.addWidget(chevron, alignment=Qt.AlignVCenter)
-
-        # Name and count in ONE elidable label, not two side by side. Two
-        # ElidedLabels in a row both carry the Ignored size policy, so the
-        # layout hands the stretch to one and collapses the other to nothing —
-        # and the one that vanished at a 365 px inspector was the bucket name,
-        # the only part of the row that says what any of it is. The age is the
-        # least decision-relevant of the three facts, so it moves to the
-        # tooltip rather than competing for the same pixels.
-        name_lbl = ElidedLabel(self._group_title(group))
-        name_lbl.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {accent};")
-        name_lbl.setToolTip(self._group_tooltip(group, hint))
-        rl.addWidget(name_lbl, stretch=1)
-
-        size_lbl = QLabel(_format_size(group.total_bytes))
-        size_lbl.setStyleSheet(
-            "font-family: 'JetBrains Mono'; font-size: 11px; font-weight: 700;")
-        size_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        rl.addWidget(size_lbl)
-
-        # The loud Ask AI lives here, not on every file. "What are these 312
-        # .pak files" is a question worth an answer; "what is 00042.pak" is
-        # the same answer, asked 312 times.
-        if self._ask_ai_file_cb is not None and group.paths:
-            ask = QPushButton(tr("Ask AI"))
-            ask.setStyleSheet(_ask_ai_button_qss())
-            ask.setCursor(Qt.PointingHandCursor)
-            ask.setToolTip(tr("Explain this file with AI"))
-            ask.clicked.connect(
-                lambda _c=False, path=group.paths[0]: self._ask_ai_file_cb(path))
-            rl.addWidget(ask)
-
-        self._group_checks.append((cb, group.kind))
-        return row
-
-    def _group_title(self, group) -> str:
-        """'Images  ·  23 files' — what it is and how much of it there is.
-
-        A bucket of one says nothing with its count: the single row directly
-        underneath already is the count, and "1 file(s)" was only ever there to
-        keep the format uniform.
-        """
-        kind = tr(group.kind)
-        if group.count <= 1:
-            return kind
-        return f"{kind}  ·  " + tr("{n} file(s)", n=group.count)
-
-    def _group_tooltip(self, group, hint: str) -> str:
-        if not group.newest_mtime:
-            return hint
-        stamp = time.strftime("%b %Y", time.localtime(group.newest_mtime))
-        return hint + "\n" + tr("newest {date}", date=stamp)
-
-    def _make_file_row(self, path: str) -> QWidget:
-        faint = get_palette().get("text_faint", "#57685e")
-        row = QWidget()
-        rl = QHBoxLayout(row)
-        rl.setContentsMargins(22, 0, 0, 0)   # indent under the bucket header
-        rl.setSpacing(8)
-
-        # The name goes in an ElidedLabel beside a text-less box, not in the
-        # checkbox itself. TacticalCheckBox reports its full label as its
-        # *minimum* width, so a long filename — or a translation of "Ask AI"
-        # wider than the English one, which Ukrainian is — pushed the row past
-        # the panel edge and the size and the button were simply cut off.
-        cb = TacticalCheckBox("")
-        cb.setToolTip(path)
-        cb.setChecked(path in self._selected_files)
-        cb.toggled.connect(
-            lambda checked, p=path: self._on_file_toggle(p, checked))
-        rl.addWidget(cb, alignment=Qt.AlignVCenter)
-
-        name_lbl = ElidedLabel(os.path.basename(path) or path, mode=Qt.ElideMiddle)
-        name_lbl.setToolTip(path)
-        name_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
-        rl.addWidget(name_lbl, stretch=1)
-
-        size_lbl = QLabel(self._file_size_str(path))
-        size_lbl.setStyleSheet(
-            f"font-family: 'JetBrains Mono'; font-size: 10px; color: {faint};")
-        size_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        rl.addWidget(size_lbl)
-
-        # Still one per row — a single odd file in a bucket is exactly the case
-        # where the per-file answer is the useful one — but drawn quietly, so
-        # the filename outweighs the button rather than the other way round.
-        if self._ask_ai_file_cb is not None:
-            ask = QPushButton(tr("Ask AI"))
-            ask.setStyleSheet(_ask_ai_quiet_qss())
-            ask.setCursor(Qt.PointingHandCursor)
-            ask.setToolTip(tr("Explain this file with AI"))
-            ask.clicked.connect(
-                lambda _checked=False, p=path: self._ask_ai_file_cb(p))
-            rl.addWidget(ask)
-
-        self._file_checks.append((cb, path))
-        return row
-
-    def _file_size_str(self, path: str) -> str:
-        size, _mtime = self._file_stats.get(path, (None, 0.0))
-        if size is None:
-            try:
-                size = os.path.getsize(path)
-            except OSError:
-                return "—"
-        return _format_size(size)
-
-    def _group_by_kind(self, kind: str):
-        for g in self._file_groups:
-            if g.kind == kind:
-                return g
-        return None
-
-    def _group_fully_selected(self, group) -> bool:
-        return bool(group.paths) and self._selected_files.issuperset(group.paths)
-
-    def _toggle_file_group(self, kind: str):
-        """Open or close a bucket. Every other one stays where it is."""
-        if kind in self._files_expanded:
-            self._files_expanded.discard(kind)
-        else:
-            self._files_expanded.add(kind)
-        self._render_files_page()
-
-    def _on_group_toggle(self, kind: str, checked: bool):
-        """Tick a bucket → tick every file in it, on this page or any other."""
-        group = self._group_by_kind(kind)
-        if group is None:
-            return
-        if checked:
-            self._selected_files.update(group.paths)
-        else:
-            self._selected_files.difference_update(group.paths)
-        for cb, path in self._file_checks:
-            if path in group.paths:
-                cb.blockSignals(True)
-                cb.setChecked(checked)
-                cb.blockSignals(False)
-        self._update_files_counter()
-
-    def _sync_group_checks(self):
-        """Reflect member selection on the bucket rows without re-rendering."""
-        for cb, kind in self._group_checks:
-            group = self._group_by_kind(kind)
-            want = self._group_fully_selected(group) if group else False
-            if cb.isChecked() != want:
-                cb.blockSignals(True)
-                cb.setChecked(want)
-                cb.blockSignals(False)
-
-    def _on_file_toggle(self, path: str, checked: bool):
-        if checked:
-            self._selected_files.add(path)
-        else:
-            self._selected_files.discard(path)
-        self._update_files_counter()
-
-    def _files_select_shown(self):
-        """Tick every file row currently drawn, across all open buckets."""
-        for cb, p in self._file_checks:
-            if not cb.isChecked():
-                cb.setChecked(True)   # toggled → adds to _selected_files
-        self._update_files_counter()
-
-    def _files_clear_selection(self):
-        self._selected_files = set()
-        for cb, _p in self._file_checks:
-            cb.blockSignals(True)
-            cb.setChecked(False)
-            cb.blockSignals(False)
-        self._update_files_counter()
-
-    def _update_files_counter(self):
-        n = len(self._selected_files)
-        total = len(self._all_file_paths)
-        self._files_count_lbl.setText(tr("{n} of {total} selected").format(n=n, total=total))
-        self._sync_group_checks()
-        self._btn_recycle_files.setEnabled(n > 0 and self._recycle_cb is not None)
-        size = sum(self._file_stats.get(p, (0, 0.0))[0] for p in self._selected_files)
-        # The count alone never said whether the selection was worth making.
-        # Ticking 40 files is a different decision at 12 KB than at 12 GB, and
-        # this button was the last place before the confirm dialog to say so.
-        self._btn_recycle_files.setText(
-            tr("Recycle {n} selected file(s) · {size}", n=n, size=_format_size(size))
-            if n and size else
-            tr("Recycle {n} selected file(s)").format(n=n) if n
-            else tr("Recycle selected files")
-        )
-
-    def _on_recycle_files(self):
-        selected = sorted(self._selected_files)
-        if not selected or not self._recycle_cb:
-            return
-        item = dict(self._current_entity)
-        item["removable_file_paths"] = selected
-        item["entity_type"] = self._current_entity.get("entity_type", "")
-        item["name"] = tr("{n} file(s) from {group}").format(
-            n=len(selected), group=self._current_entity.get("name", "group"))
-        self._recycle_cb(item)
-
-    # ── Theming ───────────────────────────────────────────────────────
-
-    def _repaint_file_rows(self):
-        """Redraw the Files tab against the palette that is live *now*.
-
-        Every row bakes the palette in as it is built — the bucket accent, the
-        faint size column, both Ask AI styles — and nothing re-applied it, so a
-        theme switch left the list wearing the previous theme until the user
-        clicked a different entity.
-
-        Deliberately not part of _apply_block_styles(): populate() calls that
-        twice per entity, and hanging a full row rebuild off it would throw
-        away and recreate up to fifty widgets on every click, for the previous
-        entity's data. A style change is the only moment this is needed.
-        """
-        if getattr(self, "_file_groups", None):
-            self._render_files_page()
-
-    def _schedule_file_row_repaint(self):
-        """Repaint after Qt has finished with the widgets, never during.
-
-        setStyleSheet() re-polishes every live widget, and the StyleChange that
-        announces it arrives *while* Qt is walking the tree. Rebuilding the
-        rows there — hide(), deleteLater(), fifty fresh widgets — pulls
-        children out from under that walk and faults with an access violation
-        (0xC0000005), which is how the whole test suite started segfaulting.
-        A zero-delay timer puts the rebuild after the polish instead.
-        """
-        QTimer.singleShot(0, self._repaint_file_rows_safely)
-
-    def _repaint_file_rows_safely(self):
-        # The panel can be gone by the time the timer fires (a screen torn
-        # down mid-theme-switch), and touching a deleted QWidget through its
-        # Python wrapper raises rather than returning None.
-        try:
-            self._repaint_file_rows()
-        except RuntimeError:
-            pass
 
     def _apply_block_styles(self):
         """Quiet workstation styling for the inspector sections."""
@@ -2682,7 +2195,7 @@ class _PreallocDetailPanel(QWidget):
         from PySide6.QtCore import QEvent
         if event.type() == QEvent.StyleChange:
             self._apply_block_styles()
-            self._schedule_file_row_repaint()
+            self._files_panel.schedule_repaint()
         super().changeEvent(event)
 
     # ── Public API ────────────────────────────────────────────────────
@@ -4838,7 +4351,7 @@ class FindingsDashboard(QWidget):
                     # accent and border after a switch.
                     btn = getattr(cv._detail_widget, "_ai_ask_btn", None)
                     if btn is not None:
-                        btn.setStyleSheet(_ask_ai_button_qss())
+                        btn.setStyleSheet(ask_ai_button_qss())
                 # Same for the sort dropdown: apply_reference_style() bakes the
                 # palette in, and nothing re-applied it.
                 combo = getattr(cv, "_sort_combo", None)

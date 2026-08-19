@@ -35,7 +35,7 @@ def test_loose_group_lists_its_files(qapp):
         "removable_file_paths": ["C:/old/a.zip", "C:/b.7z", "C:/c.rar"],
     }
     panel.populate(ent)
-    listed = [p for _cb, p in panel._file_checks]
+    listed = [p for _cb, p in panel._files_panel._file_checks]
     assert listed == ["C:/old/a.zip", "C:/b.7z", "C:/c.rar"]
 
 
@@ -48,9 +48,9 @@ def test_recycle_selected_files_targets_only_checked(qapp):
         "removable_file_paths": ["C:/a.zip", "C:/b.7z", "C:/c.rar"],
     }
     panel.populate(ent)
-    panel._file_checks[0][0].setChecked(True)
-    panel._file_checks[2][0].setChecked(True)
-    panel._on_recycle_files()
+    panel._files_panel._file_checks[0][0].setChecked(True)
+    panel._files_panel._file_checks[2][0].setChecked(True)
+    panel._files_panel.recycle_selected()
     assert captured.get("removable_file_paths") == ["C:/a.zip", "C:/c.rar"]
 
 
@@ -62,7 +62,7 @@ def test_application_entity_has_no_file_list(qapp):
         "removable_file_paths": [],
     }
     panel.populate(ent)
-    assert panel._file_checks == []
+    assert panel._files_panel._file_checks == []
 
 
 def test_single_file_group_does_not_expand(qapp):
@@ -74,7 +74,7 @@ def test_single_file_group_does_not_expand(qapp):
     }
     panel.populate(ent)
     # One file adds no insight — the Files tab stays disabled.
-    assert panel._file_checks == []
+    assert panel._files_panel._file_checks == []
     assert panel._tabs.isTabEnabled(1) is False
 
 
@@ -90,11 +90,11 @@ def test_a_long_bucket_is_sliced_and_extends_on_request(qapp):
     panel = _panel(qapp)
     panel.populate(ent)
     assert panel._tabs.isTabEnabled(1) is True
-    assert len(panel._file_checks) == 50           # first slice only
-    panel._show_more_in_group("Images")
-    assert len(panel._file_checks) == 100
-    panel._show_more_in_group("Images")
-    assert len(panel._file_checks) == 150          # no "more" row left
+    assert len(panel._files_panel._file_checks) == 50           # first slice only
+    panel._files_panel.show_more("Images")
+    assert len(panel._files_panel._file_checks) == 100
+    panel._files_panel.show_more("Images")
+    assert len(panel._files_panel._file_checks) == 150          # no "more" row left
 
 
 def test_selection_survives_the_rows_being_redrawn(qapp):
@@ -105,11 +105,11 @@ def test_selection_survives_the_rows_being_redrawn(qapp):
         "entity_type": "photo_collection", "actionability": "review_only",
         "removable_file_paths": paths,
     })
-    for cb, _p in panel._file_checks[:20]:
+    for cb, _p in panel._files_panel._file_checks[:20]:
         cb.setChecked(True)
-    panel._show_more_in_group("Images")
-    assert len(panel._selected_files) == 20
-    assert sum(1 for cb, _ in panel._file_checks if cb.isChecked()) == 20
+    panel._files_panel.show_more("Images")
+    assert len(panel._files_panel._selected_files) == 20
+    assert sum(1 for cb, _ in panel._files_panel._file_checks if cb.isChecked()) == 20
 
 
 def test_select_shown_then_recycle_all_selected(qapp):
@@ -122,7 +122,7 @@ def test_select_shown_then_recycle_all_selected(qapp):
         "removable_file_paths": paths,
     }
     panel.populate(ent)
-    panel._files_select_shown()                   # the 50 currently drawn
-    assert len(panel._selected_files) == 50
-    panel._on_recycle_files()
+    panel._files_panel.select_shown()                   # the 50 currently drawn
+    assert len(panel._files_panel._selected_files) == 50
+    panel._files_panel.recycle_selected()
     assert len(captured["removable_file_paths"]) == 50

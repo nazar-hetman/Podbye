@@ -22,6 +22,7 @@ drift apart rather than being wired together and constrained by each other.
 from __future__ import annotations
 
 import os
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -54,31 +55,81 @@ _register("AI models", ".gguf", ".safetensors", ".pt", ".pth", ".onnx",
           ".ckpt", ".h5", ".tflite", ".ggml")
 _register("Disk images", ".vdi", ".vmdk", ".vhd", ".vhdx", ".qcow2", ".qed",
           ".vbox", ".img")
-_register("Databases", ".sqlite", ".sqlite3", ".db", ".mdb", ".accdb", ".ldf",
-          ".mdf", ".realm")
+_register("Databases", ".sqlite", ".sqlite3", ".sqlite-wal", ".sqlite-shm",
+          ".db", ".db-wal", ".db-shm", ".mdb", ".accdb", ".ldf", ".mdf",
+          ".realm")
+# .blf / .regtrans-ms are the registry's own transaction logs, .evtx / .etl
+# the Windows event and trace logs -- all of them noise a user is right to
+# clear out, and all of them were landing in "Other files".
 _register("Logs & backups", ".log", ".bak", ".old", ".backup", ".orig",
-          ".swp", ".tmp", ".temp", ".dmp", ".crash")
+          ".swp", ".tmp", ".temp", ".dmp", ".crash", ".evtx", ".etl", ".blf",
+          ".regtrans-ms", ".trace")
 _register("Programs & libraries", ".exe", ".dll", ".sys", ".so", ".dylib",
-          ".pyd", ".node", ".jar", ".bin", ".pak", ".wasm")
+          ".pyd", ".node", ".jar", ".bin", ".pak", ".wasm", ".pdb", ".lib",
+          ".msix", ".winmd")
 _register("Code & config", ".py", ".js", ".ts", ".tsx", ".jsx", ".c", ".cpp",
           ".h", ".hpp", ".cs", ".java", ".go", ".rs", ".rb", ".php", ".lua",
-          ".sh", ".ps1", ".bat", ".json", ".yaml", ".yml", ".toml", ".ini",
-          ".cfg", ".xml", ".html", ".css", ".scss", ".sql")
+          ".sh", ".ps1", ".bat", ".cmd", ".json", ".jsonl", ".yaml", ".yml",
+          ".toml", ".ini", ".cfg", ".conf", ".config", ".env", ".properties",
+          ".xml", ".html", ".css", ".scss", ".sql", ".gypi", ".gni", ".gn",
+          ".ovpn", ".lock", ".iss", ".newcfg")
 _register("Fonts", ".ttf", ".otf", ".woff", ".woff2", ".eot")
+# A shortcut is a few hundred bytes pointing somewhere else. They pile up on
+# a Desktop and read as clutter, which is exactly a thing to decide about.
+_register("Shortcuts", ".lnk", ".url", ".rdp", ".appref-ms", ".desktop")
+# Mapping and survey data. Nazar's secondary drive is largely drone/GIS work,
+# so these are content, not noise -- see the secondary-drive note.
+_register("Map & survey data", ".kml", ".kmz", ".gpx", ".waypoints", ".mission",
+          ".las", ".laz", ".ply", ".e57", ".shp", ".shx", ".dbf", ".geojson",
+          ".ecw", ".qmd", ".ept")
+_register("Documents", ".rst", ".drawio", ".vsdx", ".one", ".xps")
 
 OTHER_KIND = "Other files"
 
 
-def kind_of(path: str) -> str:
-    """The display bucket for one path. Never raises, never touches disk."""
-    name = os.path.basename((path or "").replace("\\", "/"))
-    # Split on the last dot only: "archive.tar.gz" reads as an archive either
-    # way, and a greedier split would file "app.config.json" under
-    # ".config.json" and match nothing.
+# What an extension can actually look like. Filenames carry dots that are not
+# extensions -- "electron-v1.0.227-win32-x64" ends in ".227-win32-x64", and
+# taking that as its type produced a bucket per build number. An extension is
+# short and made of word characters, so anything else is simply not one.
+_EXT_RE = re.compile(r"^\.[a-z0-9][a-z0-9_+-]{0,11}$")
+_NUMERIC_EXT_RE = re.compile(r"^\.\d+$")
+
+
+def extension_of(path: str) -> str:
+    """The lower-cased extension of *path*, or '' when it has none.
+
+    Two cases a plain rsplit gets wrong, both measured on a real scan:
+
+    * A rotation suffix. "chrome_debug.log.1" ends in ".1", which says nothing;
+      the extension a user means is the one before it.
+    * A version tail. ".227-win32-x64" is not a file type, and treating it as
+      one turned twelve builds of the same package into twelve buckets.
+    """
+    name = os.path.basename((path or "").replace("\\", "/")).lower()
     dot = name.rfind(".")
     if dot <= 0:
+        return ""
+    ext = name[dot:]
+    if _NUMERIC_EXT_RE.match(ext):
+        prev = name.rfind(".", 0, dot)
+        if prev <= 0:
+            return ""
+        ext = name[prev:dot]
+    return ext if _EXT_RE.match(ext) else ""
+
+
+def kind_of(path: str) -> str:
+    """The display bucket for one path. Never raises, never touches disk."""
+    ext = extension_of(path)
+    if not ext:
         return OTHER_KIND
-    return _KIND_BY_EXT.get(name[dot:].lower(), OTHER_KIND)
+    if ext in _KIND_BY_EXT:
+        return _KIND_BY_EXT[ext]
+    # ".log_backup1", ".logs", ".log2" -- every rolled-over log, without
+    # naming each one.
+    if ext.startswith(".log"):
+        return "Logs & backups"
+    return OTHER_KIND
 
 
 @dataclass
@@ -90,6 +141,10 @@ class FileGroup:
     total_bytes: int = 0
     newest_mtime: float = 0.0
     oldest_mtime: float = 0.0
+    # Set only on a bucket named after an unrecognised extension, so the view
+    # can render it as "PCM files" in the reader's language rather than
+    # printing a raw key.
+    ext: str = ""
 
     @property
     def count(self) -> int:
@@ -147,18 +202,39 @@ def group_files(paths, stats: dict[str, tuple[int, float]] | None = None
 
     buckets: dict[str, FileGroup] = {}
     first_seen: dict[str, int] = {}
-    for idx, p in enumerate(paths):
-        k = kind_of(p)
-        g = buckets.get(k)
+
+    def _add(key: str, path: str, idx: int, ext: str = "") -> None:
+        g = buckets.get(key)
         if g is None:
-            g = buckets[k] = FileGroup(kind=k)
-            first_seen[k] = idx
-        size, mtime = stats.get(p, (0, 0.0))
-        g.paths.append(p)
+            g = buckets[key] = FileGroup(kind=key, ext=ext)
+            first_seen[key] = idx
+        size, mtime = stats.get(path, (0, 0.0))
+        g.paths.append(path)
         g.total_bytes += size
         if mtime:
             g.newest_mtime = max(g.newest_mtime, mtime)
             g.oldest_mtime = min(g.oldest_mtime, mtime) if g.oldest_mtime else mtime
+
+    # Unknown extensions go to a bucket of their own first. On a real scan
+    # "Other files" was the single largest bucket at 26-30%, which tells a
+    # reader nothing; ".pcm x 18" tells them something. Ones too rare to be
+    # worth a row are folded back below.
+    for idx, p in enumerate(paths):
+        k = kind_of(p)
+        if k is OTHER_KIND:
+            ext = extension_of(p)
+            _add(ext or OTHER_KIND, p, idx, ext=ext)
+        else:
+            _add(k, p, idx)
+
+    for key in [k for k in buckets if k.startswith(".")]:
+        g = buckets[key]
+        if g.count >= MIN_NAMED_EXT:
+            continue
+        for i, path in enumerate(g.paths):
+            _add(OTHER_KIND, path, first_seen[key] + i)
+        del buckets[key]
+        first_seen.pop(key, None)
 
     for g in buckets.values():
         pos = {p: i for i, p in enumerate(g.paths)}
@@ -170,10 +246,20 @@ def group_files(paths, stats: dict[str, tuple[int, float]] | None = None
     )
 
 
+# How many files of one unrecognised extension earn a row of their own. Below
+# this they are folded into "Other files" -- a bucket per one-off extension is
+# the same noise the grouping exists to remove.
+MIN_NAMED_EXT = 3
+
 # A bucket holding less than this share of the entity is trivia: it gets one
 # collapsed row saying how much of it there is, instead of one row per file.
 # 4 KB of icons beside a 2 GB video should cost the reader one line, not five.
 TRIVIA_SHARE = 0.01
+
+# A list this short fits on screen whole, so nothing is gained by folding part
+# of it away: measured on a real session, most file lists are under 25 files
+# and collapsing 5 of 19 rows only cost the user a click.
+SMALL_LIST = 25
 
 # Below this many files a bucket is cheap to scroll past, so it opens whatever
 # its share of the bytes -- collapsing three rows saves nothing and hides the
@@ -186,10 +272,14 @@ def default_expanded(groups: list[FileGroup]) -> set[str]:
 
     A single bucket is always open: there is nothing to compare it against, and
     collapsing it would put a click between the user and the only content the
-    tab has. Otherwise a bucket opens when it holds a meaningful share of the
-    bytes, or when it is short enough that opening it costs nothing.
+    tab has. So is every bucket of a list short enough to read whole. Beyond
+    that a bucket opens when it holds a meaningful share of the bytes, or when
+    it is short enough that opening it costs nothing.
     """
     if len(groups) <= 1:
+        return {g.kind for g in groups}
+    total_files = sum(g.count for g in groups)
+    if total_files <= SMALL_LIST:
         return {g.kind for g in groups}
     total = sum(g.total_bytes for g in groups)
     open_kinds = {

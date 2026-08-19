@@ -67,17 +67,27 @@ def test_a_bucket_carries_its_own_totals():
 
 
 def test_trivia_starts_collapsed_next_to_something_that_matters():
-    """4 KB of icons beside a 2 GB video is one row, not five decisions."""
-    paths = [f"a/icon{i}.png" for i in range(5)] + ["a/movie.mp4"]
+    """30 KB of icons beside a 2 GB video is one row, not forty decisions."""
+    paths = [f"a/icon{i}.png" for i in range(40)] + ["a/movie.mp4"]
     stats = {p: (800, 1.0) for p in paths}
     stats["a/movie.mp4"] = (2_000_000_000, 1.0)
     groups = group_files(paths, stats)
     assert default_expanded(groups) == {"Videos"}
 
 
+def test_a_short_list_opens_whole_however_it_splits():
+    """Under SMALL_LIST nothing is buried, so folding part of it away only
+    costs a click -- measured: most real file lists are this short."""
+    paths = [f"a/icon{i}.png" for i in range(5)] + ["a/movie.mp4"]
+    stats = {p: (800, 1.0) for p in paths}
+    stats["a/movie.mp4"] = (2_000_000_000, 1.0)
+    groups = group_files(paths, stats)
+    assert default_expanded(groups) == {g.kind for g in groups}
+
+
 def test_a_lone_bucket_is_always_open():
     """With nothing to compare against, collapsing only adds a click."""
-    paths = [f"a/icon{i}.png" for i in range(40)]
+    paths = [f"a/icon{i}.png" for i in range(60)]
     stats = {p: (800, 1.0) for p in paths}
     groups = group_files(paths, stats)
     assert default_expanded(groups) == {"Images"}
@@ -85,11 +95,14 @@ def test_a_lone_bucket_is_always_open():
 
 def test_a_short_bucket_opens_whatever_its_share():
     """Three rows are cheaper to scroll past than to hide behind a chevron."""
-    paths = ["a/movie.mp4", "a/note.txt", "a/other.txt"]
-    stats = {"a/movie.mp4": (2_000_000_000, 1.0),
-             "a/note.txt": (5, 1.0), "a/other.txt": (5, 1.0)}
+    paths = (["a/movie.mp4", "a/note.txt", "a/other.txt"]
+             + [f"a/icon{i}.png" for i in range(40)])
+    stats = {p: (800, 1.0) for p in paths}
+    stats["a/movie.mp4"] = (2_000_000_000, 1.0)
+    stats["a/note.txt"] = stats["a/other.txt"] = (5, 1.0)
     groups = group_files(paths, stats)
-    assert default_expanded(groups) == {"Videos", "Documents"}
+    assert {"Videos", "Documents"} <= default_expanded(groups)
+    assert "Images" not in default_expanded(groups)
 
 
 def test_nothing_is_ever_all_closed():
@@ -159,7 +172,7 @@ def _panel(qapp, recycle_into=None):
 
 def _populate(panel, paths, stats=None):
     """Drive the panel with sizes we control — the files do not exist."""
-    from app.screens import findings_dashboard as fd
+    from app.screens import file_list_panel as flp
     ent = {
         "path": "C:/x", "name": "Mixed bucket", "risk": "Optional",
         "entity_type": "archive_group", "actionability": "recycle",
@@ -168,57 +181,57 @@ def _populate(panel, paths, stats=None):
     if stats is None:
         panel.populate(ent)
         return
-    real = fd.stat_files
-    fd.stat_files = lambda ps, limit=4000: {p: stats[p] for p in ps}
+    real = flp.stat_files
+    flp.stat_files = lambda ps, limit=4000: {p: stats[p] for p in ps}
     try:
         panel.populate(ent)
     finally:
-        fd.stat_files = real
+        flp.stat_files = real
 
 
 def test_a_collapsed_bucket_shows_one_row_not_one_per_file(qapp):
-    paths = [f"C:/x/icon{i}.png" for i in range(20)] + ["C:/x/movie.mp4"]
+    paths = [f"C:/x/icon{i}.png" for i in range(40)] + ["C:/x/movie.mp4"]
     stats = {p: (800, 1.0) for p in paths}
     stats["C:/x/movie.mp4"] = (2_000_000_000, 1.0)
     panel = _panel(qapp)
     _populate(panel, paths, stats)
-    # The video is open; the 20 icons are one closed bucket row.
-    assert [p for _cb, p in panel._file_checks] == ["C:/x/movie.mp4"]
-    assert sorted(k for _cb, k in panel._group_checks) == ["Images", "Videos"]
+    # The video is open; the 40 icons are one closed bucket row.
+    assert [p for _cb, p in panel._files_panel._file_checks] == ["C:/x/movie.mp4"]
+    assert sorted(k for _cb, k in panel._files_panel._group_checks) == ["Images", "Videos"]
 
 
 def test_a_collapsed_bucket_still_counts_and_still_selects(qapp):
     """Grouping never hides: the closed bucket's files are in the total, and
     ticking its row selects every one of them."""
-    paths = [f"C:/x/icon{i}.png" for i in range(20)] + ["C:/x/movie.mp4"]
+    paths = [f"C:/x/icon{i}.png" for i in range(40)] + ["C:/x/movie.mp4"]
     stats = {p: (800, 1.0) for p in paths}
     stats["C:/x/movie.mp4"] = (2_000_000_000, 1.0)
     panel = _panel(qapp)
     _populate(panel, paths, stats)
-    assert len(panel._all_file_paths) == 21
-    panel._on_group_toggle("Images", True)
-    assert len(panel._selected_files) == 20
-    panel._on_group_toggle("Images", False)
-    assert panel._selected_files == set()
+    assert len(panel._files_panel._all_file_paths) == 41
+    panel._files_panel.set_group_selected("Images", True)
+    assert len(panel._files_panel._selected_files) == 40
+    panel._files_panel.set_group_selected("Images", False)
+    assert panel._files_panel._selected_files == set()
 
 
 def test_expanding_a_bucket_reveals_its_files(qapp):
-    paths = [f"C:/x/icon{i}.png" for i in range(20)] + ["C:/x/movie.mp4"]
+    paths = [f"C:/x/icon{i}.png" for i in range(40)] + ["C:/x/movie.mp4"]
     stats = {p: (800, 1.0) for p in paths}
     stats["C:/x/movie.mp4"] = (2_000_000_000, 1.0)
     panel = _panel(qapp)
     _populate(panel, paths, stats)
-    panel._toggle_file_group("Images")
-    assert len(panel._file_checks) == 21
+    panel._files_panel.toggle_group("Images")
+    assert len(panel._files_panel._file_checks) == 41
 
 
 def test_bucket_header_reflects_member_selection(qapp):
     paths = ["C:/x/a.zip", "C:/x/b.zip"]
     panel = _panel(qapp)
     _populate(panel, paths)
-    header = dict((k, cb) for cb, k in panel._group_checks)["Archives"]
+    header = dict((k, cb) for cb, k in panel._files_panel._group_checks)["Archives"]
     assert header.isChecked() is False
-    for cb, _p in panel._file_checks:
+    for cb, _p in panel._files_panel._file_checks:
         cb.setChecked(True)
     assert header.isChecked() is True
 
@@ -233,7 +246,7 @@ def test_every_bucket_is_on_screen_however_long_the_first_one_is(qapp):
     stats = {p: (1_000_000, 1.0) for p in paths}
     panel = _panel(qapp)
     _populate(panel, paths, stats)
-    kinds = [k for _cb, k in panel._group_checks]
+    kinds = [k for _cb, k in panel._files_panel._group_checks]
     assert set(kinds) == {"Programs & libraries", "Images", "Code & config"}
 
 
@@ -243,8 +256,8 @@ def test_a_long_bucket_shows_a_slice_and_says_how_much_is_left(qapp):
     stats = {p: (1_000_000, 1.0) for p in paths}
     panel = _panel(qapp)
     _populate(panel, paths, stats)
-    assert len(panel._file_checks) == 50
-    more = [b for b in panel._files_container.findChildren(QPushButton)
+    assert len(panel._files_panel._file_checks) == 50
+    more = [b for b in panel._files_panel._container.findChildren(QPushButton)
             if b.text().startswith("Show ")]
     assert more and "70" in more[0].text()
 
@@ -255,10 +268,10 @@ def test_extending_one_bucket_leaves_the_others_alone(qapp):
     stats = {p: (1_000_000, 1.0) for p in paths}
     panel = _panel(qapp)
     _populate(panel, paths, stats)
-    images_before = panel._group_shown(panel._group_by_kind("Images"))
-    panel._show_more_in_group("Archives")
-    assert panel._group_shown(panel._group_by_kind("Archives")) == 100
-    assert panel._group_shown(panel._group_by_kind("Images")) == images_before
+    images_before = panel._files_panel.shown_in(panel._files_panel.group_by_kind("Images"))
+    panel._files_panel.show_more("Archives")
+    assert panel._files_panel.shown_in(panel._files_panel.group_by_kind("Archives")) == 100
+    assert panel._files_panel.shown_in(panel._files_panel.group_by_kind("Images")) == images_before
 
 
 def test_recycle_button_states_the_size_it_would_free(qapp):
@@ -267,9 +280,9 @@ def test_recycle_button_states_the_size_it_would_free(qapp):
     stats = {p: (5 * 1024 * 1024, 1.0) for p in paths}
     panel = _panel(qapp)
     _populate(panel, paths, stats)
-    panel._file_checks[0][0].setChecked(True)
-    assert "5" in panel._btn_recycle_files.text()
-    assert "MB" in panel._btn_recycle_files.text()
+    panel._files_panel._file_checks[0][0].setChecked(True)
+    assert "5" in panel._files_panel._btn_recycle.text()
+    assert "MB" in panel._files_panel._btn_recycle.text()
 
 
 def test_per_file_ask_ai_is_quieter_than_the_bucket_one(qapp):
@@ -278,7 +291,7 @@ def test_per_file_ask_ai_is_quieter_than_the_bucket_one(qapp):
     paths = ["C:/x/a.zip", "C:/x/b.zip"]
     panel = _panel(qapp)
     _populate(panel, paths)
-    buttons = panel._files_container.findChildren(QPushButton)
+    buttons = panel._files_panel._container.findChildren(QPushButton)
     asks = [b for b in buttons if b.text() == "Ask AI"]
     assert len(asks) == 3, "one per file plus one on the bucket header"
     bordered = [b for b in asks if "border: 1px solid transparent" not in b.styleSheet()]
@@ -294,7 +307,7 @@ INSPECTOR_W = 365
 
 def _wide_bucket_panel(qapp, language):
     from app.i18n import set_language
-    from app.screens import findings_dashboard as fd
+    from app.screens import file_list_panel as flp
     set_language(language)
     paths = ([f"C:/x/icon{i}.png" for i in range(23)]
              + ["C:/x/a_very_long_file_name_that_keeps_going_and_going.mp4"]
@@ -303,8 +316,8 @@ def _wide_bucket_panel(qapp, language):
     sizes["C:/x/a_very_long_file_name_that_keeps_going_and_going.mp4"] = 2_000_000_000
     for i in range(9):
         sizes[f"C:/x/blob{i}.bin"] = 40_000_000
-    real = fd.stat_files
-    fd.stat_files = lambda ps, limit=1500, budget_s=0.15: {
+    real = flp.stat_files
+    flp.stat_files = lambda ps, limit=1500, budget_s=0.15: {
         p: (sizes.get(p, 0), 1_710_000_000.0) for p in ps}
     try:
         panel = _panel(qapp)
@@ -312,7 +325,7 @@ def _wide_bucket_panel(qapp, language):
                         "entity_type": "cache_folder", "actionability": "recycle",
                         "removable_file_paths": paths})
     finally:
-        fd.stat_files = real
+        flp.stat_files = real
     panel.resize(INSPECTOR_W, 900)
     panel.show()
     qapp.processEvents()
@@ -326,8 +339,8 @@ def test_the_file_list_fits_the_inspector_in_every_language(qapp, language):
     from app.i18n import set_language
     try:
         panel = _wide_bucket_panel(qapp, language)
-        viewport = panel._files_scroll.viewport().width()
-        content = panel._files_container.width()
+        viewport = panel._files_panel._scroll.viewport().width()
+        content = panel._files_panel._container.width()
         assert content <= viewport, (
             f"{language}: file list is {content - viewport}px wider than the panel")
     finally:
@@ -343,7 +356,7 @@ def test_a_bucket_never_loses_its_name_to_the_layout(qapp, language):
     from app.widgets.controls import ElidedLabel
     try:
         panel = _wide_bucket_panel(qapp, language)
-        rows = [r for r in panel._files_container.children()
+        rows = [r for r in panel._files_panel._container.children()
                 if type(r).__name__ == "_FileGroupRow"]
         assert rows, "no bucket headers were drawn"
         for row in rows:
@@ -368,13 +381,13 @@ def test_a_theme_switch_repaints_the_file_rows(qapp):
     assert other, "no second theme with a different accent to switch to"
     try:
         build_qss(other)                 # this is what sets the active theme
-        panel._repaint_file_rows()
+        panel._files_panel.repaint_rows()
         # deleteLater() only *posts* a DeferredDelete; without this the old
         # rows are still children and the assertion reads a discarded widget.
         from PySide6.QtCore import QCoreApplication, QEvent
         QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
         qapp.processEvents()
-        header = next(r for r in panel._files_container.children()
+        header = next(r for r in panel._files_panel._container.children()
                       if type(r).__name__ == "_FileGroupRow" and not r.isHidden())
         assert get_palette().get("accent") in header.findChild(ElidedLabel).styleSheet()
     finally:
@@ -389,10 +402,96 @@ def test_a_style_change_repaints_after_the_polish_not_during_it(qapp):
     from PySide6.QtCore import QEvent
     panel = _panel(qapp)
     _populate(panel, ["C:/x/a.zip", "C:/x/b.zip"])
-    rows_before = [cb for cb, _p in panel._file_checks]
+    rows_before = [cb for cb, _p in panel._files_panel._file_checks]
     qapp.sendEvent(panel, QEvent(QEvent.StyleChange))
-    assert [cb for cb, _p in panel._file_checks] == rows_before, (
+    assert [cb for cb, _p in panel._files_panel._file_checks] == rows_before, (
         "rows were rebuilt inside the style-change handler")
     qapp.processEvents()
-    assert [cb for cb, _p in panel._file_checks] != rows_before, (
+    assert [cb for cb, _p in panel._files_panel._file_checks] != rows_before, (
         "the deferred repaint never ran")
+
+
+# ── Extensions that are not extensions, and buckets named after them ──
+
+def test_a_version_tail_is_not_a_file_type():
+    """"electron-v1.0.227-win32-x64" ends in ".227-win32-x64"; taking that as
+    its type produced one bucket per build number."""
+    from app.models.file_grouping import extension_of
+    assert extension_of("C:/x/electron-v1.0.227-win32-x64") == ""
+    assert kind_of("C:/x/electron-v1.0.227-win32-x64") == OTHER_KIND
+
+
+def test_a_rotation_suffix_falls_back_to_the_real_extension():
+    """"chrome_debug.log.1" is a log, and ".1" says nothing."""
+    from app.models.file_grouping import extension_of
+    assert extension_of("C:/x/chrome_debug.log.1") == ".log"
+    assert kind_of("C:/x/chrome_debug.log.1") == "Logs & backups"
+    assert extension_of("C:/x/1.2") == ""
+
+
+def test_every_rolled_over_log_lands_in_logs():
+    """26 x .log_backup1 was the second-largest 'Other files' contributor."""
+    for name in ("a.log", "a.log2", "a.log_backup", "a.log_backup1", "a.logs"):
+        assert kind_of("C:/x/" + name) == "Logs & backups", name
+
+
+@pytest.mark.parametrize("name,kind", [
+    ("shortcut.lnk", "Shortcuts"),
+    ("site.url", "Shortcuts"),
+    ("flight.kml", "Map & survey data"),
+    ("cloud.laz", "Map & survey data"),
+    ("registry.regtrans-ms", "Logs & backups"),
+    ("system.evtx", "Logs & backups"),
+    ("store.sqlite-wal", "Databases"),
+    ("vpn.ovpn", "Code & config"),
+    ("notes.drawio", "Documents"),
+    ("symbols.pdb", "Programs & libraries"),
+])
+def test_extensions_that_used_to_fall_through(name, kind):
+    assert kind_of("C:/x/" + name) == kind
+
+
+def test_an_unknown_extension_seen_often_earns_its_own_row():
+    """'Other files x 18' tells a reader nothing; '.pcm x 18' tells them
+    something."""
+    paths = [f"a/f{i}.pcm" for i in range(5)]
+    groups = group_files(paths, {p: (10, 1.0) for p in paths})
+    assert [g.kind for g in groups] == [".pcm"]
+    assert groups[0].ext == ".pcm"
+
+
+def test_a_one_off_unknown_extension_does_not_get_a_row():
+    """A bucket per one-off extension is the noise the grouping removes."""
+    paths = ["a/x.qqq", "a/y.zzz", "a/z.wow"]
+    groups = group_files(paths, {p: (10, 1.0) for p in paths})
+    assert [g.kind for g in groups] == [OTHER_KIND]
+    assert groups[0].count == 3
+
+
+def test_a_named_extension_bucket_renders_in_words(qapp):
+    """The identity key stays the raw extension so expansion and selection
+    survive a language change; only the label is built for reading."""
+    paths = [f"C:/x/f{i}.pcm" for i in range(5)]
+    panel = _panel(qapp)
+    _populate(panel, paths)
+    group = panel._files_panel.group_by_kind(".pcm")
+    assert group is not None
+    assert panel._files_panel.group_title(group).startswith("PCM files")
+
+
+def test_a_pending_repaint_does_not_outlive_the_panel(qapp):
+    """A theme switch immediately followed by the screen closing left a 0ms
+    timer pointing at a panel whose C++ half was already gone, and it faulted
+    on the way back in — non-deterministically, in whichever test happened to
+    run next."""
+    from PySide6.QtCore import QCoreApplication, QEvent
+    import shiboken6
+    panel = _panel(qapp)
+    _populate(panel, ["C:/x/a.zip", "C:/x/b.zip"])
+    files = panel._files_panel
+    files.schedule_repaint()
+    panel.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    assert not shiboken6.isValid(files), "the panel should be gone by now"
+    for _ in range(3):
+        qapp.processEvents()   # would fault if the timer still fired

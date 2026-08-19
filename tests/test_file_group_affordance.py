@@ -122,6 +122,21 @@ class _FakeTabs:
     def setCurrentIndex(self, i): self._current = i
 
 
+class _FakeFiles:
+    """Just enough FileListPanel for _populate_files_section.
+
+    The real one is a QWidget with its own tests; what matters here is only
+    the number it reports back, which decides whether the tab appears.
+    """
+
+    def __init__(self):
+        self.loaded = []
+
+    def load(self, entity, paths):
+        self.loaded.append((entity, list(paths)))
+        return len(paths) if len(paths) >= 2 else 0
+
+
 def _panel_with(entity, starting_tab=0):
     """Drive _populate_files_section without building any Qt widgets.
 
@@ -131,22 +146,12 @@ def _panel_with(entity, starting_tab=0):
     from app.screens.findings_dashboard import _PreallocDetailPanel as P
 
     class _Panel:
-        _FILES_PER_PAGE = P._FILES_PER_PAGE
         _collect_entity_files = P._collect_entity_files
         _populate_files_section = P._populate_files_section
 
         def __init__(self):
             self._tabs = _FakeTabs(starting_tab)
-            self._all_file_paths = []
-            self._selected_files = set()
-            self._file_checks = []
-            self._file_groups = []
-            self._file_stats = {}
-            self._files_expanded = set()
-            self._group_limit = {}
-
-        def _render_files_page(self):
-            pass
+            self._files_panel = _FakeFiles()
 
     panel = _Panel()
     panel._populate_files_section(entity)
