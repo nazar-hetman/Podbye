@@ -2948,7 +2948,12 @@ def _pass7_sweep(ctx: "_DetectionContext"):
             ctx.claim(norm_path)
             continue
 
-        etype = _classify_by_content(direct_files) if direct_files else None
+        # Only let the folder's own loose files name it when they are a real
+        # share of it; otherwise the subfolders decide, further down.
+        etype = None
+        direct_files_speak = _direct_files_describe_folder(direct_files, descendants)
+        if direct_files_speak:
+            etype = _classify_by_content(direct_files)
 
         # ── Name-based fallback before unknown_folder ──────────────────
         lower_name = d.name.lower()
@@ -3024,7 +3029,8 @@ def _pass7_sweep(ctx: "_DetectionContext"):
         # than an extension count. "Application Support/WidgetApp/config.db"
         # is application data because of where it lives, not a database
         # because of what is in it.
-        if etype in (None, "unknown_folder") and not direct_files:
+        if etype in (None, "unknown_folder") and (not direct_files
+                                                  or not direct_files_speak):
             descendant_files = [c for c in descendants if not c.is_dir]
             recursive_type = _classify_by_content(descendant_files) if descendant_files else None
             if recursive_type:
@@ -4213,6 +4219,37 @@ def _build_entity(
         uninstall_string=uninstall_string,
         removable_file_paths=removable,
     )
+
+
+# A folder's own loose files only describe the folder when they account for a
+# real share of it. Below this they are incidental — a README beside twenty
+# subfolders — and the subfolders are what the folder actually is.
+_REPRESENTATIVE_DIRECT_SHARE = 0.2
+
+
+def _direct_files_describe_folder(direct_files: list[Finding],
+                                  descendants: list[Finding]) -> bool:
+    """True when a folder's own loose files can speak for the whole folder.
+
+    _classify_by_content reads a folder's DIRECT children, but the entity it
+    labels reports RECURSIVE totals. When the two disagree the label is drawn
+    from a sample that is nothing like the thing being measured.
+
+    Reported against an all-drives scan: the only loose file at D:\\ is
+    RESULTS.md, so the ratio of document extensions among direct files was
+    1.0, the drive root was labelled "Documents Folder", and the row then
+    displayed the drive's recursive totals — 392,273 files, 645 GB of mostly
+    aerial imagery. Same shape for coordinate_recovery_outputs: 187,555 files,
+    0.0% documents overall, labelled from a handful of loose files at its top.
+    """
+    if not direct_files:
+        return False
+    descendant_files = [c for c in descendants if not c.is_dir]
+    total = sum(f.size_bytes for f in descendant_files)
+    if total <= 0:
+        return True                      # nothing to weigh against
+    direct_size = sum(f.size_bytes for f in direct_files)
+    return (direct_size / total) >= _REPRESENTATIVE_DIRECT_SHARE
 
 
 def _classify_by_content(children: list[Finding]):
