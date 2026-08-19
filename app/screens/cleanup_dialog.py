@@ -680,8 +680,14 @@ class CleanupConfirmDialog(QDialog):
             except Exception:
                 pass
 
-        # Switch buttons: hide Cancel, change Confirm to Close
+        # Switch buttons: hide Cancel, change Confirm to Close.
+        # setVisible(True) is load-bearing — _present_as_progress() hid this
+        # button on the way in, and re-enabling and relabelling it is not the
+        # same as showing it. Without this the finished dialog had no button at
+        # all: the only way out was the titlebar ✕, on the one dialog that
+        # reports what was just deleted.
         self._btn_cancel.setVisible(False)
+        self._btn_confirm.setVisible(True)
         self._btn_confirm.setEnabled(True)
         self._btn_confirm.setText(tr("Close"))
         self._btn_confirm.clicked.disconnect()
