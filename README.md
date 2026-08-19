@@ -135,7 +135,7 @@ rights that Vigil's own license cannot restrict. See
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 If Vigil saved you some disk space and you'd like to say thanks:
-**[Buy me a coffee](https://buymeacoffee.com/CHANGE-ME)**. Entirely optional —
+**[Thanks]([https://buymeacoffee.com/CHANGE-ME](https://ko-fi.com/nazarhetman#setGoalModal))**. Entirely optional —
 nothing is gated behind it, and nothing ever will be.
 
 ---
