@@ -66,9 +66,17 @@ _DIRECTNESS = (
 )
 
 
+# Written in the target language on purpose. A small local model follows
+# "Antworte ausschließlich auf Deutsch." far more reliably than the same
+# instruction phrased in English — the sentence itself is evidence of which
+# language is wanted. Every language the picker offers needs an entry here;
+# tests/test_ai_languages.py fails the build if one is missing.
 _LANGUAGE_INSTRUCTIONS = {
     "english": "Answer only in English.",
     "ukrainian": "Відповідай лише українською мовою.",
+    "spanish": "Responde únicamente en español.",
+    "german": "Antworte ausschließlich auf Deutsch.",
+    "french": "Réponds uniquement en français.",
 }
 
 
