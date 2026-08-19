@@ -1,0 +1,72 @@
+name: Something is broken
+description: A crash, a control that does nothing, text that does not fit, a wrong number
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a folder sorted into the wrong category, use the
+        **Something was sorted wrongly** template instead — it asks for
+        different things.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      placeholder: The Deep Uninstall button is there but clicking it does nothing.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to get there
+      placeholder: |
+        1. Scan all drives
+        2. Findings → Applications
+        3. Open any Program Files entry that has no uninstaller
+    validations:
+      required: true
+
+  - type: input
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Vigil version
+      placeholder: v1.0.0-beta.3
+    validations:
+      required: true
+
+  - type: dropdown
+    id: theme
+    attributes:
+      label: Theme and language
+      description: Only matters for anything visual — skip it otherwise.
+      multiple: true
+      options:
+        - Forest
+        - Amber
+        - Black
+        - Paper
+        - English
+        - Ukrainian
+        - French
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshot or anything else
+      description: >
+        A screenshot is worth a lot for anything visual. If Vigil crashed, run
+        it from a terminal with `VIGIL_DEBUG=1` and paste what it printed.
+    validations:
+      required: false

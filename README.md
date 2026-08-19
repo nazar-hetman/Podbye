@@ -37,7 +37,8 @@ Protected and cannot be selected for cleanup, ever.
 **Optional local AI.** If you run [Ollama](https://ollama.com) or LM Studio,
 Vigil can ask it to explain a finding in plain language. It only ever talks to
 your own machine or your LAN — a public address is rejected outright. Leave it
-off and everything else still works.
+off and everything else still works. What you get out of it depends heavily on
+the model you point it at — see [About the AI explanations](#about-the-ai-explanations).
 
 ---
 
@@ -81,7 +82,28 @@ Python 3.12+, Windows.
 - **Startups** — what launches with Windows, and whether you need it.
 - **History** — what you cleaned, when, and how much came back.
 
-Interface available in English, Ukrainian and French.
+---
+
+## Languages
+
+The interface ships in **English, Ukrainian and French**. That is not a
+judgement about which languages matter — it is simply how far one person got.
+
+Adding one is not hard. Translations live in `app/locales/<code>.json`, keyed
+by the English string, and a *partial* file is genuinely useful: translated
+strings appear in your language, everything else stays English, so you can
+start with the screens you use most and stop whenever you like. Copy
+`app/locales/fr.json`, translate the values, leave the keys alone, and open a
+pull request. If pull requests are not your thing, open an issue and attach the
+file — that is just as welcome, and I will wire it in.
+
+Two things a translation has to keep: the `{placeholders}` in braces, exactly
+as they appear in the key, and roughly the original length. Longer strings are
+fine in a wrapping paragraph but will clip on a button, so `pytest` includes a
+layout check that measures every control in every shipped language.
+
+The language of *AI explanations* is separate, and set in AI settings. It is
+deliberately not limited to the languages above — see below.
 
 ---
 
@@ -135,7 +157,7 @@ rights that Vigil's own license cannot restrict. See
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 If Vigil saved you some disk space and you'd like to say thanks:
-**[Thanks]([https://buymeacoffee.com/CHANGE-ME](https://ko-fi.com/nazarhetman))**. Entirely optional —
+**[Ko-fi](https://ko-fi.com/nazarhetman)**. Entirely optional —
 nothing is gated behind it, and nothing ever will be.
 
 ---
@@ -158,6 +180,35 @@ start and we'll work it out.
 
 ---
 
+## About the AI explanations
+
+The AI is optional and entirely local, which means its quality is your model's
+quality, not Vigil's. Worth knowing before you judge an answer:
+
+**The model only knows what it was trained on.** A model trained in 2023 has
+never heard of an application released in 2025, and will cheerfully guess.
+Vigil's own classification does not depend on the model at all — the category,
+the risk tier and the reason come from rules that run with the AI switched off.
+The model is asked to *phrase* an explanation, not to decide anything. If the
+prose and the label disagree, trust the label.
+
+**Bigger models explain better; smaller ones are faster.** A 3B model gives you
+a sentence. A 14B model gives you a paragraph that is usually right about what
+an unfamiliar folder is for. Neither is wrong to choose — pick for your
+hardware and patience.
+
+**Language ability comes from the model, not from Vigil.** You can ask for an
+explanation in any of the offered languages regardless of which interface
+translations exist, because the constraint is what your model can write. A
+model with weak coverage of a language will answer in it poorly, or drift back
+to English mid-answer. If that happens, it is the model, and a larger or more
+multilingual one will fix it.
+
+**It never sees your files.** The prompt carries a path, a size, a category and
+a timestamp — never file contents.
+
+---
+
 ## Known limitations
 
 - Windows only. Nothing is deliberately Windows-locked, but it is not tested
@@ -165,4 +216,15 @@ start and we'll work it out.
   Windows-specific.
 - Not code-signed, so SmartScreen will warn on first run.
 - A first full scan of a large drive takes a few minutes.
+- **It has been tested on very few machines.** This is the honest one. Vigil
+  has been built and run against a handful of Windows installs, and disk
+  layouts vary enormously — different drive counts, different tools, different
+  habits. Classification is rule-based, so a folder shape I have never seen can
+  be sorted into the wrong category, or land in "Unknown" when it clearly is
+  something. **If you see that, please
+  [open an issue](../../issues/new/choose).** It is the single most useful
+  thing you can contribute: every rule in here exists because a real folder on
+  a real machine was classified wrongly once. Nothing is deleted without your
+  say-so, so a wrong label costs you nothing but a wrong impression — and I
+  cannot fix a layout I never see.
 - Classification is good, not perfect. That's what the by-folder view is for.

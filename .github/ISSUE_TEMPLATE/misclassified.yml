@@ -1,0 +1,83 @@
+name: Something was sorted wrongly
+description: A folder was put in the wrong category, given the wrong risk, or left as "Unknown"
+title: "[classification] "
+labels: ["classification"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks — this is the most useful kind of report Vigil gets. Nearly every
+        classification rule in it exists because someone hit a folder shape it
+        had never seen.
+
+        You do not need to know why it went wrong. What the folder *is* and
+        what Vigil *called it* is enough.
+
+  - type: input
+    id: path
+    attributes:
+      label: The path
+      description: >
+        Shorten or redact anything private — `D:\<project>\Ortho\run_001` is
+        just as useful as the real name. The shape of the path matters, not the
+        words in it.
+      placeholder: C:\Program Files\WSL
+    validations:
+      required: true
+
+  - type: input
+    id: got
+    attributes:
+      label: What Vigil called it
+      description: The category and risk shown on the row, e.g. "Documents · Review".
+      placeholder: Documents · Review
+    validations:
+      required: true
+
+  - type: input
+    id: expected
+    attributes:
+      label: What it actually is
+      placeholder: A drone photogrammetry output folder — mostly GeoTIFFs
+    validations:
+      required: true
+
+  - type: textarea
+    id: contents
+    attributes:
+      label: What is inside it
+      description: >
+        Roughly what the folder holds — the main file types and the rough size
+        split. This is usually what pins the bug down.
+      placeholder: |
+        ~180 GB of .tif, some .ovr and .laz, one README.md at the top level
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scan_scope
+    attributes:
+      label: What did you scan?
+      options:
+        - One folder
+        - One drive
+        - All drives
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Vigil version
+      description: Shown under the wordmark in the sidebar.
+      placeholder: v1.0.0-beta.3
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: A screenshot of the row is welcome but not required.
+    validations:
+      required: false

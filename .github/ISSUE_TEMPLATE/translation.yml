@@ -1,0 +1,47 @@
+name: A translation, or a language you want
+description: Offer a locale file, fix a wrong string, or ask for a language Vigil does not ship
+title: "[i18n] "
+labels: ["i18n"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Vigil ships English, Ukrainian and French. That is how far one person
+        got, not a judgement about which languages matter.
+
+        A **partial** translation is genuinely useful — translated strings show
+        in your language and the rest stay English, so there is no need to
+        finish the whole file before it is worth sending.
+
+  - type: input
+    id: language
+    attributes:
+      label: Which language
+      placeholder: Polish (pl)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What are you sending?
+      options:
+        - A new locale file (attached below)
+        - A fix to an existing string
+        - A request — I am not translating it myself
+    validations:
+      required: true
+
+  - type: textarea
+    id: detail
+    attributes:
+      label: Details
+      description: >
+        For a new locale: attach the JSON, or paste it here, or link a fork —
+        whatever is easiest. Start from `app/locales/fr.json`, keep the keys
+        exactly as they are, and keep every `{placeholder}` in braces.
+
+        For a fix: the English string, what Vigil currently shows, and what it
+        should say.
+    validations:
+      required: true
