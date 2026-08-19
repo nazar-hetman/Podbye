@@ -62,6 +62,18 @@ def _is_review_tier(target: dict) -> bool:
     return target.get("actionability") == "review_only"
 
 
+def _file_size(path: str) -> int:
+    """Bytes on disk, or 0 when the file cannot be measured.
+
+    0 is the honest answer for a path that has since gone: it contributes
+    nothing to the "will be sent" total, which is what removing it will free.
+    """
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return 0
+
+
 def _duplicate_target_sizes(item: dict) -> dict[str, int]:
     sizes: dict[str, int] = {}
     for loc in item.get("duplicate_locations") or []:
@@ -90,7 +102,11 @@ def _cleanup_targets_for_item(item: dict) -> list[dict]:
     # Grouped / loose buckets carry the actual files they stand for. Expand to
     # per-file targets so cleanup never recycles the bucket's display path
     # (which can be the scan root or a drive root).
-    file_paths = [p for p in (item.get("removable_file_paths") or []) if p]
+    # Same normalisation the Files tab applies before showing this list: a
+    # whitespace-only entry is not a file, and a repeat would be attempted —
+    # and reported — twice.
+    file_paths = list(dict.fromkeys(
+        p for p in (item.get("removable_file_paths") or []) if p and p.strip()))
     if file_paths and item.get("entity_type") != "duplicate_group":
         targets = []
         for path in file_paths:
@@ -99,6 +115,14 @@ def _cleanup_targets_for_item(item: dict) -> list[dict]:
             target["name"] = os.path.basename(path) or item.get("name", "")
             target["is_dir"] = False
             target["removable_file_paths"] = []
+            # Each file weighs what it weighs. dict(item) copies the *bucket's*
+            # size onto every one of its members, so a nine-file selection out
+            # of a 240 MB folder was announced as "9 item(s) · 2.1 GB will be
+            # sent to the Recycle Bin" — the entity's size, nine times over, on
+            # the last screen before anything is deleted. The duplicate branch
+            # below already looked its sizes up per path; this one did not.
+            target["size_bytes"] = _file_size(path)
+            target["reclaimable_bytes"] = target["size_bytes"]
             targets.append(target)
         return targets
 

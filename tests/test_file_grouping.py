@@ -495,3 +495,25 @@ def test_a_pending_repaint_does_not_outlive_the_panel(qapp):
     assert not shiboken6.isValid(files), "the panel should be gone by now"
     for _ in range(3):
         qapp.processEvents()   # would fault if the timer still fired
+
+
+# ── the list is normalised before anything counts it ──────────────
+
+def test_a_repeated_path_is_listed_once(qapp):
+    """Selection is a set, so a doubled path made the counter unable to reach
+    its own total: "2 of 3 selected" with everything ticked."""
+    panel = _panel(qapp)
+    _populate(panel, ["C:/x/same.zip", "C:/x/same.zip", "C:/x/other.zip"])
+    files = panel._files_panel
+    assert len(files._all_file_paths) == 2
+    files.select_shown()
+    assert files._count_lbl.text() == "2 of 2 selected"
+
+
+def test_a_blank_path_is_not_offered_for_deletion(qapp):
+    """A whitespace-only entry drew a nameless, tickable row whose action was
+    to delete " "."""
+    panel = _panel(qapp)
+    _populate(panel, ["", " ", "C:/x/real.zip", "   ", "C:/x/b.zip"])
+    listed = [p for _cb, p in panel._files_panel._file_checks]
+    assert listed == ["C:/x/real.zip", "C:/x/b.zip"]

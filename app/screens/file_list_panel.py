@@ -149,6 +149,17 @@ class FileListPanel(QWidget):
         self._entity = entity or {}
         self._selected_files = set()
         self._limit = {}
+        # Normalise before anything counts it. Two sources feed this — the
+        # stored path list and a live folder listing — and neither promises
+        # the result is clean:
+        #   * A blank or whitespace-only entry drew a nameless, tickable row
+        #     offering to delete " ".
+        #   * A repeated path was counted twice by the tab label and the
+        #     "n of total" counter, which then could never reach its own
+        #     total however much the user selected, because selection is a set.
+        # dict.fromkeys keeps first-seen order, which is the order the rest of
+        # the grouping treats as the caller's.
+        paths = list(dict.fromkeys(p for p in paths if p and p.strip()))
         if len(paths) < self.MIN_FILES:
             self._all_file_paths = []
             self._file_checks = []
@@ -366,15 +377,33 @@ class FileListPanel(QWidget):
         rl.addStretch()
         return row
 
-    def file_size_str(self, path: str) -> str:
-        """The size of one row, falling back to disk past the stat budget."""
-        size, _mtime = self._stats.get(path, (None, 0.0))
-        if size is None:
+    def _size_of(self, path: str) -> int:
+        """This file's size, measuring it now if the stat budget ran out.
+
+        Memoised into the same table, so a path costs at most one stat however
+        often it is drawn or re-totalled. Without this the button previewing a
+        selection totalled 0 for everything past the budget while the confirm
+        dialog — which measures every target — reported the real figure, and
+        the two screens disagreed about the same files.
+        """
+        hit = self._stats.get(path)
+        if hit is None:
             try:
-                size = os.path.getsize(path)
+                st = os.stat(path)
+                hit = (st.st_size, st.st_mtime)
+            except OSError:
+                hit = (0, 0.0)
+            self._stats[path] = hit
+        return hit[0]
+
+    def file_size_str(self, path: str) -> str:
+        """The size of one row, measured on demand past the stat budget."""
+        if path not in self._stats:
+            try:
+                os.stat(path)
             except OSError:
                 return "—"
-        return _format_size(size)
+        return _format_size(self._size_of(path))
 
     # ── expanding ─────────────────────────────────────────────────
 
@@ -454,7 +483,7 @@ class FileListPanel(QWidget):
             tr("{n} of {total} selected").format(n=n, total=total))
         self._sync_group_checks()
         self._btn_recycle.setEnabled(n > 0 and self._recycle_cb is not None)
-        size = sum(self._stats.get(p, (0, 0.0))[0] for p in self._selected_files)
+        size = sum(self._size_of(p) for p in self._selected_files)
         # The count alone never said whether the selection was worth making.
         # Ticking 40 files is a different decision at 12 KB than at 12 GB, and
         # this button is the last place before the confirm dialog to say so.
