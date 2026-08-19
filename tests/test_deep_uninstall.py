@@ -139,3 +139,66 @@ def test_an_executor_that_raises_is_reported_not_swallowed(tmp_path):
     outcome, message = launch_uninstaller(f'"{real}"', _executor=boom)
     assert outcome == FAILED
     assert "no shell32 here" in message
+
+
+# ── The button must not exist when it cannot work ────────────────
+
+def _detail_widget(qapp):
+    from app.fonts import load_fonts
+    from app.themes.theme_manager import build_qss
+    from app.screens.findings_dashboard import _PreallocDetailPanel
+    load_fonts()
+    qapp.setStyleSheet(build_qss("forest"))
+    return _PreallocDetailPanel(
+        open_cb=lambda *_: None, copy_cb=lambda *_: None,
+        recycle_cb=lambda *_: None, uninstall_cb=lambda *_: None,
+    )
+
+
+def _app_entity(uninstall_string):
+    return {
+        "path": r"C:\Program Files\WSL",
+        "name": "WSL",
+        "entity_type": "application",
+        "category": "Applications",
+        "risk": "Review",
+        "size_bytes": 457_000_000,
+        "size": "436 MB",
+        "file_count": 120,
+        "uninstall_string": uninstall_string,
+    }
+
+
+def test_no_uninstall_button_when_windows_registers_no_uninstaller(qapp):
+    """WSL sits in Program Files with no uninstall command.
+
+    A visible-but-disabled button was reported as confusing: the explanation
+    lived in a tooltip, so all the user saw was a control for something the
+    app cannot do.
+    """
+    w = _detail_widget(qapp)
+    w.populate(_app_entity(""))
+    assert not w._btn_uninstall.isVisibleTo(w), (
+        "Deep Uninstall is offered for an application with no uninstaller"
+    )
+    w.deleteLater()
+
+
+def test_recycle_stays_available_as_the_fallback(qapp):
+    """Hiding the dead button must not leave the user with no action at all."""
+    w = _detail_widget(qapp)
+    w.populate(_app_entity(""))
+    assert w._btn_recycle.isVisibleTo(w), (
+        "no uninstaller and no recycle — the entity has no available action"
+    )
+    w.deleteLater()
+
+
+def test_the_button_appears_when_the_uninstaller_is_real(qapp):
+    import sys
+    w = _detail_widget(qapp)
+    # sys.executable certainly exists, so uninstaller_is_runnable() passes.
+    w.populate(_app_entity(f'"{sys.executable}" /uninstall'))
+    assert w._btn_uninstall.isVisibleTo(w)
+    assert w._btn_uninstall.isEnabled()
+    w.deleteLater()
