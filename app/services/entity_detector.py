@@ -3101,7 +3101,10 @@ def _pass8_loose_files(ctx: "_DetectionContext"):
             _buckets["archive_group"].append(f)
         elif ext in _DATABASE_EXTS:
             _buckets["database"].append(f)
-        elif ext in _MODEL_EXTS:
+        elif ext in _MODEL_EXTS or f.category == "AI / ML":
+            # Extension OR the category the file already resolved to. Ollama
+            # and HuggingFace store weights as extensionless hashes, so an
+            # extension-only test filed a 7 GB model under "Misc files".
             _buckets["ai_models"].append(f)
         elif ext in _LOG_EXTS or ext in _BACKUP_EXTS:
             _buckets["log_folder"].append(f)
@@ -4213,11 +4216,18 @@ def _classify_by_content(children: list[Finding]):
 
     ext_counts: dict[str, int] = defaultdict(int)
     ext_sizes: dict[str, int] = defaultdict(int)
+    # Counted separately from any extension: a model store full of
+    # extensionless hash blobs has no extension to be recognised by.
+    model_count = 0
+    model_size = 0
 
     for f in files:
         ext = f.extension.lower() if f.extension else ""
         ext_counts[ext] += 1
         ext_sizes[ext] += f.size_bytes
+        if f.category == "AI / ML":
+            model_count += 1
+            model_size += f.size_bytes
 
     total = len(files)
     total_sz = sum(ext_sizes.values()) or 1  # avoid div/0
@@ -4241,7 +4251,8 @@ def _classify_by_content(children: list[Finding]):
         return "creative_project"
     
     # AI/ML Models - high priority (large files, specific extensions)
-    if _ratio(_MODEL_EXTS) > 0.2 or _size_ratio(_MODEL_EXTS) > 0.4:
+    if (_ratio(_MODEL_EXTS) > 0.2 or _size_ratio(_MODEL_EXTS) > 0.4
+            or model_count / total > 0.2 or model_size / total_sz > 0.4):
         return "ai_models"
     
     # Images

@@ -146,6 +146,27 @@ _AI_ML_PATH_KEYWORDS = frozenset({
     "lora", "huggingface", "diffusers",
 })
 
+# Weights below this are configs, manifests and tokenizer files rather than a
+# model — matching the threshold the extension-based rule already uses.
+_MODEL_BLOB_MIN_BYTES = 50 * 1024 * 1024
+
+
+def is_model_blob(name: str, ext: str, parts: frozenset, size_bytes: int) -> bool:
+    """True for a large model file that carries no extension to be judged by.
+
+    Both AI/ML rules below key on the extension, which misses the way the two
+    most common local-LLM runners actually store weights: Ollama writes every
+    model to ~/.ollama/models/blobs/sha256-<hash>, and HuggingFace writes
+    ~/.cache/huggingface/hub/models--*/blobs/<hash>. Both are extensionless,
+    so a 7 GB model landed in "Unknown" — on the runners Vigil's own README
+    names. The path is the evidence here, which is why the keyword set above
+    already lists "ollama" and "huggingface"; it was simply unreachable for a
+    file with no extension.
+    """
+    if ext or size_bytes < _MODEL_BLOB_MIN_BYTES:
+        return False
+    return bool(parts & _AI_ML_PATH_KEYWORDS)
+
 _SYSTEM_EXTS = frozenset({
     ".dll", ".sys", ".ocx", ".drv",
     ".inf", ".cat",
@@ -461,6 +482,19 @@ def categorize(path: str, name: str, ext: str, is_dir: bool, size_bytes: int = 0
             return "Dev Artifacts", f"dev artifact directory: {lower_name}", s_label, s_conf
         # Inside an app root — fall through to application detection below
 
+    # ── 1b. Model weights, before anything can call them cache ───────
+    # HuggingFace keeps models under ~/.cache/huggingface/, so the cache rule
+    # below matched on "cache" and returned first — a 4 GB .gguf was filed as
+    # "Cache & Temp" at risk Safe, which is the tier Quick Cleanup bulk-selects.
+    # Weights are expensive to re-download, never disposable, and the AI/ML
+    # rules further down were unreachable for anything under a cache path.
+    if not is_dir:
+        if lower_ext in _AI_ML_EXTS:
+            return "AI / ML", f"AI/ML model: {lower_ext}", "AI Model", "probable"
+        if is_model_blob(lower_name, lower_ext, parts, size_bytes):
+            return ("AI / ML", "AI/ML model blob (large, in a model store)",
+                    "AI Model", "heuristic")
+
     # ── 2. Cache & Temp / Browser Data ───────────────────────────────
     for kw in _CACHE_KEYWORDS:
         if kw in lower_path:
@@ -535,6 +569,8 @@ def categorize(path: str, name: str, ext: str, is_dir: bool, size_bytes: int = 0
     if lower_ext in _AI_ML_LARGE_EXTS:
         if size_bytes > 50 * 1024 * 1024 or (parts & _AI_ML_PATH_KEYWORDS):
             return "AI / ML", f"AI/ML model (large/path): {lower_ext}", "AI Model", "heuristic"
+    if is_model_blob(lower_name, lower_ext, parts, size_bytes):
+        return "AI / ML", "AI/ML model blob (large, in a model store)", "AI Model", "heuristic"
 
     # ── 5g. System files ─────────────────────────────────────────────
     if lower_ext in _SYSTEM_EXTS:
