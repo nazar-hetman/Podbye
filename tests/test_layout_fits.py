@@ -68,11 +68,21 @@ def _overflowing(widget) -> list[str]:
         width = w.maximumWidth()
         if width <= 0:
             continue
-        # Buttons and combos reserve padding for borders and the drop-down
-        # arrow before any text is drawn; a bare label does not.
-        allowance = _CHROME_PX if isinstance(w, (QPushButton, QComboBox)) else 0
-        needed = QFontMetrics(w.font()).horizontalAdvance(text)
-        if needed > width - allowance:
+        if isinstance(w, QPushButton):
+            # Ask Qt rather than guessing the chrome. _CHROME_PX is what let
+            # the clipped Ukrainian Cancel button through: real padding on a
+            # styled button is ~30px, not 16, so a 94px label read as fitting
+            # in 90px. sizeHint() is computed by the active style, QSS
+            # padding included.
+            #
+            # Buttons only. A QComboBox sizes its hint to the widest item in
+            # the dropdown, not the text on display, so the same measurement
+            # there reports overflows that render perfectly well.
+            needed = w.sizeHint().width()
+        else:
+            allowance = _CHROME_PX if isinstance(w, QComboBox) else 0
+            needed = QFontMetrics(w.font()).horizontalAdvance(text) + allowance
+        if needed > width:
             bad.append(f"{type(w).__name__} {text!r} needs {needed}px, has {width}px")
     return bad
 
@@ -105,6 +115,29 @@ def _build_screens(app):
     return out
 
 
+def _build_dialogs(app):
+    """Dialogs, which pin button widths measured against English labels.
+
+    Screens alone missed the case that shipped: the cleanup dialog's Cancel
+    button was setFixedWidth(90), and Ukrainian "Скасувати" needs 94px, so the
+    label was clipped at both ends on the one dialog that authorises deletion.
+    """
+    from app.screens.cleanup_dialog import CleanupConfirmDialog
+    from app.widgets.close_dialog import CloseRunningDialog
+
+    items = [dict(path="C:/x/cache.dat", name="Temp", entity_type="cache_folder",
+                  category="Cache & Temp", risk="Safe", size_bytes=2_400_000_000,
+                  size="2.2 GB", is_dir=True, reason="Known directory: Temp")]
+
+    out = []
+    for dlg in (CleanupConfirmDialog(items), CloseRunningDialog("A scan")):
+        dlg.adjustSize()
+        dlg.show()
+        app.processEvents()
+        out.append(dlg)
+    return out
+
+
 @pytest.mark.parametrize("language", available_languages())
 def test_no_control_overflows_in_any_shipped_language(app, language):
     set_language(language)
@@ -113,6 +146,17 @@ def test_no_control_overflows_in_any_shipped_language(app, language):
         problems += _overflowing(screen)
     assert not problems, (
         f"{language}: text does not fit its control —\n  " + "\n  ".join(problems))
+
+
+@pytest.mark.parametrize("language", available_languages())
+def test_no_dialog_control_overflows_in_any_shipped_language(app, language):
+    set_language(language)
+    problems = []
+    for dlg in _build_dialogs(app):
+        problems += _overflowing(dlg)
+    assert not problems, (
+        f"{language}: dialog text does not fit its control —\n  "
+        + "\n  ".join(problems))
 
 
 def test_the_harness_can_actually_detect_an_overflow(app):

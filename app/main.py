@@ -274,8 +274,17 @@ class VigilWindow(QMainWindow):
 
     def _apply_theme(self, theme_key: str):
         self._current_theme = theme_key
-        qss = build_qss(theme_key)
-        QApplication.instance().setStyleSheet(qss)
+        # setStyleSheet re-polishes every live widget — ~1s with all screens
+        # built — and it blocks the UI thread, so without a cursor the window
+        # simply stops responding and reads as a hang. Nothing here can be
+        # moved off the thread: Qt styling is main-thread only.
+        app = QApplication.instance()
+        app.setOverrideCursor(Qt.WaitCursor)
+        try:
+            qss = build_qss(theme_key)
+            app.setStyleSheet(qss)
+        finally:
+            app.restoreOverrideCursor()
         # Recolour the window / taskbar icon to match the theme accent.
         icon = logo_icon(get_palette(theme_key)["accent"])
         self.setWindowIcon(icon)
