@@ -283,13 +283,22 @@ class FileListPanel(QWidget):
         # The loud Ask AI lives here, not on every file. "What are these 312
         # .pak files" is a question worth an answer; "what is 00042.pak" is
         # the same answer, asked 312 times.
+        #
+        # It asks about the biggest member, because that is what the explainer
+        # takes — and the tooltip says so. Labelled "Explain this file with
+        # AI", identically to the per-row buttons, it read as a promise about
+        # all 312 while answering about one of them.
         if self._ask_ai_file_cb is not None and group.paths:
+            example = group.paths[0]
             ask = QPushButton(tr("Ask AI"))
             ask.setStyleSheet(ask_ai_button_qss())
             ask.setCursor(Qt.PointingHandCursor)
-            ask.setToolTip(tr("Explain this file with AI"))
+            ask.setToolTip(
+                tr("Explain this file with AI") if group.count <= 1 else
+                tr("Explain what these are, using {name} as the example",
+                   name=os.path.basename(example) or example))
             ask.clicked.connect(
-                lambda _c=False, path=group.paths[0]: self._ask_ai_file_cb(path))
+                lambda _c=False, path=example: self._ask_ai_file_cb(path))
             rl.addWidget(ask)
 
         self._group_checks.append((cb, group.kind))
