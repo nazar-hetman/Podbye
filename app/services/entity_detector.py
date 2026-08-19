@@ -609,11 +609,19 @@ _CONTENT_TYPE_EXTS = {
 }
 
 
-def _content_confirms_type(children: list, etype: str, min_ratio: float = 0.3) -> bool:
+def _content_confirms_type(children: list, etype: str, min_ratio: float = 0.3,
+                           min_size_ratio: float = 0.3) -> bool:
     """True if a folder's actual files back up a name-based content guess.
 
     Only gates the content-collection types in _CONTENT_TYPE_EXTS; every other
     type passes through unchanged. An empty folder never confirms a media type.
+
+    Counted two ways on purpose. A count-only test asks "are most of the files
+    documents?", but the number the entity then reports is its *size* — so a
+    folder of 19 small .docx beside a .mp4 and a .zip passed at 66% by count
+    while documents were 23% of its bytes, and the user was shown 2 GB labelled
+    "Documents". Reported as a bug against E:/Work/Projects/Focus/Docs. The
+    label has to be justified by the same measure it is displayed with.
     """
     exts = _CONTENT_TYPE_EXTS.get(etype)
     if exts is None:
@@ -621,8 +629,13 @@ def _content_confirms_type(children: list, etype: str, min_ratio: float = 0.3) -
     files = [c for c in children if not c.is_dir]
     if not files:
         return False
-    matched = sum(1 for f in files if (f.extension or "").lower() in exts)
-    return (matched / len(files)) >= min_ratio
+    matched = [f for f in files if (f.extension or "").lower() in exts]
+    if (len(matched) / len(files)) < min_ratio:
+        return False
+    total_size = sum(f.size_bytes for f in files)
+    if total_size <= 0:
+        return True          # nothing to weigh; the count is all we have
+    return (sum(f.size_bytes for f in matched) / total_size) >= min_size_ratio
 
 
 # ── App / UI asset folders vs. genuine user media ─────────────────
