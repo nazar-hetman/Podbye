@@ -859,6 +859,13 @@ class AnalyzeScreen(QWidget):
     def _start_scan(self):
         if not self._selected_folder or not self._scan_state:
             return
+        # Never two scans at once. The button is disabled while the previous
+        # worker winds down, but a disabled button is a UI state and this is
+        # the invariant — reachable by keyboard, by a queued click, or by any
+        # future caller of this method.
+        if self._scan_worker_alive():
+            self._feed.add_line("[scan] still stopping the previous run")
+            return
 
         from app.services.scanner import ScanWorker
 
@@ -978,6 +985,12 @@ class AnalyzeScreen(QWidget):
         # Multi-root only for "Scan all drives"; a single folder passes roots=None
         # so the worker behaves exactly as before.
         roots = self._scan_roots if len(self._scan_roots) > 1 else None
+        # Retire the previous worker before its reference is overwritten. A
+        # finished-but-never-joined QThread terminates the process when it is
+        # destroyed, and reassigning this attribute is what drops the last
+        # reference to it.
+        from app.services.workers import retire_worker
+        retire_worker(self._worker)
         self._worker = ScanWorker(self._selected_folder, skip_paths=skip,
                                   cross_volumes=cross_volumes,
                                   resume_stack=resume_stack,
@@ -1026,12 +1039,15 @@ class AnalyzeScreen(QWidget):
         # Reset AI connection flag so next scan reconnects signals properly
         self._ai_connected = False
 
-        # Reset scan button and stop the progress bar animation immediately.
-        # _btn_folder stays disabled until _on_scan_finished confirms the worker
-        # has exited — opening the folder dialog while the worker thread is still
-        # alive causes a freeze on slow/large drives.
-        self._reset_scan_button()
-        self._btn_scan.setEnabled(True)
+        # The button reports "Stopping…" until the worker has actually exited;
+        # _on_scan_finished puts it back to Start. _btn_folder already waits for
+        # the same signal — opening the folder dialog while the worker thread is
+        # still alive causes a freeze on slow/large drives.
+        self._scan_active = False
+        if self._scan_worker_alive():
+            self._set_scan_button_stopping()
+        else:
+            self._reset_scan_button()
         _set_determinate(self._scan_bar, 0, "#8a9b8f")
         self._scan_prog_lbl.setText("stopped")
         self._refresh_idle_telemetry()
@@ -1048,6 +1064,32 @@ class AnalyzeScreen(QWidget):
         self._btn_scan.setStyleSheet("")
         self._btn_scan.setEnabled(True)
         self._refresh_header_meta()
+
+    def _set_scan_button_stopping(self):
+        """Stopping is a state, not an instant.
+
+        halt() only sets a flag; the worker notices it between directory
+        entries, which on a slow or very wide directory is not immediate. The
+        button used to jump straight back to "Start scan", enabled, while that
+        thread was still alive — so it both reported a finished stop that had
+        not finished, and invited a second scan on top of the first.
+        _start_scan() had no guard against that.
+
+        The folder button next to it already waits for _on_scan_finished for
+        exactly this reason ("opening the folder dialog while the worker thread
+        is still alive causes a freeze on slow/large drives"). Starting another
+        scan is the worse version of that, and it was the one left unguarded.
+        """
+        self._btn_scan.setText(tr("Stopping…"))
+        self._btn_scan.setEnabled(False)
+        self._refresh_header_meta()
+
+    def _scan_worker_alive(self) -> bool:
+        worker = getattr(self, "_worker", None)
+        try:
+            return bool(worker is not None and worker.isRunning())
+        except RuntimeError:
+            return False        # the C++ side is already gone
 
     def _reset_scan_button(self):
         """Reset button to Start state (green) when scan is complete."""
@@ -1340,7 +1382,17 @@ class AnalyzeScreen(QWidget):
         # dropping our reference alone would leave the C++ object (and the
         # findings it still holds) alive for the life of the screen, piling up
         # one dead QThread per scan.
+        #
+        # retire_worker first, and that is load-bearing: finished_scan is
+        # emitted as the last statement *inside* run(), so the thread has not
+        # returned when this slot runs. deleteLater() on a QThread that is
+        # still running destroys it mid-flight — std::terminate, 0xC0000409,
+        # no traceback. Reproduced by scanning a drive, stopping, scanning
+        # again and closing the window. The wait joins a thread that is
+        # microseconds from returning, so it costs nothing.
         if self._worker is not None:
+            from app.services.workers import retire_worker
+            retire_worker(self._worker)
             self._worker.deleteLater()
             self._worker = None
 
@@ -1418,6 +1470,8 @@ class AnalyzeScreen(QWidget):
         store = getattr(self._scan_state, "_settings_store", None)
         if store:
             threshold = store.get("scan/dedup_threshold_mb", 10)
+        from app.services.workers import retire_worker
+        retire_worker(self._dup_worker)
         self._dup_worker = DuplicateDetector(findings, threshold_mb=threshold, parent=self)
         self._dup_worker.log_line.connect(self._feed.add_line)
         self._dup_worker.group_found.connect(self._on_dup_group_found)
@@ -1437,7 +1491,11 @@ class AnalyzeScreen(QWidget):
             )
         # Parented to this screen — release it explicitly so a dead detector
         # (and its findings snapshot) isn't retained until the screen dies.
+        # Joined first for the same reason as the scan worker above: this
+        # signal is emitted from inside the detector's own run().
         if self._dup_worker is not None:
+            from app.services.workers import retire_worker
+            retire_worker(self._dup_worker)
             self._dup_worker.deleteLater()
             self._dup_worker = None
 

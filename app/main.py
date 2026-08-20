@@ -444,8 +444,48 @@ class VigilWindow(QMainWindow):
         if analyze and self._scan_state.is_running:
             analyze._stop_scan()
 
+    def _confirm_interrupting_running_work(self) -> bool:
+        """Ask before an action that would displace work already in progress.
+
+        Both History actions reach past the running scan and take its state
+        away from it. Opening a session calls restore_from_session() on the very
+        ScanState the scan is writing into — the running results are gone, and
+        the restored ones are then overwritten by whatever the worker emits
+        next. Neither outcome is one the user asked for, and nothing said a word
+        about it.
+
+        Returns True when the caller may proceed; the running work has been
+        stopped by then, so it is not still writing underneath.
+        """
+        if not self._is_busy():
+            return True
+        from PySide6.QtWidgets import QMessageBox
+        answer = QMessageBox.question(
+            self,
+            tr("Something is still running"),
+            tr("{activity} is still running. Continuing will stop it and "
+               "discard the results it has collected so far.\n\n"
+               "Continue?", activity=self._activity_label()),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return False
+        # Stop before displacing anything, so no worker is still writing into
+        # the state that is about to be replaced.
+        for screen in self._screens.values():
+            stop = getattr(screen, "stop_background_work", None)
+            if callable(stop):
+                try:
+                    stop(3000)
+                except Exception:
+                    pass
+        return True
+
     def _on_rerun_from_history(self, target: str):
         """Navigate to Analyze and prefill the target from a history entry."""
+        if not self._confirm_interrupting_running_work():
+            return
         self._navigate("Analyze")
         analyze = self._screens.get("Analyze")
         if analyze and target and hasattr(analyze, "set_target"):
@@ -453,11 +493,13 @@ class VigilWindow(QMainWindow):
 
     def _on_open_findings_requested(self, session_data: dict):
         """Open Findings with restored session data — no re-analysis."""
+        if not self._confirm_interrupting_running_work():
+            return
         if self._scan_state:
             # Set restore mode so AI cache shows appropriate messages
             self._scan_state._run_mode = "restore"
             self._scan_state.restore_from_session(session_data)
-        
+
         # Navigate to Findings
         self._navigate("Findings")
 

@@ -59,6 +59,43 @@ def stop_worker(worker, timeout_ms: int = 3000) -> bool:
     return False
 
 
+def retire_worker(worker, timeout_ms: int = 3000) -> None:
+    """Finish with *worker* so its Python reference can safely be dropped.
+
+    stop_worker() returns early for a thread that is no longer running, which
+    is right when the owner is being torn down — but not when the *reference*
+    is about to be replaced. A QThread whose run() has returned still reports
+    isRunning() False while never having been joined, and destroying it in that
+    state calls std::terminate exactly as if it were mid-run.
+
+    Reproduced on an ordinary sequence: start a scan, stop it, start another.
+    The second ScanWorker overwrote self._worker, the first wrapper became
+    garbage, and the next collection took the process down with 0xC0000409 —
+    no traceback, nothing in the log, and nowhere near the click that caused
+    it.
+
+    wait() on an already-finished thread returns immediately, so this costs
+    nothing in the normal case. A thread that will not stop is disowned into
+    _ORPHANED, which keeps the Python reference alive on purpose.
+    """
+    if worker is None:
+        return
+    try:
+        if _is_running(worker):
+            for name in ("cancel", "halt"):
+                stop = getattr(worker, name, None)
+                if callable(stop):
+                    stop()
+                    break
+            worker.requestInterruption()
+        if not worker.wait(timeout_ms):
+            worker.setParent(None)
+            _ORPHANED.append(worker)
+            _prune()
+    except (RuntimeError, AttributeError):
+        pass        # already gone, or never a QThread; nothing left to retire
+
+
 def _prune() -> None:
     """Forget orphans that have since finished."""
     global _ORPHANED
