@@ -1,5 +1,5 @@
 Vigil — local system analysis and cleanup
-Copyright (c) 2026 Nazar Getman
+Copyright (c) 2026 Nazar Hetman
 
 Licensed under the PolyForm Noncommercial License 1.0.0 (below).
 
@@ -7,7 +7,7 @@ In short, and without replacing the terms below: you may use, copy, modify and
 share Vigil freely for any noncommercial purpose. Selling it, or using it as
 part of a commercial product or service, is not permitted under this license.
 
-Required Notice: Copyright (c) 2026 Nazar Getman
+Required Notice: Copyright (c) 2026 Nazar Hetman
 
 Vigil bundles third-party components under their own licenses — including Qt
 for Python (PySide6) under the GNU LGPL v3, which grants recipients rights
