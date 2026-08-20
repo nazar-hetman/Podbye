@@ -188,6 +188,16 @@ class SettingsScreen(QWidget):
     def set_settings_store(self, store):
         self._store = store
         self._load_from_store()
+        # About caches the config path when it builds its rows, so a store that
+        # arrives afterwards left that row reading "unavailable" with a dead
+        # Open folder button. main.py passes the store to __init__ and never
+        # hits this, but the setter is public and the failure is silent.
+        targets = getattr(self, "_storage_targets", None)
+        if targets is not None and store is not None:
+            targets["config"] = str(getattr(store, "config_path", "") or "")
+            lbl = getattr(self, "_config_path_lbl", None)
+            if lbl is not None:
+                lbl.setText(targets["config"] or tr("unavailable"))
 
     # ─── Persistence ────────────────────────────────────────
 
@@ -1054,7 +1064,7 @@ class SettingsScreen(QWidget):
         b_lay.addLayout(_panel_title(tr("Build"), tr("product")) )
         self._register_styled_panel(build_panel)
 
-        from app.version import __version__, BUILD
+        from app.version import __version__, BUILD, REPO_URL, RELEASES_URL
         for k, v in [
             (tr("Version"), __version__),
             (tr("Build"), BUILD),
@@ -1062,6 +1072,34 @@ class SettingsScreen(QWidget):
             val_lbl = QLabel(v)
             val_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 12px;")
             b_lay.addLayout(_setting_row(k, "", val_lbl))
+
+        b_lay.addWidget(_divider())
+
+        # Source and releases. Both are links handed to the system browser —
+        # Vigil itself never requests either. That is the whole reason there is
+        # no automatic update check: a program that promises it does not talk to
+        # the internet cannot quietly announce its version, IP and launch time
+        # on every start. The button says what it does so nobody assumes
+        # otherwise.
+        links = QWidget()
+        links_row = QHBoxLayout(links)
+        links_row.setContentsMargins(0, 0, 0, 0)
+        links_row.setSpacing(8)
+        for label, url in ((tr("Check for updates"), RELEASES_URL),
+                           (tr("View source"), REPO_URL)):
+            btn = QPushButton(label)
+            btn.setObjectName("Ghost")
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet(self._utility_btn_qss())
+            btn.setToolTip(url)
+            btn.clicked.connect(lambda _=False, u=url: self._open_external(u))
+            links_row.addWidget(btn)
+        links_row.addStretch()
+        b_lay.addLayout(_setting_row(
+            tr("Repository"),
+            tr("Opens in your browser. Vigil never contacts the internet "
+               "itself, so there is nothing to check from in here."),
+            links))
 
         lay.addWidget(build_panel)
 
@@ -1164,6 +1202,8 @@ class SettingsScreen(QWidget):
         col.setSpacing(4)
 
         path_lbl = QLabel(path or tr("unavailable"))
+        if key == "config":
+            self._config_path_lbl = path_lbl
         path_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
         path_lbl.setWordWrap(True)
         path_lbl.setMaximumWidth(380)
@@ -1201,6 +1241,17 @@ class SettingsScreen(QWidget):
 
         return _setting_row(label, desc, holder)
 
+    def _open_external(self, url: str):
+        """Hand *url* to the system browser.
+
+        QDesktopServices, not urllib: this must not become a request Vigil
+        makes. Nothing here opens a socket, which is also why
+        test_offline_guarantee still passes with these buttons on screen.
+        """
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        QDesktopServices.openUrl(QUrl(url))
+
     def _reveal_path(self, path: str):
         """Show *path* in the system file manager.
 
@@ -1236,7 +1287,7 @@ class SettingsScreen(QWidget):
         lbl = self._storage_size_lbls.get("ai_cache")
         if lbl:
             lbl.setText(tr("cleared · {n} file(s) removed", n=removed))
-        QTimer.singleShot(600, self._refresh_storage_sizes)
+        QTimer.singleShot(600, self, self._refresh_storage_sizes)
 
     def _refresh_storage_sizes(self):
         """Measure the session store and AI cache off the UI thread.
@@ -1438,7 +1489,7 @@ class SettingsScreen(QWidget):
             self._conn_status_lbl.setText(tr("could not start Ollama"))
             return
         # It needs a moment to bind the port; re-test without blocking the UI.
-        QTimer.singleShot(1500, self._retest_after_start)
+        QTimer.singleShot(1500, self, self._retest_after_start)
 
     def _retest_after_start(self):
         self._btn_start_ollama.setEnabled(True)

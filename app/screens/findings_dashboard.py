@@ -3587,7 +3587,7 @@ class CategoryDetailView(QFrame):
         """Populate the persistent right-side inspector."""
         try:
             self._right_sidebar.populate(entity)
-            QTimer.singleShot(0, self._ensure_selected_row_visible)
+            QTimer.singleShot(0, self, self._ensure_selected_row_visible)
         except Exception as exc:
             import traceback
             print(f"[findings] detail sidebar error: {exc}\n{traceback.format_exc()}")
@@ -3841,7 +3841,7 @@ class CategoryDetailView(QFrame):
             "font-family: 'JetBrains Mono'; font-size: 11px; "
             f"color: {get_palette().get('safe', '#7aa88a')};"
         )
-        QTimer.singleShot(ms, self._clear_toast)
+        QTimer.singleShot(ms, self, self._clear_toast)
 
     def _clear_toast(self):
         self._sel_size_lbl.setText("")

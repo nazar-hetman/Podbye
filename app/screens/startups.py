@@ -814,7 +814,8 @@ class StartupInspectorPanel(QFrame):
         from PySide6.QtWidgets import QApplication
         QApplication.clipboard().setText(path)
         self._copy_btn.setText(tr("Copied"))
-        QTimer.singleShot(1200, lambda: self._copy_btn.setText(tr("Copy path")))
+        QTimer.singleShot(
+            1200, self, lambda: self._copy_btn.setText(tr("Copy path")))
 
     def set_embedded_header_visible(self, visible: bool):
         self._header_row.setVisible(visible)

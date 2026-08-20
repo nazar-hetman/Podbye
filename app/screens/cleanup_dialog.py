@@ -558,7 +558,7 @@ class CleanupConfirmDialog(QDialog):
             # and then start deleting a frame later, so the user watched a
             # question they were never given the chance to answer.
             self._present_as_progress()
-            QTimer.singleShot(0, self._on_confirm)
+            QTimer.singleShot(0, self, self._on_confirm)
 
     def _present_as_progress(self):
         """Re-label the dialog as the operation it is about to perform.
@@ -715,7 +715,8 @@ class CleanupConfirmDialog(QDialog):
         # a button stuck on "Copied" says nothing about the click just made.
         self._btn_copy_issues.setText(tr("Copied"))
         QTimer.singleShot(
-            1500, lambda: self._btn_copy_issues.setText(tr("Copy list")))
+            1500, self,
+            lambda: self._btn_copy_issues.setText(tr("Copy list")))
 
     # ── Event handlers ────────────────────────────────────────────
 

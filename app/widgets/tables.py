@@ -117,7 +117,7 @@ class _HeaderFitFilter(QObject):
             # dispatched from inside an event filter re-enters widgets that
             # are still being constructed — it reached a half-built
             # TacticalComboBox and raised out of a C++ virtual.
-            QTimer.singleShot(0, self._fit)
+            QTimer.singleShot(0, self, self._fit)
         return False
 
     def _fit(self):

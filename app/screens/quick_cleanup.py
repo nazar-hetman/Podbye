@@ -949,13 +949,13 @@ class QuickCleanupScreen(QWidget):
             self._wc_sub.setText(tr("// empty"))
             self._total_num.setText("0")
             self._total_unit.setText("MB")
-            QTimer.singleShot(0, self._sync_panel_heights)
+            QTimer.singleShot(0, self, self._sync_panel_heights)
             return
 
         self._subtitle_lbl.setText(tr("Click a category to learn more · safe categories only"))
         self._btn_rescan.setEnabled(True)
         self._update_summary()
-        QTimer.singleShot(0, self._sync_panel_heights)
+        QTimer.singleShot(0, self, self._sync_panel_heights)
 
     # ── Summary ───────────────────────────────────────────────────
 

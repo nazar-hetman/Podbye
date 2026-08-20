@@ -898,7 +898,7 @@ class HomeScreen(QWidget):
 
     def _on_scan_ended(self):
         self._live_poll.stop()
-        QTimer.singleShot(300, self._rebuild_dynamic)
+        QTimer.singleShot(300, self, self._rebuild_dynamic)
 
     def _load_busy(self, fn):
         """Read a session off the UI thread — see BusyDialog for why.

@@ -358,7 +358,7 @@ class VigilWindow(QMainWindow):
         self._stop_pending_language_poll()
         lang = self._pending_lang
         self._pending_lang = None
-        QTimer.singleShot(0, lambda: self._apply_language_change(lang))
+        QTimer.singleShot(0, self, lambda: self._apply_language_change(lang))
 
     def _start_pending_language_poll(self):
         timer = getattr(self, "_lang_poll_timer", None)
@@ -436,7 +436,7 @@ class VigilWindow(QMainWindow):
         self._navigate("Analyze")
         analyze = self._screens.get("Analyze")
         if analyze and hasattr(analyze, "prepare_new_scan"):
-            QTimer.singleShot(0, analyze.prepare_new_scan)
+            QTimer.singleShot(0, analyze, analyze.prepare_new_scan)
 
     def _on_stop_from_home(self):
         """Stop active scan from the Home screen."""
