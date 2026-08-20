@@ -26,6 +26,9 @@ class ProtectedPathError(Exception):
 
 # ── Protected-path guard ─────────────────────────────────────────
 
+# "c:" after the trailing slash is stripped — a whole drive.
+_DRIVE_ROOT_RE = re.compile(r"[a-z]:")
+
 _PROTECTED_SEGMENTS = {
     "windows", "system32", "syswow64", "winsxs",
     "programdata", "recovery", "boot",
@@ -40,7 +43,16 @@ def _is_protected_for_delete(path: str) -> bool:
     Mirrors the logic in entity_detector._is_protected_path() so protection
     is enforced by the engine regardless of what the UI said at selection time.
     """
-    norm = path.replace("\\", "/").lower().rstrip("/")
+    # strip() before rstrip("/"): "  C:/  " has no trailing slash to strip
+    # until the padding is gone, and it is a whole drive either way.
+    norm = path.replace("\\", "/").strip().lower().rstrip("/")
+    # A bare drive root, or nothing at all. No product story reaches here with
+    # one — a file list holds files, and the confirm dialog screens folders —
+    # but this is the layer that is supposed to hold "regardless of what the UI
+    # said", and it did not hold for the single most destructive input there
+    # is. Recycling C:/ is not a cleanup anyone can undo.
+    if not norm.strip() or _DRIVE_ROOT_RE.fullmatch(norm.strip()):
+        return True
     for part in norm.split("/"):
         if part in _PROTECTED_SEGMENTS:
             return True

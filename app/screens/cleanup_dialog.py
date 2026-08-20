@@ -46,7 +46,7 @@ def _elide_middle(text: str, limit: int) -> str:
 
 def _is_drive_root_path(path: str) -> bool:
     """True for a bare drive root such as 'C:/', 'C:\\', or 'C:'."""
-    stripped = path.replace("\\", "/").rstrip("/")
+    stripped = path.replace("\\", "/").strip().rstrip("/")
     return bool(re.fullmatch(r"[A-Za-z]:", stripped))
 
 
@@ -105,8 +105,13 @@ def _cleanup_targets_for_item(item: dict) -> list[dict]:
     # Same normalisation the Files tab applies before showing this list: a
     # whitespace-only entry is not a file, and a repeat would be attempted —
     # and reported — twice.
+    # The drive-root screen below applies to a folder-backed entity. It has to
+    # apply here too: this branch produced a target of "C:/" from a file list
+    # containing one, and "never offer a drive root as a target" is not a rule
+    # that can hold on one of two paths through the same function.
     file_paths = list(dict.fromkeys(
-        p for p in (item.get("removable_file_paths") or []) if p and p.strip()))
+        p for p in (item.get("removable_file_paths") or []) if p and p.strip()
+        and not _is_drive_root_path(p)))
     if file_paths and item.get("entity_type") != "duplicate_group":
         targets = []
         for path in file_paths:
