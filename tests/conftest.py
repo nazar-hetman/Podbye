@@ -15,6 +15,30 @@ from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication
 
 
+@pytest.fixture(autouse=True)
+def _never_touch_the_real_session_store(tmp_path_factory, monkeypatch):
+    """Every test gets its own empty %APPDATA%.
+
+    Two reasons, and both were learned the hard way.
+
+    *Nothing may write to the user's live store.* A test that called
+    save_cleanup_record without redirecting it wrote a real record into the
+    running user's cleanup history, and the store keeps only
+    MAX_CLEANUP_HISTORY of them, so a long enough run would evict the user's
+    own records. Redirecting the public ``sessions_dir()`` looks right and does
+    nothing — the writer resolves the private ``_sessions_dir()`` — so this
+    redirects %APPDATA% instead, the layer both of them read and the one
+    several test modules already override for themselves.
+
+    *Per test, not per session.* Sharing one directory made the settings file
+    shared mutable state: a test that configured an AI model left it configured
+    for every test that ran afterwards, and a later screen then started a real
+    AI worker that outlived its test and issued live HTTP requests to Ollama
+    for the rest of the run. Making a directory costs nothing next to that.
+    """
+    monkeypatch.setenv("APPDATA", str(tmp_path_factory.mktemp("appdata")))
+
+
 @pytest.fixture(scope="session", autouse=True)
 def qapp():
     """One QApplication for the whole test session.

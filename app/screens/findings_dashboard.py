@@ -2034,40 +2034,74 @@ class _PreallocDetailPanel(QWidget):
 
     # ── Contained-files list ──────────────────────────────────────────
 
-    def _collect_entity_files(self, entity: dict) -> list:
-        """Concrete files this entity stands for, for the expandable list.
+    # How many files of a folder the list will draw, and how many entries it
+    # will look at to choose them. The scan cap is generous because reading a
+    # directory entry is cheap — 1,639 of them with sizes measured 3 ms — while
+    # the draw cap exists so the panel does not build thousands of rows.
+    _FILES_SHOWN_CAP = 500
+    _DIR_SCAN_CAP = 50_000
+
+    def _collect_entity_files(self, entity: dict) -> tuple[list, int, dict]:
+        """``(paths to show, how many files there are, sizes already known)``.
 
         Prefers the stored ``removable_file_paths`` (loose buckets, installers);
-        falls back to a live, capped folder listing for content-collection
-        folders so photo/video/document groups can also be inspected.
+        falls back to a live folder listing for content-collection folders so
+        photo/video/document groups can also be inspected.
+
+        That listing used to stop dead at the 500th entry, and the tab was then
+        labelled "Files (500)" as though that were the whole folder. Two things
+        were wrong with it. The count was a fiction — one of these folders holds
+        1,639 photos and says so in its own name. And the cut happened in
+        ``scandir`` order, which is neither size nor anything else a reader
+        would expect, while the list below is sorted biggest-first and so reads
+        as "the largest things in here": measured on that folder, **363 of the
+        500 largest files were not in the list at all**.
+
+        So the whole directory is read — ``DirEntry.stat()`` is served from the
+        directory scan on Windows, so sizes cost almost nothing — and the
+        largest ``_FILES_SHOWN_CAP`` are kept. The second return value is the
+        real total, which the caller says out loud, and the third hands on the
+        sizes this pass already learned — re-measuring them cost 165 ms of the
+        panel's own stat budget five milliseconds after they were read, and
+        exhausted it, so the last 52 of 500 files ended up recorded as zero
+        bytes and sorted to the bottom of a size-ordered list.
         """
         rfp = [p for p in (entity.get("removable_file_paths") or []) if p]
         if rfp:
-            return rfp
+            return rfp, len(rfp), {}
         if not _is_content_container(entity):
-            return []
+            return [], 0, {}
         path = entity.get("path", "")
         if not path or not os.path.isdir(path):
-            return []
-        out: list = []
+            return [], 0, {}
+
+        sized: list = []
         try:
-            for de in os.scandir(path):
+            for i, de in enumerate(os.scandir(path)):
+                if i >= self._DIR_SCAN_CAP:
+                    break
                 try:
                     if de.is_file(follow_symlinks=False):
-                        out.append(de.path)
+                        st = de.stat()
+                        sized.append((st.st_size, st.st_mtime, de.path))
                 except OSError:
                     pass
-                if len(out) >= 500:
-                    break
         except OSError:
             pass
-        return out
+
+        total = len(sized)
+        if total > self._FILES_SHOWN_CAP:
+            sized.sort(key=lambda row: -row[0])
+            sized = sized[:self._FILES_SHOWN_CAP]
+        stats = {path_: (size, mtime) for size, mtime, path_ in sized}
+        return [path_ for _s, _m, path_ in sized], total, stats
 
     def _populate_files_section(self, entity: dict):
         """Hand the entity's files to the Files tab, or hide the tab."""
         is_app = _is_application_action_target(entity)
-        paths = [] if is_app else self._collect_entity_files(entity)
-        count = self._files_panel.load(entity, paths)
+        paths, total, stats = (([], 0, {}) if is_app
+                               else self._collect_entity_files(entity))
+        count = self._files_panel.load(entity, paths, total=total, stats=stats)
 
         # A single-file or contentless entity adds no insight — keep Files off.
         if not count:
@@ -2080,7 +2114,11 @@ class _PreallocDetailPanel(QWidget):
 
         self._tabs.setTabEnabled(1, True)
         self._tabs.setTabVisible(1, True)
-        self._tabs.setTabText(1, tr("Files ({n})").format(n=count))
+        # The tab says how many are shown *of* how many there are, rather than
+        # presenting a truncated count as the total.
+        self._tabs.setTabText(1, tr("Files ({n})").format(n=count)
+                              if total <= count else
+                              tr("Files ({n} of {total})").format(n=count, total=total))
 
         # Open on the list for entities whose meaning *is* the list. A loose
         # bucket's Information tab can say little beyond which folder the files

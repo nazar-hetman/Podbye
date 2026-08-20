@@ -6,11 +6,35 @@ half skips automatically if a Qt application cannot be created.
 import os
 import pytest
 
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from app.models.file_grouping import (   # noqa: E402
     OTHER_KIND, default_expanded, group_files, kind_of, stat_files,
 )
+
+# Panels built here are parentless, so nothing ever destroys them. Left alive
+# they are re-polished by every later `app.setStyleSheet()` in the suite:
+# these three files leaked 6,811 widgets between them, and test_theme_switching
+# went from 13 s standalone to ~400 s in the full run because of it.
+_BUILT: list = []
+
+
+@pytest.fixture(autouse=True)
+def _destroy_panels_built_here(qapp):
+    yield
+    from PySide6.QtCore import QCoreApplication, QEvent
+    while _BUILT:
+        widget = _BUILT.pop()
+        try:
+            widget.close()
+            widget.deleteLater()
+        except RuntimeError:
+            pass          # already gone
+    # deleteLater only *posts* a DeferredDelete, and processEvents outside a
+    # running event loop never delivers it.
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    qapp.processEvents()
 
 
 # ── Bucketing rules ───────────────────────────────────────────────
@@ -162,12 +186,14 @@ def qapp():
 
 def _panel(qapp, recycle_into=None):
     from app.screens.findings_dashboard import _PreallocDetailPanel
-    return _PreallocDetailPanel(
+    panel = _PreallocDetailPanel(
         open_cb=lambda p: None,
         copy_cb=lambda p: None,
         recycle_cb=(recycle_into.update if recycle_into is not None else None),
         ask_ai_file_cb=lambda p: None,
     )
+    _BUILT.append(panel)
+    return panel
 
 
 def _populate(panel, paths, stats=None):

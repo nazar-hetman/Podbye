@@ -734,7 +734,16 @@ class AnalyzeScreen(QWidget):
         self.focus_target_picker()
 
     def eventFilter(self, obj, event):
-        if obj is self._pf_table.viewport():
+        # The filter is installed on the table's viewport but lives on *this*
+        # screen, so it outlives the table whenever the screen is torn down
+        # child-first. Reaching through the dead wrapper raises "Internal C++
+        # object already deleted" — Qt catches it, so nothing crashes, but the
+        # event is dropped and the traceback is printed on every teardown.
+        try:
+            viewport = self._pf_table.viewport()
+        except RuntimeError:
+            return False
+        if obj is viewport:
             if event.type() == QEvent.Leave:
                 self._hover_row = -1
                 self._refresh_partial_table_row_styles()

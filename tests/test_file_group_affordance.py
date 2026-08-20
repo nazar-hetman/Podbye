@@ -132,8 +132,8 @@ class _FakeFiles:
     def __init__(self):
         self.loaded = []
 
-    def load(self, entity, paths):
-        self.loaded.append((entity, list(paths)))
+    def load(self, entity, paths, total=0, stats=None):
+        self.loaded.append((entity, list(paths), total))
         return len(paths) if len(paths) >= 2 else 0
 
 

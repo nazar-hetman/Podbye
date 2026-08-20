@@ -680,6 +680,12 @@ def save_cleanup_record(session_id: str, items: list, result, mode: str) -> bool
             "already_clean"
         ),
         "items": items,
+        # Marks that each item's "size" is its own bytes. Records written
+        # before 2026-08-20 carry the *bucket's* total on every one of its
+        # members — a nine-file cleanup recorded nine identical 668 MB items
+        # for 3.9 GB actually freed — and History cannot tell the two apart by
+        # looking, so it declines to add up the ones without this stamp.
+        "item_sizes": "measured",
         "errors_by_path": result.errors_by_path,
     }
     try:

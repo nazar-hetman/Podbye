@@ -85,6 +85,9 @@ class FileListPanel(QWidget):
         self._expanded: set = set()
         self._limit: dict = {}
         self._group_checks: list = []   # (QCheckBox, kind) for the drawn rows
+        # How many files the entity holds, when that is more than were
+        # collected — the truncation notice reads this.
+        self._total_available: int = 0
 
         self._build_ui()
 
@@ -139,8 +142,18 @@ class FileListPanel(QWidget):
 
     # ── loading ───────────────────────────────────────────────────
 
-    def load(self, entity: dict, paths: list) -> int:
+    def load(self, entity: dict, paths: list, total: int = 0,
+             stats: dict | None = None) -> int:
         """Show *paths* for *entity*. Returns how many files are on offer.
+
+        *total* is how many files the entity really holds, which can be more
+        than were collected. When it is, the panel says so rather than letting
+        a truncated list read as the whole folder.
+
+        *stats* are sizes the caller already measured. A folder listing reads
+        every size as it goes, so handing them over saves this pass repeating
+        the work — and repeating it was not merely slow: it spent the whole
+        stat budget and left the tail of the list recorded as zero bytes.
 
         Fewer than MIN_FILES means there is nothing here worth a tab, and the
         panel resets to empty so a later theme repaint has nothing stale to
@@ -149,6 +162,7 @@ class FileListPanel(QWidget):
         self._entity = entity or {}
         self._selected_files = set()
         self._limit = {}
+        self._total_available = total
         # Normalise before anything counts it. Two sources feed this — the
         # stored path list and a live folder listing — and neither promises
         # the result is clean:
@@ -172,8 +186,13 @@ class FileListPanel(QWidget):
         self._all_file_paths = list(paths)
         # One stat pass for the whole list — it feeds the bucket order, the
         # per-file order and every size label, so the per-row getsize on each
-        # re-render is gone with it.
-        self._stats = stat_files(self._all_file_paths)
+        # re-render is gone with it. Skipped entirely when the caller already
+        # did the measuring.
+        known = {p: stats[p] for p in self._all_file_paths if p in (stats or {})}
+        missing = [p for p in self._all_file_paths if p not in known]
+        self._stats = known
+        if missing:
+            self._stats.update(stat_files(missing))
         self._groups = group_files(self._all_file_paths, self._stats)
         self._expanded = default_expanded(self._groups)
         self.render_rows()
@@ -224,12 +243,34 @@ class FileListPanel(QWidget):
         self._file_checks = []
         self._group_checks = []
 
+        if self._total_available > len(self._all_file_paths):
+            self._clay.insertWidget(self._clay.count() - 1, self._make_partial_row())
+
         builders = {"header": self._make_group_header,
                     "file": self._make_file_row,
                     "more": self._make_more_row}
         for kind, payload in self._rows_to_draw():
             self._clay.insertWidget(self._clay.count() - 1, builders[kind](payload))
         self._update_counter()
+
+    def _make_partial_row(self) -> QWidget:
+        """Say that this is a slice of the folder, and which slice.
+
+        Without it a folder of 1,639 photos showed 500 rows sorted biggest
+        first, which reads as "the largest things in here" — a claim the list
+        could not support while the other 1,139 had never been looked at.
+        """
+        row = QWidget()
+        rl = QHBoxLayout(row)
+        rl.setContentsMargins(0, 0, 0, 6)
+        lbl = ElidedLabel(tr("Showing the {n} largest of {total} files",
+                             n=len(self._all_file_paths),
+                             total=self._total_available))
+        lbl.setStyleSheet(
+            f"font-family: 'JetBrains Mono'; font-size: 10px; "
+            f"color: {get_palette().get('review', '#d8b46a')};")
+        rl.addWidget(lbl, stretch=1)
+        return row
 
     # ── the three kinds of row ────────────────────────────────────
 
