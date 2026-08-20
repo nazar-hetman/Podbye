@@ -1046,6 +1046,12 @@ class AnalyzeScreen(QWidget):
         self._scan_active = False
         if self._scan_worker_alive():
             self._set_scan_button_stopping()
+            # The header said "Adaptive scan running" throughout the stopping
+            # window, directly above a button reading "Stopping…". It is only
+            # corrected in _on_scan_finished, which by definition has not run
+            # yet — so the one moment the two disagreed was the moment the user
+            # was watching them.
+            self._sub.setText(tr("Stopping the scan · partial results are kept"))
         else:
             self._reset_scan_button()
         _set_determinate(self._scan_bar, 0, "#8a9b8f")

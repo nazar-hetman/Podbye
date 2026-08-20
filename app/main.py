@@ -274,11 +274,20 @@ class VigilWindow(QMainWindow):
 
     def _apply_theme(self, theme_key: str):
         self._current_theme = theme_key
-        # setStyleSheet re-polishes every live widget — ~1s with all screens
-        # built — and it blocks the UI thread. A wait cursor was tried here to
-        # show it was working; it did the opposite, reading as a freeze about
-        # to crash. The honest fix is to make it fast (build screens lazily),
-        # not to decorate the stall.
+        # setStyleSheet re-polishes every live widget and blocks the UI thread.
+        # A wait cursor was tried here to show it was working; it did the
+        # opposite, reading as a freeze about to crash. The honest fix is to
+        # make it fast (build screens lazily), not to decorate the stall.
+        #
+        # Measured 2026-08-20 against a restored 1,258-entity session, so the
+        # "~1s" this used to claim is optimistic: it is 1.3 s on a freshly
+        # built Findings screen and 3.2-3.6 s once every category has been
+        # opened. The cost tracks the widget count (325 at startup, 3,535 after
+        # browsing all 17 categories — the entity row pool keeps its
+        # high-water mark), and it is almost entirely Qt's own re-polish:
+        # profiling puts our Python at a few tens of milliseconds of it, so
+        # there is nothing to shave in changeEvent handlers. Fewer live widgets
+        # is the only lever.
         app = QApplication.instance()
         qss = build_qss(theme_key)
         app.setStyleSheet(qss)

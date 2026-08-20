@@ -111,3 +111,15 @@ def test_a_dead_worker_wrapper_does_not_block_the_next_scan(screen):
             raise RuntimeError("Internal C++ object already deleted")
     screen._worker = _Dead()
     assert screen._scan_worker_alive() is False
+
+
+def test_the_header_stops_saying_running_while_it_stops(screen):
+    """The header read "Adaptive scan running" directly above a button reading
+    "Stopping…" — and only _on_scan_finished corrected it, which by definition
+    has not run yet."""
+    screen._sub.setText("Adaptive scan running")
+    screen._worker = _FakeWorker(running=True)
+    screen._scan_active = True
+    screen._stop_scan()
+    assert "running" not in screen._sub.text().lower()
+    assert "stopping" in screen._sub.text().lower()
