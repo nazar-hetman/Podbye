@@ -318,6 +318,24 @@ QMainWindow {{
  * not the custom containers described above. */
 QDialog, QMessageBox {{
     background-color: {bg};
+    color: {text};
+}}
+/* QMessageBox builds its own children, and anything it does not paint falls
+ * back to the *system* palette — which on a Windows light theme is white text
+ * on white. Naming the parts leaves nothing for the OS to decide. */
+QMessageBox QLabel {{
+    background: transparent;
+    color: {text};
+}}
+QDialogButtonBox {{
+    background: transparent;
+}}
+/* A layout's spacing cannot be set from a stylesheet, and the default one in
+ * a message box put the buttons all but touching. A margin does the same job
+ * from here, so every popup in the app spaces its buttons alike. */
+QDialogButtonBox QPushButton {{
+    min-width: 92px;
+    margin-left: 8px;
 }}
 QMainWindow, QWidget {{
     color: {text};

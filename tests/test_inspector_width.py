@@ -198,7 +198,10 @@ def test_the_reasoning_caption_never_collapses(qapp, findings_sidebar):
     title = side.detail_widget._ai_title
     assert title.isVisible()
     assert title.width() >= 90, "the heading lost its space to the row's stretch"
-    assert title.text().startswith("CONTEXTUAL"), (
+    # Compared against the label's own full text rather than a hard-coded
+    # word: the caption was renamed when the panel became one page, and what
+    # this guards is that it is not elided away, whatever it says.
+    assert title.text() and "…" not in title.text(), (
         f"the heading is unreadably short: {title.text()!r}")
 
 

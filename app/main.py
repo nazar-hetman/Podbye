@@ -47,6 +47,7 @@ from app.screens.history import HistoryScreen
 from app.screens.settings import SettingsScreen
 from app.state.scan_state import ScanState
 from app.config.settings_store import SettingsStore
+from app.services import keep_list
 from app.services.ai_explainer import AIExplainer
 from app.i18n import init_language, tr
 
@@ -81,6 +82,9 @@ class VigilWindow(QMainWindow):
         self._pending_lang = None       # deferred UI language (set mid-analysis)
         self._settings_store = SettingsStore()
         init_language(self._settings_store)
+        # Every layer reads the user's Keep list through this one store, so a
+        # mark made on Findings is in force for a cleanup started anywhere.
+        keep_list.set_store(self._settings_store)
         self._sweep_session_leftovers()
         self._scan_state = ScanState(self)
         self._scan_state.set_settings_store(self._settings_store)

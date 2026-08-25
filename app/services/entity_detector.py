@@ -34,12 +34,13 @@ import json
 import os
 import re
 import time as _time
-from collections import defaultdict, Counter
+from collections import defaultdict, deque, Counter
 from pathlib import Path
 from typing import Optional
 
-from app.models.finding import Finding, _format_size
-from app.models.smart_entity import SmartEntity, ENTITY_TYPES
+from app.models.finding import (Finding, _format_size, is_model_blob,
+                                _AI_ML_PATH_KEYWORDS)
+from app.models.smart_entity import SmartEntity, ENTITY_TYPES, _ENTITY_RISK
 from app.models.reasons import Reason
 from app.models.risk import RISK_PROTECTED
 from app.services.app_presence import presence as _app_presence, PRESENT as _PRESENT
@@ -277,6 +278,16 @@ _INSTALLER_PACKAGE_EXTS = {".msi", ".msix", ".appx", ".dmg"}
 _INSTALLER_EXTS = _INSTALLER_PACKAGE_EXTS | {".exe"}
 _MODEL_EXTS = {".gguf", ".bin", ".safetensors", ".pt", ".pth", ".onnx",
                ".ckpt", ".h5", ".tflite", ".ggml"}
+
+# Extensions that mean "model weights" on their own, and the ones that only
+# mean it in context. ".bin" is the whole problem: C:/AMTAG.BIN is a 1 KB
+# motherboard tag file, and it was presented to the user as "Loose AI model
+# files in C:" — a row in the AI/ML category naming no file at all.
+_MODEL_EXTS_ALWAYS = {".gguf", ".safetensors", ".pt", ".pth", ".onnx",
+                      ".ckpt", ".ggml"}
+_MODEL_EXTS_IN_CONTEXT = {".bin", ".h5", ".tflite", ".pkl", ".pb"}
+# Matches finding.categorize's threshold for the same extensions.
+_MODEL_CONTEXT_MIN_BYTES = 50 * 1024 * 1024
 _BACKUP_EXTS = {".bak", ".old", ".backup", ".orig", ".swp", ".sav"}
 _LOG_EXTS = {".log", ".log.1", ".log.gz"}
 _DATABASE_EXTS = {".sqlite", ".sqlite3", ".db", ".mdb", ".accdb", ".ldf", ".mdf"}
@@ -291,6 +302,45 @@ _BROWSER_KEYWORDS = {"chrome", "firefox", "edge", "opera", "brave", "vivaldi",
 # Cache/temp path keywords
 _CACHE_KEYWORDS = {"cache", "caches", "tmp", "temp", "thumbcache",
                    "thumbnails", "httpcache", "webcache", "diskcache"}
+
+# "cache" as a whole word, with its ordinary endings. Not a substring test:
+# that would take "cachet" with it.
+_CACHE_WORD_RE = re.compile(r"cach(e|es|ed|ing)[0-9]*$", re.I)
+
+
+# Directories whose children are packages, not folders someone named.
+_PACKAGE_CONTAINERS = ("node_modules", "site-packages", "dist-packages",
+                       "bower_components", "jspm_packages", "vendor")
+
+
+def _inside_package_container(norm_path: str) -> bool:
+    """True when *norm_path* sits inside a package directory."""
+    segments = norm_path.split("/")
+    return any(seg in _PACKAGE_CONTAINERS for seg in segments[:-1])
+
+
+def _named_exactly_like_cache(name: str) -> bool:
+    """The long-standing test: the name *is* a cache word, or ends in one."""
+    lower = (name or "").lower()
+    return (lower in _CACHE_KEYWORDS or lower.endswith("cache")
+            or lower.endswith("tmp"))
+
+
+def _has_cache_word(name: str) -> bool:
+    """True when "cache" stands as its own word somewhere in *name*.
+
+    Pass 4's test used to be ``name == "cache"`` or ``name.endswith("cache")``,
+    which recognises ``GPUCache`` and misses ``Media Cache Files`` — 1.5 GB of
+    Adobe's rebuildable media cache, therefore never offered as anything, on
+    the machine whose owner asked why Vigil would not clear Adobe's caches.
+    Also missed: ``Cache Storage``, ``Code Cache``, ``cache2``.
+
+    Per token, not a substring: ``cachet`` and ``apache`` are not caches, while
+    ``cache2`` and ``Caches`` are.
+    """
+    lower = (name or "").lower()
+    return any(_CACHE_WORD_RE.fullmatch(token)
+               for token in re.split(r"[^a-z0-9]+", lower) if token)
 
 # Known cache/installer/log parent app hints: path segment → friendly description
 # Used to annotate "Cache for X", "Installer – X", "Logs – X" rather than bare names
@@ -692,11 +742,14 @@ _USER_IMAGE_MEDIA_TYPES = frozenset({"photo_collection", "media_collection"})
 # mixed folders, cryptic GUID/hash names) WITHOUT dumping raw filenames — we
 # describe the *kind* of content instead.
 
-_CODE_EXTS = {
+_SOURCE_CODE_EXTS = {
     ".py", ".js", ".ts", ".tsx", ".jsx", ".c", ".cpp", ".h", ".hpp", ".cs",
     ".java", ".go", ".rs", ".rb", ".php", ".lua", ".sh", ".ps1", ".bat",
+}
+_CONFIG_EXTS = {
     ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".xml", ".html", ".css",
 }
+_CODE_EXTS = _SOURCE_CODE_EXTS | _CONFIG_EXTS
 
 _GUID_RE = re.compile(
     r"^\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}?$", re.I
@@ -722,10 +775,53 @@ def _ext_group(ext: str) -> str:
     return ""
 
 
+def _is_model_file(f) -> bool:
+    """True only when a file really is model weights.
+
+    Pass 8 used to accept any ``.bin``/``.h5`` *or* anything whose category
+    had come out "AI / ML". Both leak. The category is assigned by path, and
+    every file under ``miniconda3`` gets it — which is how nine copies of
+    setuptools' two-file ``tests/config/downloads`` fixture (``preload.py``,
+    ``__init__.py``, 2 KB each) became nine "Loose AI model files" rows, and
+    how a 1 KB ``AMTAG.BIN`` at the drive root became a tenth. Together they
+    were ten of the nineteen rows in the AI/ML category on a real scan.
+
+    So: the unambiguous extensions always count; the ambiguous ones need
+    either real weight-file size or a model store in the path; and an
+    extensionless blob is judged exactly as ``finding.categorize`` judges it,
+    which is what keeps Ollama's and HuggingFace's hash-named weights.
+    """
+    ext = (getattr(f, "extension", "") or "").lower()
+    if ext in _MODEL_EXTS_ALWAYS:
+        return True
+    parts = frozenset(
+        p for p in str(getattr(f, "path", "")).replace("\\", "/").lower().split("/") if p
+    )
+    size = int(getattr(f, "size_bytes", 0) or 0)
+    if ext in _MODEL_EXTS_IN_CONTEXT:
+        return size >= _MODEL_CONTEXT_MIN_BYTES or bool(parts & _AI_ML_PATH_KEYWORDS)
+    if not ext:
+        return is_model_blob(str(getattr(f, "name", "")).lower(), ext, parts, size)
+    return False
+
+
+# A kind has to be at least this much of a folder to be worth naming in its
+# description. Below it the phrase is trivia: three .ico files among a
+# thousand made a build tree read as "code & config and images".
+_DESCRIPTOR_MIN_SHARE = 0.1
+
+
 def _content_descriptor(children: list) -> str:
     """A short phrase describing what a folder holds, e.g. 'mostly images'.
 
     Returns '' when nothing recognisable dominates. Never lists filenames.
+
+    Shares are of ALL the files, including the ones no kind claims. Counting
+    only the recognised ones let a folder that is two-thirds .dll and .lib be
+    described as "mostly code & config" on the strength of its headers — and
+    the classifier, which counts every file, then disagreed with the very name
+    it was printing. A row that describes itself as code and is filed under
+    Unknown was one of the things reported.
     """
     files = [c for c in children if not c.is_dir]
     if not files:
@@ -734,7 +830,10 @@ def _content_descriptor(children: list) -> str:
     if not counts:
         return ""
     total = len(files)
-    top = counts.most_common(2)
+    top = [(name, n) for name, n in counts.most_common(2)
+           if n / total >= _DESCRIPTOR_MIN_SHARE]
+    if not top:
+        return ""
     g0, n0 = top[0]
     if n0 / total >= 0.6:
         return f"mostly {g0}"
@@ -754,15 +853,43 @@ def _looks_cryptic(name: str) -> bool:
     return False
 
 
+# Above this share of files that match no known kind, the honest description
+# of a folder is that we do not recognise what is in it — unless some kind is
+# still a big enough part of it to be worth naming instead.
+_UNRECOGNISED_DOMINANT = 0.6
+_KIND_BEATS_UNRECOGNISED = 0.35
+
+
+def _unrecognised_share(children: list) -> tuple:
+    """(share matching no known kind, share of the commonest kind)."""
+    files = [c for c in children if not c.is_dir]
+    if not files:
+        return 0.0, 0.0
+    groups = [_ext_group(f.extension) for f in files]
+    unknown = sum(1 for g in groups if not g)
+    known = Counter(g for g in groups if g)
+    top = known.most_common(1)[0][1] if known else 0
+    return unknown / len(files), top / len(files)
+
+
 def _descriptive_folder_name(folder_name: str, folder_path: str, children: list) -> str:
     """Best-effort understandable name for an unrecognised / mixed folder.
 
     Cryptic names become 'Unrecognized folder'; a content descriptor is appended
     when available, so the user learns what is inside without raw filenames.
+
+    When no kind reaches a share worth naming, why is worth saying. 77% of
+    E:/Forge/investigations is .dat, .dmap, .result and .exif — extensions
+    Vigil has no rule for — and that, not "mostly code & config", is the
+    reason the row sits in Unknown.
     """
     base = "Unrecognized folder" if _looks_cryptic(folder_name) \
         else _qualify_folder_name(folder_name, folder_path)
     desc = _content_descriptor(children)
+    unknown_share, top_share = _unrecognised_share(children)
+    if (unknown_share >= _UNRECOGNISED_DOMINANT
+            and top_share < _KIND_BEATS_UNRECOGNISED):
+        desc = "mostly unrecognized file types"
     return f"{base} · {desc}" if desc else base
 
 
@@ -1627,19 +1754,41 @@ def _last_chance_folder_classification(
     if direct_dir_names & {".git", ".hg", ".svn", "src", "source", "tests", "test"}:
         return "dev_project", "Development project folder structure"
 
-    if any(k in lname for k in ("project", "workspace", "repo", "repository")):
-        return "dev_project", "Project/workspace folder name"
-
-    if any(k in lname for k in ("fixture", "test", "mock", "stub", "snapshot")):
-        return "dev_artifacts", "Development/test folder name"
-
-    if any(k in lname for k in ("config", "settings", "prefs", "profile")):
-        return "application_data", "Configuration/support folder name"
-
     if direct_exts and direct_exts.issubset(_LOG_EXTS):
         return "log_folder", "Log files"
 
     return None, ""
+
+
+# Substrings that merely *appear* in a folder's name. Split out of
+# _last_chance_folder_classification, whose other rules are exact names,
+# marker files or path structure — evidence of a different order.
+#
+# "Ivankiv060626-test" is a survey flight. It contains "test", so it was
+# classified dev_artifacts, which carries risk Safe: 53 GB of a photogrammetry
+# engineer's aerial imagery, presented as build output that is safe to delete.
+# A word in a name cannot outrank what is in the folder.
+_WEAK_NAME_FOLDER_TYPES = (
+    (("project", "workspace", "repo", "repository"), "dev_project",
+     "Project/workspace folder name"),
+    (("fixture", "test", "mock", "stub", "snapshot"), "dev_artifacts",
+     "Development/test folder name"),
+    (("config", "settings", "prefs", "profile"), "application_data",
+     "Configuration/support folder name"),
+)
+
+
+def _weak_name_folder_type(lower_name: str) -> tuple:
+    """(entity_type, reason) suggested by a word inside the folder name."""
+    for keywords, etype, reason in _WEAK_NAME_FOLDER_TYPES:
+        if any(k in lower_name for k in keywords):
+            return etype, reason
+    return None, ""
+
+
+# How many children one folder contributes before _DetectionContext.sample()
+# moves on to the next one.
+_SAMPLE_SLICE = 25
 
 
 class _DetectionContext:
@@ -1796,21 +1945,36 @@ class _DetectionContext:
 
     # ── tree traversal over the prefix index ───────────────────────
     def sample(self, dir_norm: str, limit: int = 1000) -> list[Finding]:
-        """Up to `limit` descendants under dir_norm.
+        """Up to `limit` descendants under dir_norm, breadth-first.
 
         A truncated SAMPLE, for content classification and preview lists only.
         Never use it to compute a size or a count — use subtree() for that.
+
+        The order matters because the sample is *evidence*. Depth-first spent
+        the whole budget inside whichever subfolder happened to be last, so
+        the label described one branch while the row reported the tree:
+        E:/Forge/investigations came back "mostly code & config" from the
+        scripts at its top, and 31 of its 38 GB are .tif and .dmap imagery
+        further down.
+
+        Plain breadth-first is not enough either — one folder of 900 files
+        still exhausts the budget before its sibling is reached. Each folder
+        hands over a slice at a time and goes back in the queue, so the sample
+        widens across the tree before it deepens anywhere in it.
         """
         result: list[Finding] = []
-        stack = [dir_norm]
-        while stack and len(result) < limit:
-            d = stack.pop()
-            for child in self.children_index.get(d, []):
+        queue = deque([(dir_norm, 0)])
+        while queue and len(result) < limit:
+            d, start = queue.popleft()
+            children = self.children_index.get(d, [])
+            for child in children[start:start + _SAMPLE_SLICE]:
                 if len(result) >= limit:
                     break
                 result.append(child)
                 if child.is_dir:
-                    stack.append(child.path.replace("\\", "/").lower())
+                    queue.append((child.path.replace("\\", "/").lower(), 0))
+            if start + _SAMPLE_SLICE < len(children):
+                queue.append((d, start + _SAMPLE_SLICE))
         return result
 
     def gather_direct(self, dir_norm: str) -> list[Finding]:
@@ -2704,19 +2868,34 @@ def _pass4_cache_folders(ctx: "_DetectionContext"):
             continue
 
         lower_name = f.name.lower()
-        if (lower_name in _CACHE_KEYWORDS or lower_name.endswith("cache")
-                or lower_name.endswith("tmp")):
-            children = ctx.sample(norm_path)
-            source_app = _infer_cache_source(norm_path)
-            display_name = f"Cache for {source_app}" if source_app else f.name
-            ent = _build_entity(ctx, 
-                f.path, display_name, "cache_folder", children,
-                (Reason("Cache folder for {app}", app=source_app) if source_app
-                 else Reason("Cache folder")),
-            )
-            ctx.claim(norm_path)
-            ctx.emit_entity(ent)
-            pass_entities += 1
+        exact = _named_exactly_like_cache(lower_name)
+        if not exact and not _has_cache_word(lower_name):
+            continue
+
+        # A directory inside a package container is a package, whatever it is
+        # called: six copies of the npm package "http-cache-semantics" were
+        # claimed as caches marked Safe on a real machine. A folder actually
+        # *named* "cache" inside one still counts — only the widened name test
+        # is gated, so the long-standing behaviour is untouched.
+        if not exact and _inside_package_container(norm_path):
+            continue
+
+        children = ctx.sample(norm_path)
+        # And a name that merely mentions a cache has to be backed by content
+        # that is not obviously something else.
+        if not exact and _looks_like_source_tree(children):
+            continue
+
+        source_app = _infer_cache_source(norm_path)
+        display_name = f"Cache for {source_app}" if source_app else f.name
+        ent = _build_entity(ctx,
+            f.path, display_name, "cache_folder", children,
+            (Reason("Cache folder for {app}", app=source_app) if source_app
+             else Reason("Cache folder")),
+        )
+        ctx.claim(norm_path)
+        ctx.emit_entity(ent)
+        pass_entities += 1
 
     ctx.coverage_progress("cache_folders")
     ctx.log(f"[smart]   → created {pass_entities} cache/temp entities "
@@ -2879,18 +3058,36 @@ def _pass6_content_folders(ctx: "_DetectionContext"):
         norm_path = d.path.replace("\\", "/").lower()
         if norm_path in ctx.claimed_paths:
             continue
+        # A drive root is never one content collection. Pass 7 has always
+        # skipped it; this pass did not, so D:/ — whose only loose file is a
+        # RESULTS.md next to nine drone-survey folders — became a "Documents
+        # Folder" carrying the whole drive's recursive totals.
+        if _is_drive_root(norm_path) or norm_path.rstrip("/") == ctx.root_norm:
+            continue
 
         direct = ctx.gather_direct(norm_path)
         direct_files = [c for c in direct if not c.is_dir]
         if not direct_files:
             continue
 
-        etype = _classify_by_content(direct_files)
+        # Judge the folder by files that are actually a share of it. The
+        # entity reports RECURSIVE totals, so classifying from a handful of
+        # loose files at the top labels 187,555 aerial photos "Documents"
+        # because one report.md sits beside them. Same guard pass 7 uses.
+        descendants = ctx.sample(norm_path)
+        if _direct_files_describe_folder(direct_files, descendants):
+            evidence, reason = direct_files, Reason("Content analysis")
+        else:
+            evidence = [c for c in descendants if not c.is_dir]
+            reason = Reason("Content analysis of the files inside")
+        if not evidence:
+            continue
+
+        etype = _classify_by_content(evidence)
         if etype:
-            reason = Reason("Content analysis")
             # App/UI asset folders look image-dominant but are not user media.
             if etype in _USER_IMAGE_MEDIA_TYPES and _looks_like_app_assets(
-                    norm_path, d.name, direct_files):
+                    norm_path, d.name, evidence):
                 etype = "application_data"
                 reason = Reason("Application/UI assets, not a personal media library")
             display = _qualify_folder_name(d.name, d.path)
@@ -2979,44 +3176,9 @@ def _pass7_sweep(ctx: "_DetectionContext"):
                 etype = _DIR_ENTITY_MAP[lower_name]
                 corrected_type, _ = _safety_correct_entity_type(d.path, etype)
                 etype = corrected_type
-            else:
-                # Substring keyword fallback for compound names.
-                lname = lower_name
-                if any(k in lname for k in ("cache", "caches", "tmp", "temp")):
-                    etype = "cache_folder"
-                elif any(k in lname for k in ("log", "logs", "diag", "trace",
-                                              "dump", "crash", "error")):
-                    etype = "log_folder"
-                elif any(k in lname for k in ("backup", "backups", "bak", "old",
-                                              "archive")):
-                    etype = "backup_group"
-                elif any(k in lname for k in ("install", "setup", "update",
-                                              "patch", "deploy")):
-                    etype = "installer"
-                elif any(k in lname for k in ("export", "exports", "output",
-                                              "report")):
-                    etype = "backup_group"
-                elif any(k in lname for k in ("photo", "image", "picture",
-                                              "screenshot")):
-                    etype = "photo_collection"
-                elif any(k in lname for k in ("video", "movie", "film", "clip")):
-                    etype = "video_collection"
-                elif any(k in lname for k in ("music", "audio", "sound", "song")):
-                    etype = "audio_collection"
-                elif any(k in lname for k in ("doc", "document", "manual",
-                                              "guide", "readme")):
-                    etype = "document_folder"
-                else:
-                    etype = "unknown_folder"
 
-        # Content gate: a media/document classification (whether from the name
-        # map or the substring fallback) must be backed by real files of that
-        # type. Prevents name-only matches like "Windows Photo Viewer" → Images.
-        if etype in _CONTENT_TYPE_EXTS and not _content_confirms_type(descendants, etype):
-            etype = "unknown_folder"
-            fallback_reason = "name suggested media, but the files did not confirm it"
-
-        # Last resort before "Unknown": look at what is actually inside.
+        # Look at what is actually inside, before a word in the folder's name
+        # is allowed to guess.
         #
         # Content classification only ever saw a folder's DIRECT files, so a
         # folder holding nothing but subfolders was handed an empty list and
@@ -3025,17 +3187,52 @@ def _pass7_sweep(ctx: "_DetectionContext"):
         # survey flight — and on a real scan it was 83 rows and 420 GB, the
         # largest category by size, none of it labelled.
         #
-        # Deliberately last: every name-based rule above is better evidence
-        # than an extension count. "Application Support/WidgetApp/config.db"
-        # is application data because of where it lives, not a database
-        # because of what is in it.
+        # The structural and known-name rules above stay ahead of it:
+        # "Application Support/WidgetApp/config.db" is application data
+        # because of where it lives, not a database because of what is in it.
+        # The *substring* guesses below no longer do, and that ordering was a
+        # bug of its own: coordinate_recovery_outputs matched "output" and was
+        # filed as a backup set, over 50 GB of aerial imagery.
         if etype in (None, "unknown_folder") and (not direct_files
                                                   or not direct_files_speak):
             descendant_files = [c for c in descendants if not c.is_dir]
-            recursive_type = _classify_by_content(descendant_files) if descendant_files else None
+            recursive_type = None
+            if descendant_files:
+                recursive_type = (_classify_by_content(descendant_files)
+                                  or _plurality_content_type(descendant_files))
             if recursive_type:
                 etype = recursive_type
                 fallback_reason = Reason("Content analysis of the files inside")
+
+        # A tree of source and configuration is a project, not an
+        # unclassified pile.
+        if etype in (None, "unknown_folder"):
+            evidence = (direct_files if direct_files_speak
+                        else [c for c in descendants if not c.is_dir])
+            if _looks_like_source_tree(evidence):
+                etype = "dev_project"
+                fallback_reason = Reason("Source code and configuration files")
+
+        # Only now, with nothing else to go on, read the name.
+        if etype in (None, "unknown_folder"):
+            weak_type, weak_reason = _weak_name_folder_type(lower_name)
+            if weak_type:
+                etype = weak_type
+                fallback_reason = weak_reason
+        if etype in (None, "unknown_folder"):
+            keyword_type = _keyword_folder_type(lower_name)
+            if keyword_type:
+                etype = keyword_type
+                fallback_reason = fallback_reason or "Name-based classification"
+        if etype is None:
+            etype = "unknown_folder"
+
+        # Content gate: a media/document classification (whether from the name
+        # map or the name keywords) must be backed by real files of that type.
+        # Prevents name-only matches like "Windows Photo Viewer" → Images.
+        if etype in _CONTENT_TYPE_EXTS and not _content_confirms_type(descendants, etype):
+            etype = "unknown_folder"
+            fallback_reason = "name suggested media, but the files did not confirm it"
 
         # Asset gate: an image folder that is really app/UI content (icons,
         # sprites, web graphics) is app data, not a personal photo library.
@@ -3078,6 +3275,13 @@ def _pass7_sweep(ctx: "_DetectionContext"):
             # Opaque folder: give the user a content hint instead of a bare
             # (possibly cryptic) folder name.
             display = _descriptive_folder_name(d.name, d.path, descendants)
+            # "Unclassified" is not what we found. When the contents can be
+            # described at all, the folder is several things rather than an
+            # unknown thing, and saying so is both truer and less alarming on
+            # a 36 GB row. Same category, same risk, same actions: the two
+            # types differ only in the words they put on the row.
+            if etype == "unknown_folder" and _content_descriptor(descendants):
+                etype = "mixed_folder"
         else:
             display = _qualify_folder_name(d.name, d.path)
 
@@ -3095,6 +3299,52 @@ def _pass7_sweep(ctx: "_DetectionContext"):
     ctx.coverage_progress("unknown_sweep")
     ctx.log(f"[smart]   → created {pass_entities} unknown/mixed folder "
             f"entities · total: {ctx.entities_created}")
+
+
+# ── Loose-file promotion policy ───────────────────────────────────
+# The product rule is *not* "files over a megabyte are entities". It is:
+# group items that share a lifecycle, and promote an item that is
+# independently significant enough to deserve its own deletion decision.
+#
+# Size is the first cheap proxy for "independently significant", and the
+# threshold is a policy knob rather than part of the model — measured on a
+# real all-drives session, 37 type-grouped buckets held 288 files, of which
+# 72% were under 100 KB with a median of 16 KB. Exploding all of them would
+# have manufactured ~200 findings for things nobody adjudicates (18 config
+# files totalling 0.2 MB), while the files that genuinely deserve a decision
+# — a 412 MB archive, a 352 MB project export — stayed buried in a bucket.
+#
+# Future semantic rules (an installer, a dated export, anything Vigil can
+# name) belong in deserves_own_finding, not in a second threshold.
+STANDALONE_LOOSE_FILE_BYTES = 1024 * 1024
+
+
+# Directories whose contents belong to something that manages them. A file in
+# here is not an independent decision however big it is: you do not delete one
+# blob out of Ollama's store by hand, you remove the model.
+_MANAGED_STORE_SEGMENTS = frozenset(
+    set(_AI_ML_PATH_KEYWORDS) | set(_PACKAGE_CONTAINERS) | {"blobs", "objects"}
+)
+
+
+def _inside_managed_store(path: str) -> bool:
+    """True when *path* sits inside a store that owns its contents."""
+    segments = [seg for seg in
+                str(path or "").replace("\\", "/").lower().split("/")[:-1] if seg]
+    return any(seg in _MANAGED_STORE_SEGMENTS for seg in segments)
+
+
+def deserves_own_finding(finding) -> bool:
+    """True when a loose file should be its own finding rather than bucketed.
+
+    Two questions, in order. Does anything own it? Three 3 GB files under
+    ``.ollama/models/blobs`` are one model store with one lifecycle, and
+    splitting them into three findings offers a decision nobody can act on.
+    Then: is it big enough to be worth deciding about on its own?
+    """
+    if _inside_managed_store(getattr(finding, "path", "")):
+        return False
+    return int(getattr(finding, "size_bytes", 0) or 0) >= STANDALONE_LOOSE_FILE_BYTES
 
 
 def _pass8_loose_files(ctx: "_DetectionContext"):
@@ -3120,10 +3370,7 @@ def _pass8_loose_files(ctx: "_DetectionContext"):
             _buckets["archive_group"].append(f)
         elif ext in _DATABASE_EXTS:
             _buckets["database"].append(f)
-        elif ext in _MODEL_EXTS or f.category == "AI / ML":
-            # Extension OR the category the file already resolved to. Ollama
-            # and HuggingFace store weights as extensionless hashes, so an
-            # extension-only test filed a 7 GB model under "Misc files".
+        elif _is_model_file(f):
             _buckets["ai_models"].append(f)
         elif ext in _LOG_EXTS or ext in _BACKUP_EXTS:
             _buckets["log_folder"].append(f)
@@ -3148,6 +3395,54 @@ def _pass8_loose_files(ctx: "_DetectionContext"):
             name = stripped or "root"
         return name
 
+    def _bucket_entity(bucket_type: str, dir_path: str, dir_files: list,
+                       name: str) -> SmartEntity:
+        """One loose-file bucket — or, when it holds one file, that file.
+
+        "Loose AI model files in C:" was a row in the AI/ML category standing
+        for exactly one 1 KB file, and it named neither the file nor anything
+        else a person could act on: the row said C:/, the Information tab said
+        C:/, and the Files tab did not even open itself for a single file. The
+        user's words were "it does not show what is proposed to delete".
+
+        A bucket of one has nothing to group, so it becomes the file: its
+        name, its path, its size. This is what pass 8 already does for a
+        loose installer, for the same reason.
+        """
+        if len(dir_files) == 1:
+            only = dir_files[0]
+            return SmartEntity(
+                path=only.path,
+                name=only.name,
+                entity_type=bucket_type,
+                size_bytes=only.size_bytes,
+                file_count=1,
+                folder_count=0,
+                modified=only.modified,
+                accessed=only.accessed,
+                children_sample=[only.name],
+                removable_file_paths=[only.path],
+            )
+        return SmartEntity(
+            path=dir_path,
+            name=name,
+            entity_type=bucket_type,
+            size_bytes=sum(f.size_bytes for f in dir_files),
+            file_count=len(dir_files),
+            folder_count=0,
+            modified=max((f.modified for f in dir_files), default=0),
+            accessed=max((f.accessed for f in dir_files), default=0),
+            children_sample=[f.name for f in dir_files[:15]],
+            removable_file_paths=[f.path for f in dir_files],
+        )
+
+    def _emit_single(bucket_type: str, one: Finding) -> int:
+        """Emit one file as a finding in its own right."""
+        ent = _bucket_entity(bucket_type, one.parent, [one], one.name)
+        ctx.emit_entity(ent)
+        ctx.claimed_paths.add(one.path.replace("\\", "/").lower())
+        return 1
+
     def _emit_dir_split(bucket_type: str, files: list, label: str) -> int:
         """Emit one entity per parent directory, returning how many were made.
 
@@ -3158,26 +3453,21 @@ def _pass8_loose_files(ctx: "_DetectionContext"):
         unrelated folders into one entity so a single click would recycle files
         from all over the disk.
         """
-        by_dir: dict[str, list[Finding]] = defaultdict(list)
-        for f in files:
-            by_dir[f.parent].append(f)
         emitted = 0
+        promoted = [f for f in files if deserves_own_finding(f)]
+        rest = [f for f in files if not deserves_own_finding(f)]
+        for one in promoted:
+            emitted += _emit_single(bucket_type, one)
+
+        by_dir: dict[str, list[Finding]] = defaultdict(list)
+        for f in rest:
+            by_dir[f.parent].append(f)
         for dir_path, dir_files in sorted(
             by_dir.items(), key=lambda x: -sum(f.size_bytes for f in x[1])
         ):
-            total_sz = sum(f.size_bytes for f in dir_files)
-            ent = SmartEntity(
-                path=dir_path,
-                name=f"{label} in {_dir_display_name(dir_path)}",
-                entity_type=bucket_type,
-                size_bytes=total_sz,
-                file_count=len(dir_files),
-                folder_count=0,
-                modified=max((f.modified for f in dir_files), default=0),
-                accessed=max((f.accessed for f in dir_files), default=0),
-                children_sample=[f.name for f in dir_files[:15]],
-                removable_file_paths=[f.path for f in dir_files],
-            )
+            ent = _bucket_entity(
+                bucket_type, dir_path, dir_files,
+                f"{label} in {_dir_display_name(dir_path)}")
             ctx.emit_entity(ent)
             for f in dir_files:
                 ctx.claimed_paths.add(f.path.replace("\\", "/").lower())
@@ -3227,31 +3517,25 @@ def _pass8_loose_files(ctx: "_DetectionContext"):
         elif bucket_type == "mixed_folder":
             # Always split misc files by parent directory so the location
             # is visible rather than vanishing into one opaque bucket.
+            for one in [f for f in bucket_files if deserves_own_finding(f)]:
+                pass8_entities += _emit_single("mixed_folder", one)
+
             by_dir: dict[str, list[Finding]] = defaultdict(list)
             for f in bucket_files:
+                if deserves_own_finding(f):
+                    continue
                 by_dir[f.parent].append(f)
 
             for dir_path, dir_files in sorted(
                 by_dir.items(),
                 key=lambda x: -sum(f.size_bytes for f in x[1]),
             ):
-                total_sz = sum(f.size_bytes for f in dir_files)
                 dir_name = _dir_display_name(dir_path)
                 desc = _content_descriptor(dir_files)
                 misc_name = (f"Misc files in {dir_name} · {desc}" if desc
                              else f"Misc files in {dir_name}")
-                ent = SmartEntity(
-                    path=dir_path,
-                    name=misc_name,
-                    entity_type="mixed_folder",
-                    size_bytes=total_sz,
-                    file_count=len(dir_files),
-                    folder_count=0,
-                    modified=max((f.modified for f in dir_files), default=0),
-                    accessed=max((f.accessed for f in dir_files), default=0),
-                    children_sample=[f.name for f in dir_files[:15]],
-                    removable_file_paths=[f.path for f in dir_files],
-                )
+                ent = _bucket_entity("mixed_folder", dir_path, dir_files,
+                                     misc_name)
                 ctx.emit_entity(ent)
                 for f in dir_files:
                     ctx.claimed_paths.add(f.path.replace("\\", "/").lower())
@@ -3716,22 +4000,81 @@ def _disambiguate_names(entities: list) -> int:
     from collections import defaultdict
     groups: dict[str, list] = defaultdict(list)
     for e in entities:
-        groups[e.name].append(e)
+        # Keyed case-insensitively: Windows paths are, and two loose buckets
+        # came out as "Loose archives in Downloads" and "Loose archives in
+        # downloads" for two unrelated folders. Different rows, and nothing on
+        # either said so — they read as the same row printed twice.
+        groups[e.name.lower()].append(e)
 
     renamed = 0
-    for name, group in groups.items():
+    for group in groups.values():
         if len(group) < 2:
             continue
-        low_name = name.lower()
-        for e in group:
-            parts = [p for p in e.path.replace("\\", "/").split("/") if p]
-            hint = next((seg for seg in reversed(parts)
-                         if seg.lower() != low_name), parts[0] if parts else "")
-            hint = _shorten_disambiguation_hint(hint)
+        name_words = {w for w in re.split(r"[^a-z0-9]+", group[0].name.lower())
+                      if w}
+        seg_lists = [[p for p in e.path.replace("\\", "/").split("/") if p]
+                     for e in group]
+        for e, parts in zip(group, seg_lists):
+            hint = _distinguishing_segment(parts, seg_lists, name_words)
+            hint = _shorten_disambiguation_hint(_trim_hint(hint, name_words))
             if hint:
-                e.name = f"{name} ({hint})"
+                e.name = _with_hint(e.name, hint)
                 renamed += 1
     return renamed
+
+
+def _trim_hint(hint: str, name_words: set[str]) -> str:
+    """Drop from *hint* the words the name already says.
+
+    Two installers in Downloads produced "Installer (Stream_Brave1)
+    (Stream_Brave1_1.0.8.exe)" — the hint restated the product and buried the
+    only part that told them apart. What is left here is "1.0.8.exe".
+    """
+    if not hint:
+        return ""
+    kept = [w for w in re.split(r"[\s_]+", hint)
+            if w and w.lower() not in name_words]
+    trimmed = " ".join(kept).strip(" -_.")
+    return trimmed or hint
+
+
+def _with_hint(name: str, hint: str) -> str:
+    """"Qt" + "6.5.0" -> "Qt (6.5.0)"; a name that already has a parenthetical
+    takes the hint inside it rather than growing a second pair."""
+    if name.endswith(")") and "(" in name:
+        head, _, tail = name.rpartition(" (")
+        if head.strip():
+            return f"{head} ({tail[:-1]} · {hint})"
+    return f"{name} ({hint})"
+
+
+def _distinguishing_segment(parts: list[str], siblings: list[list[str]],
+                            name_words: set[str]) -> str:
+    """The path segment that tells *this* entity apart from the others.
+
+    The old rule took the deepest segment that differed from the display
+    name, which on a real scan produced nine rows all called "Loose AI model
+    files in downloads (downloads)": the hint repeated a word already in the
+    name and was identical for every one of them, so the thing it existed to
+    disambiguate stayed ambiguous.
+
+    Walking from the leaf, a segment qualifies when it is not already said in
+    the name and no sibling carries the same segment at the same depth — that
+    is, when it is the reason these two rows are different rows.
+    """
+    fallback = ""
+    for i in range(len(parts)):
+        seg = parts[len(parts) - 1 - i]
+        low = seg.lower()
+        if low in name_words or low.endswith(":"):
+            continue
+        others = [o for o in siblings if o is not parts]
+        at_depth = [o[len(o) - 1 - i].lower() for o in others if len(o) > i]
+        if low not in at_depth:
+            return seg
+        if not fallback and any(v != low for v in at_depth):
+            fallback = seg
+    return fallback or (parts[0] if parts else "")
 
 
 # Verbose container segments compressed to a short tag when used as a
@@ -3803,6 +4146,87 @@ def _enforce_disjoint_sizes(ctx: "_DetectionContext", entities: list, log_fn) ->
     return adjusted
 
 
+# A folder of projects is not a project. Measured on a real E:/ scan:
+# "E:/My Projects" came back as one dev_project of 261.7 GB while holding four
+# separate projects and five colmap databases, because _WEAK_NAME_FOLDER_TYPES
+# matches the word "project" in a name — a folder named for the plural got
+# classified as the singular. "_src" had the same shape: a 2.4 GB mixed_folder
+# holding 30 GB across four checkouts.
+_WORKSPACE_CANDIDATE_TYPES = frozenset({
+    "dev_project", "mixed_folder", "unknown_folder", "development_environment",
+})
+_PROJECT_LIKE_TYPES = frozenset({"dev_project", "dev_workspace"})
+
+# Two is a collection. One project inside a folder is a project in a folder.
+_WORKSPACE_MIN_PROJECTS = 2
+
+
+def _retype_workspaces(ctx: "_DetectionContext", entities: list, log_fn):
+    """Relabel containers of projects, so the row matches what is inside it.
+
+    The test is the one a person would apply: does this folder hold several
+    separate projects, and is it not itself one? The second half matters —
+    "irizi-odm-dev" vendors two source checkouts and would otherwise be
+    called a workspace, when it is a project that happens to contain them.
+    Its own project markers are what say so.
+
+    Deliberately the same "lives directly inside" relation the inspector's
+    ITEMS list uses, so the label and the list can never disagree.
+    """
+    def norm(e):
+        return e.path.replace("\\", "/").lower().rstrip("/")
+
+    project_like = [(norm(e), e) for e in entities
+                    if e.entity_type in _PROJECT_LIKE_TYPES]
+    if not project_like:
+        return
+
+    retyped = 0
+    for entity in entities:
+        if entity.entity_type not in _WORKSPACE_CANDIDATE_TYPES:
+            continue
+        root = norm(entity)
+        if not root or root == ctx.root_norm or _is_drive_root(root):
+            continue
+        # Pass 8 buckets carry the enclosing folder as their path; they own no
+        # subtree and can never be a workspace.
+        if getattr(entity, "removable_file_paths", None):
+            continue
+
+        inside = [(p, e) for p, e in project_like
+                  if p != root and p.startswith(root + "/")]
+        # Only the outermost ones: a project vendored inside another project
+        # is that project's business, not this folder's.
+        direct = [e for p, e in inside
+                  if not any(q != p and p.startswith(q + "/")
+                             for q, _ in inside)]
+        if len(direct) < _WORKSPACE_MIN_PROJECTS:
+            continue
+
+        # Does it claim to be a project in its own right?
+        own_files = {c.name.lower() for c in ctx.gather_direct(root)
+                     if not c.is_dir}
+        if own_files & _PROJECT_MARKER_FILES:
+            continue
+        if {os.path.splitext(n)[1] for n in own_files} & _PROJECT_MARKER_EXTS:
+            continue
+
+        entity.entity_type = "dev_workspace"
+        # No count in the sentence: the ITEMS list in the inspector already
+        # shows how many, and a number baked into a reason string is a number
+        # that cannot be translated.
+        entity.reason = Reason("Holds several separate projects rather than "
+                               "being one")
+        # category and actionability are properties of entity_type, so they
+        # follow on their own. risk is a stored field and does not.
+        entity.risk = _ENTITY_RISK.get("dev_workspace", "Review")
+        retyped += 1
+
+    if retyped:
+        log_fn(f"[smart] relabelled {retyped} folders as development "
+               f"workspaces rather than projects")
+
+
 def _postprocess(ctx: "_DetectionContext", t0: float) -> list:
     """Drop empty/aggregate entities, absorb sub-folder entities into
     parents, annotate cloud-sync and age, sort, and return the final list."""
@@ -3848,6 +4272,15 @@ def _postprocess(ctx: "_DetectionContext", t0: float) -> list:
         if e.entity_type in _HIGH_PRIORITY_ABSORBERS:
             absorbers.append((np, e.entity_type))
         elif e.entity_type == "unknown_folder":
+            absorbers.append((np, "unknown_folder"))
+        elif (e.entity_type == "mixed_folder"
+              and np in ctx.subtree_entity_paths):
+            # A folder we could describe but not name is the same thing as an
+            # unknown one, and hides its noisy children the same way. Only a
+            # *folder-backed* one: pass 8's "Misc files in X" buckets are
+            # mixed_folder too, and they carry the enclosing directory as
+            # their path — as an absorber, five stray files in E:/Forge would
+            # swallow every entity on the drive below it.
             absorbers.append((np, "unknown_folder"))
     absorbers.sort(key=lambda x: x[0].count("/"))
 
@@ -3911,6 +4344,11 @@ def _postprocess(ctx: "_DetectionContext", t0: float) -> list:
     # Downloads and Desktop are places, not content types — file their contents
     # under them instead of scattering each folder across the whole chip bar.
     _enrich_place_origin(entities)
+
+    # A folder that holds several projects is a workspace, not a project.
+    # After absorption, so the children it is counted against are the ones
+    # that actually survive to be listed.
+    _retype_workspaces(ctx, entities, log_fn)
 
     # Charge every byte to exactly one entity. Must run after absorption, since
     # only the entities that actually survive can hold a share of the bytes.
@@ -4275,7 +4713,7 @@ def _classify_by_content(children: list[Finding]):
         ext = f.extension.lower() if f.extension else ""
         ext_counts[ext] += 1
         ext_sizes[ext] += f.size_bytes
-        if f.category == "AI / ML":
+        if _is_model_file(f):
             model_count += 1
             model_size += f.size_bytes
 
@@ -4300,9 +4738,11 @@ def _classify_by_content(children: list[Finding]):
     if _ratio(_PROJECT_EXTS) > 0.3 or _size_ratio(_PROJECT_EXTS) > 0.4:
         return "creative_project"
     
-    # AI/ML Models - high priority (large files, specific extensions)
-    if (_ratio(_MODEL_EXTS) > 0.2 or _size_ratio(_MODEL_EXTS) > 0.4
-            or model_count / total > 0.2 or model_size / total_sz > 0.4):
+    # AI/ML Models - high priority (large files, specific extensions).
+    # Judged by _is_model_file, never by the bare extension: a folder of 2 MB
+    # ".bin" blobs is a cache, and calling it a model store made it a
+    # high-priority absorber that swallowed the cache entity inside it.
+    if model_count / total > 0.2 or model_size / total_sz > 0.4:
         return "ai_models"
     
     # Images
@@ -4358,3 +4798,106 @@ def _classify_by_content(children: list[Finding]):
         return "dataset"
 
     return None
+
+
+# A word in a folder's name, used only when the files inside say nothing at
+# all. Weak evidence by design: "output" is not a backup, and "Docs" beside
+# 50 GB of photographs is not a document folder.
+_KEYWORD_FOLDER_TYPES = (
+    (("cache", "caches", "tmp", "temp"), "cache_folder"),
+    (("log", "logs", "diag", "trace", "dump", "crash", "error"), "log_folder"),
+    (("backup", "backups", "bak", "old", "archive"), "backup_group"),
+    (("install", "setup", "update", "patch", "deploy"), "installer"),
+    (("export", "exports", "output", "report"), "backup_group"),
+    (("photo", "image", "picture", "screenshot"), "photo_collection"),
+    (("video", "movie", "film", "clip"), "video_collection"),
+    (("music", "audio", "sound", "song"), "audio_collection"),
+    (("doc", "document", "manual", "guide", "readme"), "document_folder"),
+)
+
+
+def _keyword_folder_type(lower_name: str) -> str:
+    """Entity type suggested by a word in the folder name, or ""."""
+    for keywords, etype in _KEYWORD_FOLDER_TYPES:
+        if any(k in lower_name for k in keywords):
+            return etype
+    return ""
+
+
+# Content groups for the byte-weighted tie-break below.
+_CONTENT_GROUPS = (
+    ("photo_collection", _IMAGE_EXTS),
+    ("video_collection", _VIDEO_EXTS),
+    ("audio_collection", _AUDIO_EXTS),
+    ("document_folder", _DOC_EXTS),
+    ("archive_group", _ARCHIVE_EXTS),
+    ("dataset", _PHOTOGRAMMETRY_EXTS),
+    ("database", _DATABASE_EXTS),
+    ("log_folder", _LOG_EXTS | _BACKUP_EXTS),
+)
+
+
+def _plurality_content_type(files: list, min_share: float = 0.35,
+                            lead: float = 1.5) -> str:
+    """The kind most of a diverse folder's files belong to, or "".
+
+    _classify_by_content asks each kind in turn whether it clears a fixed
+    threshold, so a folder where several kinds are present and none reaches
+    50% gets no answer at all — and the caller then guessed from the folder's
+    name. coordinate_recovery_outputs is that folder: aerial imagery,
+    orthophotos, point clouds and their sidecars, no single extension set over
+    the line, and the name-based guess that followed said "backup".
+
+    So when nothing dominates outright, the commonest kind answers — but only
+    when it holds a real share of the folder and leads the runner-up clearly.
+    A genuinely mixed folder still gets no answer, which is what mixed should
+    mean.
+
+    Counts, not bytes. The input is a capped sample, and one 20 GB archive in
+    it outweighs ten thousand source files: weighing by bytes called
+    E:/My Projects — 261 GB of repositories — an archive collection. A count
+    cannot be swung by a single file.
+    """
+    files = [f for f in files if not f.is_dir]
+    if not files:
+        return ""
+    total = len(files)
+    scores = []
+    for etype, exts in _CONTENT_GROUPS:
+        share = sum(1 for f in files
+                    if (f.extension or "").lower() in exts) / total
+        if share > 0:
+            scores.append((share, etype))
+    if not scores:
+        return ""
+    scores.sort(reverse=True)
+    best_share, best_type = scores[0]
+    runner_up = scores[1][0] if len(scores) > 1 else 0.0
+    if best_share < min_share:
+        return ""
+    if runner_up and best_share < runner_up * lead:
+        return ""
+    return best_type
+
+
+def _looks_like_source_tree(files: list) -> bool:
+    """True for a folder that is mostly source code and configuration.
+
+    Deliberately NOT part of _classify_by_content: that runs ahead of every
+    name-based rule, and "assets/bundle.js" is build output whatever its
+    extension census says. This is asked only where the alternative is
+    "Unknown" — which on a real scan was 52 GB of conda environments, CMake
+    trees, vcpkg builds and SDK checkouts, every row already describing itself
+    as "mostly code & config" while its category said unclassified.
+
+    Config alone is not a project: half of AppData is .json and .xml. Real
+    source has to be present for the folder to be called one.
+    """
+    files = [f for f in files if not f.is_dir]
+    if not files:
+        return False
+    total = len(files)
+    exts = [(f.extension or "").lower() for f in files]
+    code = sum(1 for e in exts if e in _CODE_EXTS)
+    source = sum(1 for e in exts if e in _SOURCE_CODE_EXTS)
+    return code / total > 0.5 and source / total >= 0.1

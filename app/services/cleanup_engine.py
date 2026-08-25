@@ -17,6 +17,8 @@ from typing import Optional
 
 from PySide6.QtCore import QThread, Signal
 
+from app.services.keep_list import is_kept
+
 
 # ── Exception ────────────────────────────────────────────────────
 
@@ -71,6 +73,11 @@ class CleanupResult:
     in_use: list = field(default_factory=list)             # paths skipped because Windows/app still uses them
     failed: list = field(default_factory=list)             # paths that hit unexpected errors
     skipped_protected: list = field(default_factory=list)  # paths skipped (protected)
+    # Paths skipped because the user marked them Keep. Kept apart from
+    # skipped_protected on purpose: one is Vigil's judgement about the system,
+    # the other is the user's standing instruction about their own files, and
+    # a result that blurs them cannot explain itself.
+    skipped_kept: list = field(default_factory=list)
     # Paths that were removed from disk but did NOT land in the Recycle Bin,
     # so they are gone for good. Subset of `succeeded` — the removal did work,
     # it just was not recoverable. Callers must not describe these as restorable.
@@ -243,6 +250,13 @@ def move_to_recycle_bin(paths: list) -> CleanupResult:
         if _is_protected_for_delete(path):
             result.skipped_protected.append(path)
             continue
+        # Enforced here, not only in the UI. A session reopened from History
+        # carries entity dicts built before the user marked anything Keep, so
+        # the only layer that can be trusted to hold is the one doing the
+        # deleting.
+        if is_kept(path):
+            result.skipped_kept.append(path)
+            continue
         size = _get_size(path)
         verify = size >= _VERIFY_RECYCLED_MIN_BYTES
         bin_before = _bin_size_for(path) if verify else None
@@ -281,6 +295,13 @@ def permanent_delete(paths: list, perm_delete_enabled: bool) -> CleanupResult:
         if _is_protected_for_delete(path):
             raise ProtectedPathError(
                 f"Protected path cannot be permanently deleted: {path}"
+            )
+        # A Keep mark is not advice. Nothing about this call is reversible, so
+        # it refuses rather than skipping, exactly as it does for a protected
+        # path.
+        if is_kept(path):
+            raise ProtectedPathError(
+                f"Path is marked Keep and cannot be deleted: {path}"
             )
     result = CleanupResult()
     for path in paths:

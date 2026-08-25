@@ -22,12 +22,19 @@ from PySide6.QtWidgets import (
 from app.widgets.controls import ElidedLabel, TacticalCheckBox
 from app.models.finding import _format_size
 from app.models.risk import (
-    is_protected, normalize_risk, risk_fg as _risk_fg,
+    is_protected, normalize_risk, risk_fg as _risk_fg, risk_sort_index,
 )
 from app.i18n import tr
 from app.themes.theme_manager import get_palette
 from app.services.cleanup_engine import CleanupWorker
+from app.services.keep_list import is_kept
 from app.services.cleanup_result_classifier import assess_cleanup_counts
+
+
+# How many target paths the plan lists before it says "and N more". The list
+# scrolls inside a fixed box, so this is about the cost of building rows, not
+# about how much the user is allowed to see.
+_PREVIEW_ROWS = 200
 
 
 def _elide_middle(text: str, limit: int) -> str:
@@ -94,6 +101,11 @@ def _cleanup_targets_for_item(item: dict) -> list[dict]:
     only.
     """
     if is_protected(item.get("risk")):
+        return []
+    # Kept by the user. Checked here as well as in the engine because this is
+    # where the *plan* is built: a kept item must never be counted, sized or
+    # listed as something about to be deleted.
+    if is_kept(item.get("path", "")):
         return []
     # Note: review_only items (personal/mixed/unknown) ARE returned here — the
     # dialog gates them behind an explicit "delete review items" acknowledgment
@@ -186,6 +198,7 @@ class CleanupConfirmDialog(QDialog):
         self._result = None
 
         # Partition selected findings by canonical risk.
+        self._kept = [f for f in items if is_kept(f.get("path", ""))]
         self._protected = [f for f in items if normalize_risk(f.get("risk")) == "Protected"]
         self._review    = [f for f in items if normalize_risk(f.get("risk")) == "Review"]
         self._optional  = [f for f in items if normalize_risk(f.get("risk")) == "Optional"]
@@ -315,6 +328,17 @@ class CleanupConfirmDialog(QDialog):
             self._confirm_only.append(prot_lbl)
             _confirm_gap(6)
 
+        if self._kept:
+            kept_lbl = QLabel(tr(
+                "{n} item(s) you are keeping were left out of this cleanup.",
+                n=len(self._kept)))
+            kept_lbl.setStyleSheet(
+                f"font-size: 11px; color: {_risk_fg('Optional')}; padding: 6px 0;")
+            kept_lbl.setWordWrap(True)
+            root.addWidget(kept_lbl)
+            self._confirm_only.append(kept_lbl)
+            _confirm_gap(6)
+
         if self._manual_review:
             manual_lbl = QLabel(tr(
                 "{n} duplicate group(s) need manual review. No cleanup target "
@@ -366,11 +390,19 @@ class CleanupConfirmDialog(QDialog):
             self._confirm_only.append(cloud_frame)
             _confirm_gap(10)
 
-        # ── Scrollable preview of the review/uncertain items ──────────
-        if self._review_targets:
+        # ── Scrollable preview of every armed target ─────────────────
+        # It used to list the review-tier targets only, so a selection of 384
+        # items showed four counts and a partial list. Reported as: it is
+        # unclear what exactly he is deleting. Every path that will be touched
+        # is here, riskiest first.
+        preview = sorted(
+            self._armed_targets(),
+            key=lambda t: (-risk_sort_index(normalize_risk(t.get("risk"))),
+                           -int(t.get("size_bytes", 0) or 0)))
+        if preview:
             list_header = QLabel(
-                tr("Review / uncertain items ({count}):").format(
-                    count=len(self._review_targets))
+                tr("Everything this will move ({count}):").format(
+                    count=len(preview))
             )
             list_header.setObjectName("Dim")
             list_header.setStyleSheet("font-size: 11px; margin-bottom: 4px;")
@@ -387,7 +419,7 @@ class CleanupConfirmDialog(QDialog):
             c_layout.setContentsMargins(0, 0, 0, 0)
             c_layout.setSpacing(2)
 
-            for f in self._review_targets[:50]:
+            for f in preview[:_PREVIEW_ROWS]:
                 path = f.get("path", "")
                 # The PATH, not just the name. This dialog is the last thing
                 # between the user and a deletion, and "Adobe Photoshop 2024"
@@ -402,9 +434,9 @@ class CleanupConfirmDialog(QDialog):
                 row_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 10px;")
                 c_layout.addWidget(row_lbl)
 
-            if len(self._review_targets) > 50:
+            if len(preview) > _PREVIEW_ROWS:
                 more_lbl = QLabel(tr("  … and {n} more",
-                                     n=len(self._review_targets) - 50))
+                                     n=len(preview) - _PREVIEW_ROWS))
                 more_lbl.setObjectName("Dim")
                 more_lbl.setStyleSheet("font-size: 10px;")
                 c_layout.addWidget(more_lbl)
@@ -531,6 +563,11 @@ class CleanupConfirmDialog(QDialog):
         # ── Button row ────────────────────────────────────────────
         root.addSpacing(10)
         btn_row = QHBoxLayout()
+        # Without this the two buttons sit against each other: the default
+        # layout spacing is a couple of pixels at some styles and DPI
+        # settings, and "Cancel" and "Move to Recycle Bin" read as one
+        # control on the last screen before a deletion.
+        btn_row.setSpacing(10)
         btn_row.addStretch()
 
         # Minimum, not fixed: these widths were measured against the English
@@ -647,6 +684,15 @@ class CleanupConfirmDialog(QDialog):
             self._issues.append((
                 reason, path,
                 tr("System-critical path — never deleted")))
+        # Listed apart from Protected: this one is the user's own instruction,
+        # and it can be taken back from Settings, which the other cannot.
+        for path in getattr(result, "skipped_kept", []):
+            reason = tr("Keep")
+            self._issue_colors[reason] = _risk_fg("Optional")
+            self._issues.append((
+                reason, path,
+                tr("You are keeping this — remove the mark in Settings to "
+                   "clean it")))
 
         while self._issues_body_layout.count():
             item = self._issues_body_layout.takeAt(0)
@@ -833,7 +879,8 @@ class CleanupConfirmDialog(QDialog):
         n_ok   = len(result.succeeded)
         n_in_use = len(result.in_use)
         n_fail = len(result.failed)
-        n_skip = len(result.skipped_protected)
+        n_skip = len(result.skipped_protected) + len(
+            getattr(result, "skipped_kept", []))
         assessment = assess_cleanup_counts(
             succeeded_count=n_ok,
             in_use_count=n_in_use,

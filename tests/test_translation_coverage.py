@@ -174,6 +174,7 @@ def _dynamic_tables() -> dict[str, set[str]]:
     from app.services.entity_detector import detector_reason_templates
     from app.models.file_grouping import OTHER_KIND, _KIND_BY_EXT
     import app.services.quick_cleanup_detector as qc_detector
+    from app.models.entity_grouping import _CONTAINER_LABELS
 
     tables = {
         "quick cleanup explanations":
@@ -192,6 +193,9 @@ def _dynamic_tables() -> dict[str, set[str]]:
         # The bucket names on the inspector's per-file list, reached as
         # tr(group.kind).
         "file kinds": set(_KIND_BY_EXT.values()) | {OTHER_KIND},
+        # Where an app keeps its data, on a group header and on any row
+        # under AppData. Reached as tr(location_label(path)).
+        "app data locations": {label for _marker, label in _CONTAINER_LABELS},
     }
     subs = getattr(st, "_SECTION_SUBS", None)
     if isinstance(subs, dict):

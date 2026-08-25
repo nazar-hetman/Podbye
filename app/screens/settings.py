@@ -12,7 +12,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QObject, QTimer
 
 from app.widgets.panels import Panel, apply_tactical_label
-from app.widgets.controls import TacticalCheckBox, TacticalComboBox
+from app.widgets.controls import (ElidedLabel, TacticalCheckBox,
+                                  TacticalComboBox)
 from app.themes.theme_manager import THEME_NAMES, THEME_KEYS, get_palette, theme_signaller
 from app.i18n import tr, available_languages, explanation_languages
 from app.services.ollama_client import LOCAL_ENDPOINT
@@ -264,7 +265,6 @@ class SettingsScreen(QWidget):
         # Toggles
         self._cb_findings.setChecked(self._store.get("ai_findings_enabled", False))
         self._cb_startups.setChecked(self._store.get("ai_startups_enabled", True))
-        self._cb_cleanup_hints.setChecked(self._store.get("ai_cleanup_hints_enabled", False))
         self._cb_risky_only.setChecked(self._store.get("ai_explain_risky_only"))
 
         # Cleanup safety. Recycle Bin is the only method; the store also pins
@@ -894,10 +894,6 @@ class SettingsScreen(QWidget):
         self._style_checkbox(self._cb_startups)
         self._cb_startups.toggled.connect(lambda checked: self._save_value("ai_startups_enabled", checked))
         ai_toggle_l.addWidget(self._cb_startups)
-        self._cb_cleanup_hints = TacticalCheckBox(tr("Cleanup hints"))
-        self._style_checkbox(self._cb_cleanup_hints)
-        self._cb_cleanup_hints.toggled.connect(lambda checked: self._save_value("ai_cleanup_hints_enabled", checked))
-        ai_toggle_l.addWidget(self._cb_cleanup_hints)
         expl_lay.addLayout(_setting_row(tr("AI explanations"), tr("Per-item \"Ask AI\" always works. Automatic explanation of every "
                "finding is off by default — it is slow on a local model; turn it "
                "on for long background runs."), ai_toggle_w))
@@ -1020,6 +1016,31 @@ class SettingsScreen(QWidget):
 
         lay.addWidget(safe_panel)
 
+        # ── Items you keep ───────────────────────────────────────
+        # A Keep mark stops something being selected or deleted, in this and
+        # every later scan. That is exactly the kind of setting a user needs
+        # to be able to find again and take back, so it is listed rather than
+        # living only on the row it was made from.
+        self._keep_panel = Panel(alt=True)
+        keep_lay = self._keep_panel.with_layout(
+            vertical=True, margins=(14, 12, 14, 12), spacing=10)
+        keep_lay.addLayout(_panel_title(tr("Items you keep"), tr("never deleted")))
+        self._register_styled_panel(self._keep_panel)
+
+        self._keep_list_box = QWidget()
+        self._keep_list_box.setMinimumWidth(340)
+        self._keep_list_layout = QVBoxLayout(self._keep_list_box)
+        self._keep_list_layout.setContentsMargins(0, 0, 0, 0)
+        self._keep_list_layout.setSpacing(4)
+        keep_lay.addLayout(_setting_row(
+            tr("Kept paths"),
+            tr("Marked with Keep in Findings. Nothing inside these is ever "
+               "selected by a bulk action, and cleanup refuses them outright."),
+            self._keep_list_box,
+        ))
+        lay.addWidget(self._keep_panel)
+        self._refresh_kept_paths()
+
         # File Handling
         fh_panel = Panel(alt=True)
         fh_lay = fh_panel.with_layout(vertical=True, margins=(14, 12, 14, 12), spacing=10)
@@ -1046,6 +1067,54 @@ class SettingsScreen(QWidget):
 
         scroll.setWidget(content)
         return scroll
+
+    def _refresh_kept_paths(self):
+        """Redraw the kept-path list from the store."""
+        from app.services import keep_list
+
+        layout = self._keep_list_layout
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+
+        paths = keep_list.kept_paths()
+        if not paths:
+            empty = QLabel(tr("Nothing yet — use Keep on any finding."))
+            empty.setObjectName("Dim")
+            empty.setStyleSheet("font-size: 11px;")
+            layout.addWidget(empty)
+            return
+
+        for path in paths:
+            row = QWidget()
+            row_l = QHBoxLayout(row)
+            row_l.setContentsMargins(0, 0, 0, 0)
+            row_l.setSpacing(8)
+            lbl = ElidedLabel(path, mode=Qt.ElideMiddle)
+            lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
+            lbl.setToolTip(path)
+            # An ElidedLabel carries the Ignored size policy so it never forces
+            # a panel wider. Next to a button that does state a width, the
+            # layout gave the button everything and collapsed the path to
+            # nothing: the row showed "Stop keeping" and no path at all.
+            lbl.setMinimumWidth(240)
+            row_l.addWidget(lbl, stretch=1)
+            btn = QPushButton(tr("Stop keeping"))
+            btn.setObjectName("Subtle")
+            btn.setStyleSheet("font-size: 10px; padding: 2px 8px;")
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(
+                lambda _checked=False, target=path: self._stop_keeping(target))
+            row_l.addWidget(btn)
+            layout.addWidget(row)
+
+    def _stop_keeping(self, path: str):
+        from app.services import keep_list
+        keep_list.unkeep(path)
+        self._refresh_kept_paths()
 
     def _build_about(self) -> QWidget:
         scroll = QScrollArea()

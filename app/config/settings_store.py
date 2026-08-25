@@ -45,7 +45,6 @@ _DEFAULTS = {
     # long background/overnight runs.
     "ai_findings_enabled": False,
     "ai_startups_enabled": True,
-    "ai_cleanup_hints_enabled": False,
     "ai_explain_risky_only": False,
     "ai_timeout": 180,
     "ai_max_concurrent": 3,
@@ -72,14 +71,31 @@ _DEFAULTS = {
 
     # Cleanup safety
     "perm_delete_enabled": False,
+
+    # Paths the user marked Keep — never selected, never deleted. Listed here
+    # because load() only restores keys it knows about, so a setting missing
+    # from this table is written to config.json and then read back as absent.
+    # See app/services/keep_list.py.
+    "kept_paths": [],
 }
+
+
+def _fresh_defaults() -> dict:
+    """A copy of the defaults that shares no mutable value with the table.
+
+    ``dict(_DEFAULTS)`` is shallow, so every store would hand out the *same*
+    list object for kept_paths and one instance mutating it would change them
+    all.
+    """
+    return {k: (list(v) if isinstance(v, list) else v)
+            for k, v in _DEFAULTS.items()}
 
 
 class SettingsStore:
     """Singleton-style settings manager. Load/save from config.json."""
 
     def __init__(self):
-        self._data: dict = dict(_DEFAULTS)
+        self._data: dict = _fresh_defaults()
         self._path = _config_path()
         self.load()
 
@@ -127,5 +143,5 @@ class SettingsStore:
 
     def reset(self):
         """Reset to defaults."""
-        self._data = dict(_DEFAULTS)
+        self._data = _fresh_defaults()
         self.save()

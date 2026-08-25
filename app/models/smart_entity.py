@@ -35,6 +35,7 @@ ENTITY_TYPES = {
 
     # Development (hierarchy: Projects / Build Artifacts / Dependencies)
     "dev_project":      "Development Project",
+    "dev_workspace":    "Development Workspace",
     "dev_artifacts":    "Build Artifacts / Dependencies",
     "development_environment": "Development Environment",
     "venv":             "Python Virtual Environment",
@@ -108,6 +109,7 @@ _ENTITY_RISK = {
     
     # Development
     "dev_project":      "Review",
+    "dev_workspace":    "Review",
     "dev_artifacts":    "Safe",
     "development_environment": "Review",
     "venv":             "Safe",
@@ -188,6 +190,7 @@ _CATEGORY_BY_TYPE = {
 
     # Development
     "dev_project": "Dev Artifacts",
+    "dev_workspace": "Dev Artifacts",
     "dev_artifacts": "Dev Artifacts",
     "development_environment": "Dev Artifacts",
     "venv": "Dev Artifacts",
@@ -302,7 +305,7 @@ _REVIEW_ONLY_TYPES = frozenset({
     "creative_project", "media_collection",
     "user_profile", "application_data", "browser_profile",
     "database", "game_saves", "dataset",
-    "vm_storage", "dev_project",
+    "vm_storage", "dev_project", "dev_workspace",
     "mixed_folder", "unknown_folder", "loose_files",
 })
 
@@ -545,6 +548,8 @@ class SmartEntity:
             return "its name or contents match generated development dependencies or build output"
         if self.entity_type == "dev_project":
             return "project markers or source folders indicate a development project"
+        if self.entity_type == "dev_workspace":
+            return "it holds several separate projects rather than being one itself"
         if self.entity_type in {"application_data", "browser_profile", "user_profile"}:
             return "the path looks like app, browser, or user support data"
         if self.entity_type in {"unknown_folder", "mixed_folder", "loose_files"}:

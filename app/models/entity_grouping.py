@@ -203,6 +203,36 @@ def group_entities(entities: list[dict],
     return groups
 
 
+_LOCATION_HINTS = {"roaming", "local", "locallow", "shared", "programdata",
+                   "x86", "64-bit", "program files", "program files (x86)",
+                   "appdata", "app data"}
+
+
+def _strip_location_hint(name: str, owner: str) -> str:
+    """Drop a trailing "(Roaming)" / "(Local)" from a group's title.
+
+    Those parentheses are added by the detector to tell two rows of the same
+    app apart — and a group exists precisely because both rows are the same
+    app. Naming the whole group "Microsoft (Roaming)" then states the group's
+    *total* under the name of one of its halves. Reported as "roaming and
+    local but no generals".
+
+    Only a hint that names a location or a segment of the owner path is
+    removed, so a folder genuinely called "Mario15 (GPS, 123 photos)" keeps
+    its name.
+    """
+    if not name.endswith(")") or "(" not in name:
+        return name
+    head, _, tail = name.rpartition(" (")
+    hint = tail[:-1].strip().lower()
+    if not head.strip() or not hint:
+        return name
+    segments = {seg for seg in owner.lower().replace("\\", "/").split("/") if seg}
+    if hint in _LOCATION_HINTS or hint in segments:
+        return head.strip()
+    return name
+
+
 def group_label(group: dict) -> str:
     """Display name for a group's parent row.
 
@@ -212,8 +242,52 @@ def group_label(group: dict) -> str:
     """
     if group.get("name"):
         return group["name"]
+    owner = group.get("owner", "")
     root = group.get("root")
     if root and root.get("name"):
-        return root["name"]
-    owner = group.get("owner", "")
+        return _strip_location_hint(root["name"], owner)
     return owner.rsplit("/", 1)[-1] if owner else ""
+
+
+# Where an app keeps data, in the words Windows uses for it.
+_CONTAINER_LABELS = (
+    ("appdata/roaming", "Roaming"),
+    ("appdata/locallow", "LocalLow"),
+    ("appdata/local/packages", "Store app"),
+    ("appdata/local/programs", "Programs"),
+    ("appdata/local", "Local"),
+    ("program files (x86)", "Program Files (x86)"),
+    ("program files/windowsapps", "Store app"),
+    ("program files", "Program Files"),
+    ("programdata", "ProgramData"),
+)
+
+
+def location_label(path: str) -> str:
+    """The Windows location *path* sits in — "Roaming", "Program Files", …
+
+    Returns "" for anywhere else, where the path itself is the better answer.
+    """
+    lowered = _norm(path).lower()
+    for marker, label in _CONTAINER_LABELS:
+        if f"/{marker}/" in lowered + "/":
+            return label
+    return ""
+
+
+def group_locations(group: dict) -> list[str]:
+    """The distinct places a group's members live, in first-seen order.
+
+    A group's whole claim is that these rows are one app; this is the part of
+    that claim a user can check. Empty when nothing in the group sits in a
+    recognised Windows location.
+    """
+    seen: list[str] = []
+    members = list(group.get("members") or [])
+    if group.get("root") is not None:
+        members.insert(0, group["root"])
+    for entity in members:
+        label = location_label(entity.get("path", ""))
+        if label and label not in seen:
+            seen.append(label)
+    return seen
