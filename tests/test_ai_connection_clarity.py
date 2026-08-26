@@ -43,7 +43,18 @@ def net(monkeypatch):
                 return payload
         return None
 
+    # probe() skips the HTTP call entirely when the loopback port is shut, so
+    # stubbing _get_json alone is not enough to simulate a running server: the
+    # real _port_is_open would open a socket to the developer's own machine and
+    # the test would pass or fail on whether they happen to run Ollama.
+    # A port counts as open exactly when a route would answer on it.
+    def would_answer(endpoint, timeout=0.25):
+        base = endpoint.rstrip("/")
+        return any(fake_get(f"{base}{path}", timeout) is not None
+                   for path in ("/api/tags", "/v1/models"))
+
     monkeypatch.setattr(oc, "_get_json", fake_get)
+    monkeypatch.setattr(oc, "_port_is_open", would_answer)
     return routes
 
 
