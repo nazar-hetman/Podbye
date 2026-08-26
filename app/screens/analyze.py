@@ -40,18 +40,7 @@ def _get_stages_smart():
         (tr("AI classification"), "ai"),
     ]
 
-def _rgba(hex_color: str, alpha: float) -> str:
-    """CSS rgba() from a #rrggbb palette colour.
-
-    Qt parses an eight-digit hex as #AARRGGBB, so appending two alpha digits to
-    a #rrggbb value silently reorders the channels into a different colour
-    rather than fading the one you asked for.
-    """
-    h = hex_color.lstrip("#")
-    if len(h) != 6:
-        return hex_color
-    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
-    return f"rgba({r}, {g}, {b}, {alpha:.2f})"
+from app.themes.theme_manager import rgba as _rgba
 
 
 def _chip_styles() -> dict:

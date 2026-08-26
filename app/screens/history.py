@@ -100,7 +100,7 @@ from app.services.cleanup_result_classifier import (
     STATE_SUCCESS,
     assess_cleanup_counts,
 )
-from app.screens.analyze import _rgba
+from app.themes.theme_manager import rgba as _rgba
 from app.widgets.panels import apply_tactical_label
 from app.widgets.controls import ElidedLabel
 
