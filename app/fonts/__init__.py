@@ -1,4 +1,4 @@
-"""Font loader for Vigil — registers bundled TTF fonts with Qt."""
+"""Font loader for Podbye — registers bundled TTF fonts with Qt."""
 
 import os
 import glob
@@ -22,5 +22,5 @@ def load_fonts():
     for ttf in glob.glob(os.path.join(FONT_DIR, "*.ttf")):
         font_id = QFontDatabase.addApplicationFont(ttf)
         if font_id < 0:
-            print(f"[vigil] WARNING: failed to load font: {ttf}")
+            print(f"[podbye] WARNING: failed to load font: {ttf}")
     _loaded = True

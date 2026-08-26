@@ -1,4 +1,4 @@
-"""Vigil is an offline tool, and that has to be enforced, not just claimed.
+"""Podbye is an offline tool, and that has to be enforced, not just claimed.
 
 The product promise is that nothing about a user's disk ever leaves their
 machine — no telemetry, no crash upload, no "anonymous usage statistics". That
@@ -56,7 +56,7 @@ def test_only_the_ai_client_can_reach_the_network():
             if module in _NET_IMPORTS or root in _NET_IMPORTS:
                 offenders.append(f"{rel} imports {module}")
     assert not offenders, (
-        "networking outside the AI client — Vigil promises to work entirely "
+        "networking outside the AI client — Podbye promises to work entirely "
         "offline:\n  " + "\n  ".join(offenders))
 
 

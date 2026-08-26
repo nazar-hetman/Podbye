@@ -57,7 +57,7 @@ def _dashboard(app):
 
 
 def _switch(app, theme):
-    """Exactly what VigilWindow._apply_theme does — stylesheet, no rebuild."""
+    """Exactly what PodbyeWindow._apply_theme does — stylesheet, no rebuild."""
     app.setStyleSheet(build_qss(theme))
     for _ in range(15):
         app.processEvents()

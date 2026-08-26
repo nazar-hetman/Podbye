@@ -157,26 +157,26 @@ class _FakeScreen:
 
 
 def test_the_shell_finds_a_busy_screen(qapp):
-    from app.main import VigilWindow
+    from app.main import PodbyeWindow
 
-    window = VigilWindow.__new__(VigilWindow)      # no real UI needed
+    window = PodbyeWindow.__new__(PodbyeWindow)      # no real UI needed
     window._screens = {"Quick Cleanup": _FakeScreen("a cleanup is removing files"),
                        "Home": _FakeScreen()}
     assert window._busy_reason() == "a cleanup is removing files"
 
 
 def test_the_shell_reports_idle_when_nothing_runs(qapp):
-    from app.main import VigilWindow
+    from app.main import PodbyeWindow
 
-    window = VigilWindow.__new__(VigilWindow)
+    window = PodbyeWindow.__new__(PodbyeWindow)
     window._screens = {"Home": _FakeScreen(), "Analyze": _FakeScreen()}
     assert window._busy_reason() == ""
 
 
 def test_the_shell_stops_every_screen_before_teardown(qapp):
-    from app.main import VigilWindow
+    from app.main import PodbyeWindow
 
-    window = VigilWindow.__new__(VigilWindow)
+    window = PodbyeWindow.__new__(PodbyeWindow)
     screens = {"a": _FakeScreen(), "b": _FakeScreen()}
     window._screens = screens
     assert window._stop_all_background_work(100) is True

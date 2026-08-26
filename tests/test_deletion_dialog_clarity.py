@@ -5,7 +5,7 @@ padding the window with empty space that hides the list.
 """
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QScrollArea
+from PySide6.QtWidgets import QLabel, QScrollArea
 
 from app.i18n import get_language, set_language
 from app.screens.cleanup_dialog import CleanupConfirmDialog
@@ -98,9 +98,23 @@ def test_a_long_list_is_still_capped_so_the_buttons_stay_reachable(app):
     _close(dlg, app)
 
 
-def test_nothing_to_review_means_no_empty_list_at_all(app):
-    """Safe-only selections should not show an empty review box."""
-    dlg = _dialog(app, [_item(risk="Safe")])
+def test_a_safe_selection_is_listed_too(app):
+    """The plan lists everything it will move, not only the risky part.
+
+    It used to show the review-tier targets alone, so a selection of 384 items
+    was four counts and a partial list. Reported as: it is unclear what exactly
+    he is deleting. A Safe item is still an item leaving the disk.
+    """
+    dlg = _dialog(app, [_item(risk="Safe", path=r"C:\stuff\thumbs")])
+    texts = " ".join(l.text() for l in dlg.findChildren(QLabel))
+    texts += " ".join(l.text() for l in dlg.findChildren(ElidedLabel))
+    assert "thumbs" in texts, "a Safe target was not named anywhere in the plan"
+    _close(dlg, app)
+
+
+def test_nothing_to_move_means_no_empty_list_at_all(app):
+    """No targets, no box \u2014 the rule that box was added for."""
+    dlg = _dialog(app, [_item(risk="Protected")])
     visible = [s for s in dlg.findChildren(QScrollArea) if s.isVisible()]
     assert not visible
     _close(dlg, app)

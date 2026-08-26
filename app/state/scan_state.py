@@ -9,6 +9,7 @@ at a controlled interval so the UI is never rebuilt per-batch.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 import uuid
@@ -22,8 +23,8 @@ from app.models.smart_entity import SmartEntity
 _human_size = _format_size
 
 # Internal lifecycle/thread breadcrumbs go here (DEBUG level) instead of the
-# UI log panel — set VIGIL_DEBUG=1 (see main.py) to surface them on the console.
-_log = logging.getLogger("vigil.scanstate")
+# UI log panel — set PODBYE_DEBUG=1 (see main.py) to surface them on the console.
+_log = logging.getLogger("podbye.scanstate")
 
 # How often the UI refresh signal fires during a scan (ms)
 _THROTTLE_MS = 800
@@ -55,6 +56,24 @@ def _restore_reason(ed: dict):
     if key:
         return Reason(key, **(ed.get("reason_args") or {}))
     return ed.get("risk_reason", "")
+
+
+def _measure_paths(paths: list, limit: int = 5000) -> int | None:
+    """Total bytes of *paths*, or None when it would cost too many stats.
+
+    None means "no better answer than the one already stored" — a guess in its
+    place would be worse than a stale figure, because this number is what the
+    findings row, the category total and the donut all report.
+    """
+    if len(paths) > limit:
+        return None
+    total = 0
+    for path in paths:
+        try:
+            total += os.path.getsize(path)
+        except OSError:
+            pass
+    return total
 
 
 class ScanState(QObject):
@@ -306,6 +325,18 @@ class ScanState(QObject):
                     # Partial cleanup: keep the entity but drop cleaned files.
                     e.removable_file_paths = remaining
                     e.file_count = len(remaining)
+                    # ...and re-weigh it. The count was updated here but the
+                    # size was not, so a bucket half of which had just been
+                    # recycled still reported all of its original bytes — in
+                    # its own row, in its category total and in the donut —
+                    # until the next scan. Measured rather than scaled: the
+                    # files that went are not necessarily the average ones.
+                    measured = _measure_paths(remaining)
+                    if measured is not None:
+                        e.size_bytes = measured
+                        if hasattr(e, "reclaimable_bytes"):
+                            e.reclaimable_bytes = min(
+                                getattr(e, "reclaimable_bytes", measured), measured)
             kept.append(e)
         self._entities = kept
         removed = before - len(self._entities)
@@ -1222,7 +1253,7 @@ class ScanState(QObject):
                     # weakened it: no uninstall command or publisher on app
                     # rows, Downloads/Desktop entities falling back to their
                     # type category, loose-file groups losing the files they
-                    # actually stand for, and Vigil's own data losing the
+                    # actually stand for, and Podbye's own data losing the
                     # is_self flag that protects it from cleanup.
                     removable_file_paths=ed.get("removable_file_paths", []),
                     install_date=ed.get("install_date", ""),

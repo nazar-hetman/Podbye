@@ -15,7 +15,7 @@ from PySide6.QtGui import QColor
 
 from app.models.risk import RISK_ORDER
 from app.models.startup_entry import StartupEntry
-from app.widgets.controls import ElidedLabel
+from app.widgets.controls import ask_ai_button_qss, ElidedLabel
 from app.widgets.panels import Panel, apply_tactical_label
 from app.widgets.pills import Badge
 from app.themes.theme_manager import get_palette, theme_signaller
@@ -41,26 +41,6 @@ _IMPACT_COLOR = {
     "Light utility": "#7cc596",
     "Startup item": "#8a9b8f",
 }
-
-
-def _ask_ai_button_qss() -> str:
-    """Accent-tinted style so an 'Ask AI' button reads clearly as an action.
-    Mirrors the Findings inspector button so the two feel identical."""
-    p = get_palette()
-    accent = p.get("accent", "#7cc596")
-    soft = p.get("accent_soft", "#1b2e22")
-    bg = p.get("panel", "#141d18")
-    faint = p.get("text_faint", "#57685e")
-    border = p.get("border", "#213028")
-    return (
-        f"QPushButton {{ background: {soft}; color: {accent}; "
-        f"border: 1px solid {accent}; border-radius: 3px; "
-        f"padding: 3px 12px; font-size: 11px; font-weight: 600; }}"
-        f"QPushButton:hover {{ background: {accent}; color: {bg}; }}"
-        f"QPushButton:pressed {{ background: {accent}; color: {bg}; }}"
-        f"QPushButton:disabled {{ background: transparent; color: {faint}; "
-        f"border-color: {border}; }}"
-    )
 
 
 def _separator() -> QFrame:
@@ -188,7 +168,7 @@ def _startup_recommendation(entry: StartupEntry) -> tuple[str, str, str, str]:
         return (
             tr("NEEDS REVIEW"),
             tr("Recommendation: review the executable path and publisher before keeping this enabled at startup."),
-            tr("Vigil could not verify the publisher for this entry."),
+            tr("Podbye could not verify the publisher for this entry."),
             accent_review,
         )
     if high_impact:
@@ -215,7 +195,7 @@ def _startup_recommendation(entry: StartupEntry) -> tuple[str, str, str, str]:
     return (
         tr("NEEDS REVIEW"),
         tr("Recommendation: inspect the path and purpose before changing this startup entry."),
-        entry.risk_reason or tr("Vigil does not have enough confidence to mark this as safe."),
+        entry.risk_reason or tr("Podbye does not have enough confidence to mark this as safe."),
         accent_review,
     )
 
@@ -239,7 +219,7 @@ def _clear_layout(layout):
 
 
 _STARTUP_PROMPT = """\
-You are analyzing a Windows startup entry for Vigil, a system analysis tool.
+You are analyzing a Windows startup entry for Podbye, a system analysis tool.
 
 Entry:
   Name: {name}
@@ -665,7 +645,7 @@ class StartupInspectorPanel(QFrame):
         rec_hdr.addStretch()
         rec_layout.addLayout(rec_hdr)
 
-        self._rec_text_lbl = QLabel(tr("Select a startup entry to see Vigil's recommendation."))
+        self._rec_text_lbl = QLabel(tr("Select a startup entry to see Podbye's recommendation."))
         self._rec_text_lbl.setWordWrap(True)
         self._rec_text_lbl.setStyleSheet("font-size: 12px; font-weight: 600;")
         rec_layout.addWidget(self._rec_text_lbl)
@@ -714,7 +694,7 @@ class StartupInspectorPanel(QFrame):
         # off. Shown only when there is no AI answer yet (set in set_entry()).
         self._ask_ai_btn = QPushButton(tr("Ask AI"))
         self._ask_ai_btn.setCursor(Qt.PointingHandCursor)
-        self._ask_ai_btn.setStyleSheet(_ask_ai_button_qss())
+        self._ask_ai_btn.setStyleSheet(ask_ai_button_qss())
         self._ask_ai_btn.setVisible(False)
         self._ask_ai_btn.clicked.connect(self._on_ask_ai_clicked)
         expl_hdr_row.addWidget(self._ask_ai_btn)
@@ -760,7 +740,7 @@ class StartupInspectorPanel(QFrame):
         btn_row.addStretch()
         action_layout.addLayout(btn_row)
 
-        note = QLabel(tr("Vigil explains startup impact, but changes stay manual."))
+        note = QLabel(tr("Podbye explains startup impact, but changes stay manual."))
         note.setObjectName("Muted")
         note.setWordWrap(True)
         note.setStyleSheet("font-size: 9px;")
@@ -834,7 +814,8 @@ class StartupInspectorPanel(QFrame):
         from PySide6.QtWidgets import QApplication
         QApplication.clipboard().setText(path)
         self._copy_btn.setText(tr("Copied"))
-        QTimer.singleShot(1200, lambda: self._copy_btn.setText(tr("Copy path")))
+        QTimer.singleShot(
+            1200, self, lambda: self._copy_btn.setText(tr("Copy path")))
 
     def set_embedded_header_visible(self, visible: bool):
         self._header_row.setVisible(visible)
@@ -912,7 +893,7 @@ class StartupInspectorPanel(QFrame):
             self._ai_status_lbl.setText("")
             self._explanation_lbl.setText(tr("Startup explanation will appear here once you select an entry."))
             self._rec_status_lbl.setText(tr("WAITING"))
-            self._rec_text_lbl.setText(tr("Select a startup entry to see Vigil's recommendation."))
+            self._rec_text_lbl.setText(tr("Select a startup entry to see Podbye's recommendation."))
             self._rec_evidence_lbl.setText("")
             self._apply_recommendation_style(get_palette().get("text_dim", "#8a9b8f"))
             self._source_lbl.setText("—")
@@ -1132,7 +1113,7 @@ class StartupsScreen(QWidget):
         title = QLabel(tr("STARTUPS"))
         apply_tactical_label(title, font_size=16, letter_spacing=4)
         title_col.addWidget(title)
-        sub = QLabel(tr("Startup controls update Vigil state · Windows changes stay manual"))
+        sub = QLabel(tr("Startup controls update Podbye state · Windows changes stay manual"))
         sub.setObjectName("Dim")
         sub.setStyleSheet("font-size: 12px;")
         title_col.addWidget(sub)

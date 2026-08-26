@@ -110,9 +110,15 @@ CALLER_LABELS = (
 
 
 def _fallback_expected_rule() -> dict:
+    # Every rule's "context" explains the *mechanism*; the reassurance that
+    # follows it is added once, generically, by assess_cleanup_counts. This one
+    # used to be the reassurance itself, so a locked-file result printed
+    # "Windows file locks are normal and do not mean cleanup failed." directly
+    # above "This is normal and does not mean cleanup failed."
     return {
         "intro": "Some files are still being used by Windows or another app.",
-        "context": "Windows file locks are normal and do not mean cleanup failed.",
+        "context": ("A file that is open cannot be moved, so Podbye left those "
+                    "where they are rather than forcing them."),
         "actions": [
             "close the app using the files, if known",
             "or restart Windows",
@@ -214,7 +220,7 @@ def assess_cleanup_counts(
             explanation_text=(
                 tr("Windows returned an unexpected cleanup error for part of "
                    "this category.") + "\n\n"
-                + tr("This is different from a normal locked-file case, so Vigil "
+                + tr("This is different from a normal locked-file case, so Podbye "
                      "left those items alone instead of forcing the cleanup.")
                 + "\n\n" + tr("You can:") + "\n"
                 + "• " + tr("restart Windows") + "\n"

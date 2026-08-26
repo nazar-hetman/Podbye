@@ -1,4 +1,4 @@
-"""Reusable input controls for Vigil."""
+"""Reusable input controls for Podbye."""
 
 from __future__ import annotations
 
@@ -7,6 +7,57 @@ from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import QCheckBox, QComboBox, QLabel, QSizePolicy, QWidget
 
 from app.themes.theme_manager import get_palette
+
+
+# ── Shared button styling ─────────────────────────────────────────
+# Three screens drew an 'Ask AI' button and two of them carried their own
+# byte-identical copy of this function, so a change to one silently left
+# the other behind. Both live here now, beside the controls they style.
+
+
+def ask_ai_button_qss() -> str:
+    """Accent-tinted style so an 'Ask AI' button reads clearly as an action,
+    not as a run of plain text. Themed via the live palette, with a filled
+    hover state."""
+    p = get_palette()
+    accent = p.get("accent", "#7cc596")
+    soft = p.get("accent_soft", "#1b2e22")
+    bg = p.get("panel", "#141d18")
+    faint = p.get("text_faint", "#57685e")
+    border = p.get("border", "#213028")
+    return (
+        f"QPushButton {{ background: {soft}; color: {accent}; "
+        f"border: 1px solid {accent}; border-radius: 3px; "
+        f"padding: 3px 12px; font-size: 11px; font-weight: 600; }}"
+        f"QPushButton:hover {{ background: {accent}; color: {bg}; }}"
+        f"QPushButton:pressed {{ background: {accent}; color: {bg}; }}"
+        f"QPushButton:disabled {{ background: transparent; color: {faint}; "
+        f"border-color: {border}; }}"
+    )
+
+
+def ask_ai_quiet_qss() -> str:
+    """The same action, one rung down the hierarchy.
+
+    A per-file 'Ask AI' rendered in the outlined style above out-shouted the
+    file it referred to: five 800-byte icons became five bordered accent
+    buttons and one faint filename each. This keeps the affordance on every
+    row — no hover-to-reveal, so nothing becomes undiscoverable, and no layout
+    shift — but draws it as text until the pointer is on it. The bucket header
+    keeps the loud version, so the pattern is still taught somewhere.
+    """
+    p = get_palette()
+    accent = p.get("accent", "#7cc596")
+    soft = p.get("accent_soft", "#1b2e22")
+    faint = p.get("text_faint", "#57685e")
+    return (
+        f"QPushButton {{ background: transparent; color: {faint}; "
+        f"border: 1px solid transparent; border-radius: 3px; "
+        f"padding: 1px 6px; font-size: 10px; font-weight: 500; }}"
+        f"QPushButton:hover {{ background: {soft}; color: {accent}; "
+        f"border-color: {accent}; }}"
+        f"QPushButton:pressed {{ background: {soft}; color: {accent}; }}"
+    )
 
 
 class TacticalCheckBox(QCheckBox):

@@ -77,7 +77,23 @@ def test_a_group_row_advertises_the_file_list():
     text = _entity_contains_text(_bucket(6))
     assert "choose individual files" in text
     assert "6 files" in text, "dropped the existing content summary"
-    assert "Archive Files" in text
+
+
+def test_a_group_row_says_what_the_files_are():
+    """The type label used to sit here; the file kinds took its place.
+
+    "Loose archives in Downloads · 6 files · Archive Files" says "archives"
+    twice and names nothing. Reported as: it does not show what is proposed to
+    delete. The extensions are what a row has room to answer that with.
+    """
+    mixed = _bucket(4)
+    mixed["removable_file_paths"] = [
+        "C:/Users/u/Downloads/a.zip", "C:/Users/u/Downloads/b.zip",
+        "C:/Users/u/Downloads/c.pdf", "C:/Users/u/Downloads/d.csv",
+    ]
+    text = _entity_contains_text(mixed)
+    assert "2 ZIP" in text
+    assert "1 PDF" in text and "1 CSV" in text
 
 
 def test_a_folder_row_is_left_alone():
@@ -106,69 +122,26 @@ def test_the_cue_is_translated(code):
 
 # ── where selecting one lands ─────────────────────────────────────
 
-class _FakeTabs:
-    """Just enough QTabWidget for _populate_files_section."""
+# ── the list is on the page, not behind a tab ───────────────
 
-    def __init__(self, current=0):
-        self._current = current
-        self.enabled = {}
-        self.visible = {}
-        self.texts = {}
+def test_a_bucket_shows_its_files_in_the_contents_section():
+    """The tab this file was written for is gone.
 
-    def setTabEnabled(self, i, v): self.enabled[i] = v
-    def setTabVisible(self, i, v): self.visible[i] = v
-    def setTabText(self, i, t): self.texts[i] = t
-    def currentIndex(self): return self._current
-    def setCurrentIndex(self, i): self._current = i
-
-
-def _panel_with(entity, starting_tab=0):
-    """Drive _populate_files_section without building any Qt widgets.
-
-    A plain class borrowing the two methods under test: _PreallocDetailPanel is
-    a QWidget, and a QWidget cannot be allocated without running its __init__.
+    It existed because the per-file list lived behind "Files", and the row had
+    to advertise it. The list is now on the main page, so what matters is that
+    the section chooses the file representation rather than the folder one.
     """
-    from app.screens.findings_dashboard import _PreallocDetailPanel as P
-
-    class _Panel:
-        _FILES_PER_PAGE = P._FILES_PER_PAGE
-        _collect_entity_files = P._collect_entity_files
-        _populate_files_section = P._populate_files_section
-
-        def __init__(self):
-            self._tabs = _FakeTabs(starting_tab)
-            self._all_file_paths = []
-            self._selected_files = set()
-            self._files_page_idx = 0
-            self._file_checks = []
-
-        def _render_files_page(self):
-            pass
-
-    panel = _Panel()
-    panel._populate_files_section(entity)
-    return panel
+    from app.models.entity_contents import MODE_FILES, mode_for
+    assert mode_for(_bucket(6)) == MODE_FILES
 
 
-def test_selecting_a_group_lands_on_the_file_list():
-    panel = _panel_with(_bucket(6))
-    assert panel._tabs.currentIndex() == 1, "group row did not open on its files"
-    assert panel._tabs.enabled[1] is True
-    assert "6" in panel._tabs.texts[1]
+def test_a_folder_backed_entity_gets_components_not_files():
+    from app.models.entity_contents import MODE_CONTENTS, mode_for
+    assert mode_for(_folder()) == MODE_CONTENTS
 
 
-def test_selecting_a_folder_entity_stays_on_information():
-    panel = _panel_with(_folder(), starting_tab=0)
-    assert panel._tabs.currentIndex() == 0
-
-
-def test_moving_from_a_group_to_a_folder_returns_to_information():
-    """The Files tab must not stay selected for an entity that has no list."""
-    panel = _panel_with(_folder(), starting_tab=1)
-    assert panel._tabs.currentIndex() == 0
-
-
-def test_an_entity_with_no_files_disables_the_tab():
-    panel = _panel_with(_bucket(1), starting_tab=1)
-    assert panel._tabs.enabled[1] is False
-    assert panel._tabs.currentIndex() == 0
+def test_a_single_file_gets_no_section_at_all():
+    """"Steam contains Steam" is the redundancy the redesign removed."""
+    from app.models.entity_contents import MODE_NONE, mode_for
+    single = _bucket(1, name="Installer (setup)", entity_type="installer")
+    assert mode_for(single) == MODE_NONE

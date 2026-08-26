@@ -1,4 +1,4 @@
-"""Theme manager for Vigil — loads QSS files and exposes palette constants.
+"""Theme manager for Podbye — loads QSS files and exposes palette constants.
 
 Typography:
   body_font   = Inter          — UI text, labels, buttons
@@ -272,7 +272,7 @@ def build_qss(theme_key: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────
-#  Master QSS template — matched to Vigil design system
+#  Master QSS template — matched to Podbye design system
 #
 #  Typography hierarchy (design):
 #    64px  mono 300   — hero big number
@@ -293,7 +293,7 @@ def build_qss(theme_key: str) -> str:
 # ─────────────────────────────────────────────────────────
 
 _BASE_QSS = """
-/* ─── Vigil — Generated QSS — Design System v2 ─── */
+/* ─── Podbye — Generated QSS — Design System v2 ─── */
 
 * {{
     margin: 0;
@@ -318,6 +318,24 @@ QMainWindow {{
  * not the custom containers described above. */
 QDialog, QMessageBox {{
     background-color: {bg};
+    color: {text};
+}}
+/* QMessageBox builds its own children, and anything it does not paint falls
+ * back to the *system* palette — which on a Windows light theme is white text
+ * on white. Naming the parts leaves nothing for the OS to decide. */
+QMessageBox QLabel {{
+    background: transparent;
+    color: {text};
+}}
+QDialogButtonBox {{
+    background: transparent;
+}}
+/* A layout's spacing cannot be set from a stylesheet, and the default one in
+ * a message box put the buttons all but touching. A margin does the same job
+ * from here, so every popup in the app spaces its buttons alike. */
+QDialogButtonBox QPushButton {{
+    min-width: 92px;
+    margin-left: 8px;
 }}
 QMainWindow, QWidget {{
     color: {text};
@@ -425,6 +443,12 @@ QLabel#Wordmark {{
     font-size: 14px;
     color: {text};
     letter-spacing: 5px;
+}}
+QLabel#Slogan {{
+    font-family: "JetBrains Mono";
+    font-size: 9px;
+    color: {text_faint};
+    letter-spacing: 1px;
 }}
 
 /* ─── Buttons ─── */

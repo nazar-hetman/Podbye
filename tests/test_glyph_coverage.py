@@ -1,4 +1,4 @@
-"""Every symbol Vigil draws must exist in a font on the machine.
+"""Every symbol Podbye draws must exist in a font on the machine.
 
 A codepoint with no glyph anywhere renders as .notdef — a small hollow box.
 It looks like a corrupted build, and nothing in the code hints at it: the
@@ -19,7 +19,7 @@ from PySide6.QtGui import QFont, QImage, QPainter
 
 APP = pathlib.Path(__file__).resolve().parents[1] / "app"
 
-# Every family Vigil asks for by name.
+# Every family Podbye asks for by name.
 FAMILIES = ("Inter", "JetBrains Mono", "Silkscreen", "Segoe UI")
 
 # U+FFFFF is in a private-use plane and permanently unassigned, so whatever it

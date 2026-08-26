@@ -1,6 +1,6 @@
-# Vigil — Design Rules
+# Podbye — Design Rules
 
-Extracted from the Claude Design handoff bundle (Vigil.html, May 2026).
+Extracted from the Claude Design handoff bundle (Podbye.html, May 2026).
 
 ---
 

@@ -1,8 +1,8 @@
-# Vigil Semantic Pipeline Architecture
+# Podbye Semantic Pipeline Architecture
 
 ## Overview
 
-The Vigil scanning system transforms raw filesystem enumeration into **semantic storage intelligence**. Instead of dumping millions of files into the UI, Vigil detects and presents **meaningful entities** organized in a clear hierarchy.
+The Podbye scanning system transforms raw filesystem enumeration into **semantic storage intelligence**. Instead of dumping millions of files into the UI, Podbye detects and presents **meaningful entities** organized in a clear hierarchy.
 
 ## Core Philosophy
 
@@ -793,7 +793,7 @@ After `CleanupWorker.finished`:
 1. `ScanState.remove_entities_by_path(succeeded_paths)` — removes entities, purges findings, emits `ui_refresh`
 2. All connected Findings screens rebuild via the existing throttled `ui_refresh` signal
 3. Toast message shown in the selection bar: "✓ N items moved to Recycle Bin · X freed"
-4. Cleanup record written to `%APPDATA%/Vigil/sessions/cleanup_{timestamp}.json`
+4. Cleanup record written to `%APPDATA%/Podbye/sessions/cleanup_{timestamp}.json`
 
 ### The Protection Invariant
 

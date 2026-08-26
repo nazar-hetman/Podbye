@@ -1,13 +1,13 @@
-"""Where Vigil itself lives — so it never offers to clean itself up.
+"""Where Podbye itself lives — so it never offers to clean itself up.
 
-Vigil stores its settings, scan sessions, logs and AI cache under
-``%APPDATA%\\Vigil``. On a full C:/ scan those classify like anybody else's
+Podbye stores its settings, scan sessions, logs and AI cache under
+``%APPDATA%\\Podbye``. On a full C:/ scan those classify like anybody else's
 data: ``logs`` reads as a log folder and ``cache`` as a cache folder, both Safe,
-both recycle-able. Nothing stopped Vigil from proposing to delete its own
+both recycle-able. Nothing stopped Podbye from proposing to delete its own
 session store — the file holding the very results being displayed — while it was
 running.
 
-Two roots are recognised: the directory Vigil runs from, and its data directory.
+Two roots are recognised: the directory Podbye runs from, and its data directory.
 """
 from __future__ import annotations
 
@@ -20,9 +20,9 @@ def _norm(path) -> str:
     return str(path).replace("\\", "/").rstrip("/").lower()
 
 
-# A self root has to be a folder that belongs to Vigil alone. A portable build
+# A self root has to be a folder that belongs to Podbye alone. A portable build
 # run straight out of C:/Users/<u>/Downloads would otherwise nominate Downloads
-# as "Vigil's install directory" and protect the entire folder from cleanup.
+# as "Podbye's install directory" and protect the entire folder from cleanup.
 _TOO_BROAD_NAMES = {
     "downloads", "download", "desktop", "documents", "my documents",
     "pictures", "videos", "music", "temp", "tmp", "users", "home",
@@ -40,7 +40,7 @@ def _is_usable_root(norm: str) -> bool:
 
 
 def install_dir() -> str:
-    """The directory Vigil runs from: the frozen exe's folder, or the source tree."""
+    """The directory Podbye runs from: the frozen exe's folder, or the source tree."""
     if getattr(sys, "frozen", False):
         return _norm(Path(sys.executable).resolve().parent)
     # app/services/self_paths.py → <project root>
@@ -48,34 +48,34 @@ def install_dir() -> str:
 
 
 def data_dir() -> str:
-    """%APPDATA%/Vigil — config.json and the scan session store."""
+    """%APPDATA%/Podbye — config.json and the scan session store."""
     appdata = os.environ.get("APPDATA", "")
     if appdata:
-        return _norm(Path(appdata) / "Vigil")
-    return _norm(Path.home() / ".config" / "vigil")
+        return _norm(Path(appdata) / "Podbye")
+    return _norm(Path.home() / ".config" / "podbye")
 
 
 def cache_root() -> str:
-    """%LOCALAPPDATA%/Vigil — the AI explanation cache.
+    """%LOCALAPPDATA%/Podbye — the AI explanation cache.
 
-    Vigil's data is split across both AppData roots, and only the Roaming one
+    Podbye's data is split across both AppData roots, and only the Roaming one
     used to be protected. The AI cache therefore classified like anybody else's
     cache folder — Safe, recycle-able — so a full C:/ scan could offer to delete
-    Vigil's own data while Vigil was running.
+    Podbye's own data while Podbye was running.
     """
     local = os.environ.get("LOCALAPPDATA", "")
     if local:
-        return _norm(Path(local) / "Vigil")
-    return _norm(Path.home() / ".cache" / "vigil")
+        return _norm(Path(local) / "Podbye")
+    return _norm(Path.home() / ".cache" / "podbye")
 
 
 def data_dirs() -> tuple[str, ...]:
-    """Every root that holds Vigil's data rather than its program files."""
+    """Every root that holds Podbye's data rather than its program files."""
     return tuple(d for d in (data_dir(), cache_root()) if d)
 
 
 def self_roots() -> tuple[str, ...]:
-    """Normalised, de-duplicated roots that belong to Vigil.
+    """Normalised, de-duplicated roots that belong to Podbye.
 
     Computed per call rather than cached at import: the tests move APPDATA, and
     a frozen build resolves sys.executable only once it is actually frozen.
@@ -88,7 +88,7 @@ def self_roots() -> tuple[str, ...]:
 
 
 def is_self_path(path: str) -> bool:
-    """True when *path* is one of Vigil's own roots, or sits inside one."""
+    """True when *path* is one of Podbye's own roots, or sits inside one."""
     if not path:
         return False
     norm = _norm(path)

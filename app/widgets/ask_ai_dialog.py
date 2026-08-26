@@ -61,6 +61,7 @@ class AskAIDialog(QDialog):
         root.addWidget(self._body, stretch=1)
 
         btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
         btn_row.addStretch()
         self._btn_close = QPushButton(tr("Close"))
         self._btn_close.setCursor(Qt.PointingHandCursor)

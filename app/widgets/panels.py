@@ -1,4 +1,4 @@
-"""Reusable panel and card widgets for Vigil."""
+"""Reusable panel and card widgets for Podbye."""
 
 from PySide6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel,

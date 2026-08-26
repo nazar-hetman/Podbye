@@ -1,8 +1,8 @@
-# Vigil — System Guardian
+# Podbye — System Guardian
 
 AI-assisted system analysis and cleanup console.
 
-Vigil is a retro-futuristic **desktop application** focused on:
+Podbye is a retro-futuristic **desktop application** focused on:
 
 - ✅ intelligent storage analysis with **Semantic Pipeline**
 - ✅ **container-first detection** — monolith roots claimed before content analysis; no "photo collection inside QGIS"
@@ -19,7 +19,7 @@ Vigil is a retro-futuristic **desktop application** focused on:
 
 📖 **[Semantic Pipeline Architecture](SEMANTIC_PIPELINE.md)** — Next-generation scanning system documentation
 
-Unlike traditional "one-click cleaners", Vigil is designed as a system awareness tool:
+Unlike traditional "one-click cleaners", Podbye is designed as a system awareness tool:
 it explains what files are, why they exist, and whether removing them is safe.
 
 ## Status
@@ -176,7 +176,7 @@ Two-phase container-first detection:
 
 ## Design Direction
 
-Vigil uses a **retro-futuristic "guardian terminal"** visual identity:
+Podbye uses a **retro-futuristic "guardian terminal"** visual identity:
 
 - Forest Terminal color palette (dark military greens)
 - JetBrains Mono for all body/table text

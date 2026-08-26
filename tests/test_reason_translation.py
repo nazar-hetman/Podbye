@@ -1,7 +1,7 @@
 """The evidence line under a finding must be in the reader's language.
 
 "Installed application in Program Files — remove it through its own
-uninstaller" is the sentence that tells a user *why* Vigil classified
+uninstaller" is the sentence that tells a user *why* Podbye classified
 something, and it stayed English in every translated build.
 
 Translating it where the detector writes it would be the obvious fix and the

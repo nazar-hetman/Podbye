@@ -1,4 +1,4 @@
-"""System-tray presence for Vigil.
+"""System-tray presence for Podbye.
 
 A thin wrapper around :class:`QSystemTrayIcon` used when the user chooses to keep
 the app running in the background while a scan / cleanup / AI job finishes. The
@@ -19,7 +19,7 @@ from PySide6.QtWidgets import QSystemTrayIcon, QMenu
 from app.i18n import tr
 
 
-class VigilTray(QSystemTrayIcon):
+class PodbyeTray(QSystemTrayIcon):
     """Tray icon with a Show / Quit menu and quiet notifications."""
 
     show_requested = Signal()
@@ -27,7 +27,7 @@ class VigilTray(QSystemTrayIcon):
 
     def __init__(self, icon: QIcon, parent=None):
         super().__init__(icon, parent)
-        self.setToolTip("Vigil")
+        self.setToolTip("Podbye")
         self._build_menu()
         # Left-click / double-click on the tray icon restores the window.
         self.activated.connect(self._on_activated)
@@ -43,10 +43,10 @@ class VigilTray(QSystemTrayIcon):
 
     def _build_menu(self):
         menu = QMenu()
-        self._show_action = menu.addAction(tr("Show Vigil"))
+        self._show_action = menu.addAction(tr("Show Podbye"))
         self._show_action.triggered.connect(self.show_requested.emit)
         menu.addSeparator()
-        self._quit_action = menu.addAction(tr("Quit Vigil"))
+        self._quit_action = menu.addAction(tr("Quit Podbye"))
         self._quit_action.triggered.connect(self.quit_requested.emit)
         # Keep a reference so the menu is not garbage-collected.
         self._menu = menu
@@ -67,7 +67,7 @@ class VigilTray(QSystemTrayIcon):
 
     def set_status(self, text: str):
         """Reflect current activity in the tray tooltip."""
-        self.setToolTip(f"Vigil — {text}" if text else "Vigil")
+        self.setToolTip(f"Podbye — {text}" if text else "Podbye")
 
     def notify(self, title: str, message: str):
         """Show a quiet, short-lived completion notification.

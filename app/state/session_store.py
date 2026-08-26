@@ -4,9 +4,9 @@ Stores partial and complete analysis sessions so the app can resume
 an interrupted run after restart.
 
 Paths:
-  %APPDATA%\\Vigil\\sessions\\last_run.json     — current/last session (resume)
-  %APPDATA%\\Vigil\\sessions\\history.json      — lightweight history index
-  %APPDATA%\\Vigil\\sessions\\session_{id}.json — full session data per entry
+  %APPDATA%\\Podbye\\sessions\\last_run.json     — current/last session (resume)
+  %APPDATA%\\Podbye\\sessions\\history.json      — lightweight history index
+  %APPDATA%\\Podbye\\sessions\\session_{id}.json — full session data per entry
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ MAX_ANALYZE_HISTORY = 10
 MAX_CLEANUP_HISTORY = 10
 
 # Above this size a session is read with _read_skipping_findings() instead of
-# json.load(). Sessions written before Vigil stopped persisting raw findings
+# json.load(). Sessions written before Podbye stopped persisting raw findings
 # hold ~1.6M of them in one 1.7 GB array; parsing that allocates gigabytes and
 # blocks for minutes. Anything under the threshold parses in well under a
 # second, so the plain loader stays in charge of the common case.
@@ -75,8 +75,8 @@ def _write_json_atomic(path: Path, data: Any) -> None:
 def _sessions_dir() -> Path:
     appdata = os.environ.get("APPDATA", "")
     if appdata:
-        return Path(appdata) / "Vigil" / "sessions"
-    return Path.home() / ".config" / "vigil" / "sessions"
+        return Path(appdata) / "Podbye" / "sessions"
+    return Path.home() / ".config" / "podbye" / "sessions"
 
 
 def sessions_dir() -> Path:
@@ -116,7 +116,7 @@ def _cleanup_record_path(timestamp: int) -> Path:
 # ── Crash-leftover sweep ─────────────────────────────────────────
 
 # How long a stray file must sit untouched before the sweep will take it.
-# Another Vigil instance may be writing right now; a live temp file is seconds
+# Another Podbye instance may be writing right now; a live temp file is seconds
 # old, and append_to_history writes session_<id>.json a moment before it adds
 # the matching history record.
 _STALE_AFTER_SECONDS = 60 * 60
@@ -199,7 +199,7 @@ def compact_oversized_sessions(now: float | None = None) -> tuple[int, int]:
 
     sweep_orphaned_files only takes files the index does *not* name, so a
     session listed in history.json is protected however large it is. Three
-    files written before Vigil stopped persisting raw findings held 3.42 GB of
+    files written before Podbye stopped persisting raw findings held 3.42 GB of
     a 3.44 GB folder that way, and they only drop off after MAX_ANALYZE_HISTORY
     further scans push them out of the index.
 
@@ -680,6 +680,12 @@ def save_cleanup_record(session_id: str, items: list, result, mode: str) -> bool
             "already_clean"
         ),
         "items": items,
+        # Marks that each item's "size" is its own bytes. Records written
+        # before 2026-08-20 carry the *bucket's* total on every one of its
+        # members — a nine-file cleanup recorded nine identical 668 MB items
+        # for 3.9 GB actually freed — and History cannot tell the two apart by
+        # looking, so it declines to add up the ones without this stamp.
+        "item_sizes": "measured",
         "errors_by_path": result.errors_by_path,
     }
     try:

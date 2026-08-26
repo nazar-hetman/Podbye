@@ -35,6 +35,7 @@ ENTITY_TYPES = {
 
     # Development (hierarchy: Projects / Build Artifacts / Dependencies)
     "dev_project":      "Development Project",
+    "dev_workspace":    "Development Workspace",
     "dev_artifacts":    "Build Artifacts / Dependencies",
     "development_environment": "Development Environment",
     "venv":             "Python Virtual Environment",
@@ -108,6 +109,7 @@ _ENTITY_RISK = {
     
     # Development
     "dev_project":      "Review",
+    "dev_workspace":    "Review",
     "dev_artifacts":    "Safe",
     "development_environment": "Review",
     "venv":             "Safe",
@@ -188,6 +190,7 @@ _CATEGORY_BY_TYPE = {
 
     # Development
     "dev_project": "Dev Artifacts",
+    "dev_workspace": "Dev Artifacts",
     "dev_artifacts": "Dev Artifacts",
     "development_environment": "Dev Artifacts",
     "venv": "Dev Artifacts",
@@ -276,7 +279,7 @@ _DEV_GENERATED_TYPES = frozenset({
 #                (caches, build output, installers, archives, duplicate extras)
 #   uninstall    installed software — remove via the uninstaller, not by
 #                recycling the install tree
-#   review_only  personal / mixed / ambiguous content — Vigil must NOT offer a
+#   review_only  personal / mixed / ambiguous content — Podbye must NOT offer a
 #                whole-folder delete; it helps the user look inside instead
 #   protected    system-critical — no destructive action at all
 
@@ -302,7 +305,7 @@ _REVIEW_ONLY_TYPES = frozenset({
     "creative_project", "media_collection",
     "user_profile", "application_data", "browser_profile",
     "database", "game_saves", "dataset",
-    "vm_storage", "dev_project",
+    "vm_storage", "dev_project", "dev_workspace",
     "mixed_folder", "unknown_folder", "loose_files",
 })
 
@@ -381,7 +384,7 @@ class SmartEntity:
     # cleanup targets those files instead of the entity's (folder/root) path.
     removable_file_paths: list = field(default_factory=list)
 
-    # Vigil's own install / data directory. Carried as a flag rather than baked
+    # Podbye's own install / data directory. Carried as a flag rather than baked
     # into risk_reason so the UI can phrase it in the user's language, and
     # re-phrase it when the language changes mid-session.
     is_self: bool = False
@@ -538,17 +541,19 @@ class SmartEntity:
             return reason
 
         if self.entity_type == "duplicate_group":
-            return "Vigil found identical file content in multiple locations"
+            return "Podbye found identical file content in multiple locations"
         if self.entity_type in _AUTO_REGEN_TYPES:
             return "its name or contents match cache, temporary, or log data that apps usually recreate"
         if self.entity_type in _DEV_GENERATED_TYPES:
             return "its name or contents match generated development dependencies or build output"
         if self.entity_type == "dev_project":
             return "project markers or source folders indicate a development project"
+        if self.entity_type == "dev_workspace":
+            return "it holds several separate projects rather than being one itself"
         if self.entity_type in {"application_data", "browser_profile", "user_profile"}:
             return "the path looks like app, browser, or user support data"
         if self.entity_type in {"unknown_folder", "mixed_folder", "loose_files"}:
-            return "it has enough content to review, but Vigil could not identify a stronger owner"
+            return "it has enough content to review, but Podbye could not identify a stronger owner"
         return "its folder name, file types, or known markers match this finding type"
 
     def _removal_impact_text(self) -> str:

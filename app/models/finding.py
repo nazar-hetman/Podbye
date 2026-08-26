@@ -158,7 +158,7 @@ def is_model_blob(name: str, ext: str, parts: frozenset, size_bytes: int) -> boo
     most common local-LLM runners actually store weights: Ollama writes every
     model to ~/.ollama/models/blobs/sha256-<hash>, and HuggingFace writes
     ~/.cache/huggingface/hub/models--*/blobs/<hash>. Both are extensionless,
-    so a 7 GB model landed in "Unknown" — on the runners Vigil's own README
+    so a 7 GB model landed in "Unknown" — on the runners Podbye's own README
     names. The path is the evidence here, which is why the keyword set above
     already lists "ollama" and "huggingface"; it was simply unreachable for a
     file with no extension.

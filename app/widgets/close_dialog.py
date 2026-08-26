@@ -34,9 +34,9 @@ _OUTCOME_TO_SETTING = {
 }
 
 _BACKGROUND_HELP = (
-    "Vigil keeps running in the system tray — near the clock, usually under the "
+    "Podbye keeps running in the system tray — near the clock, usually under the "
     "▲ \"hidden icons\" arrow. Your work finishes there in the background.\n\n"
-    "To fully close Vigil later, right-click the tray icon and choose Quit."
+    "To fully close Podbye later, right-click the tray icon and choose Quit."
 )
 
 
@@ -45,7 +45,7 @@ class CloseRunningDialog(QDialog):
 
     def __init__(self, activity_label: str = "", parent=None):
         super().__init__(parent)
-        self.setWindowTitle(tr("Vigil is still working"))
+        self.setWindowTitle(tr("Podbye is still working"))
         self.setModal(True)
         self.setMinimumWidth(460)
 
@@ -81,7 +81,7 @@ class CloseRunningDialog(QDialog):
         root.setContentsMargins(24, 22, 24, 20)
         root.setSpacing(0)
 
-        header = QLabel(tr("Vigil is still working"))
+        header = QLabel(tr("Podbye is still working"))
         header.setStyleSheet(
             "font-family: 'JetBrains Mono'; font-size: 15px; font-weight: bold; "
             "letter-spacing: 1px; margin-bottom: 6px;"

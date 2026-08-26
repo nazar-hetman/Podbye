@@ -5,7 +5,7 @@ which 3.55 GB was unreachable — 2.80 GB in two atomic-write temp files left by
 killed processes, and 839 MB in a session file whose history record was gone.
 MAX_ANALYZE_HISTORY prunes by walking the index, so neither kind is ever seen.
 
-Vigil now protects its own data folder from cleanup, so if this sweep does not
+Podbye now protects its own data folder from cleanup, so if this sweep does not
 reclaim them, nothing will.
 """
 import json
@@ -26,7 +26,7 @@ HOUR = 60 * 60
 def sessions(tmp_path, monkeypatch):
     """A sessions directory under a throwaway %APPDATA%."""
     monkeypatch.setenv("APPDATA", str(tmp_path))
-    d = tmp_path / "Vigil" / "sessions"
+    d = tmp_path / "Podbye" / "sessions"
     d.mkdir(parents=True)
     return d
 

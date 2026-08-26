@@ -12,7 +12,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QObject, QTimer
 
 from app.widgets.panels import Panel, apply_tactical_label
-from app.widgets.controls import TacticalCheckBox, TacticalComboBox
+from app.widgets.controls import (ElidedLabel, TacticalCheckBox,
+                                  TacticalComboBox)
 from app.themes.theme_manager import THEME_NAMES, THEME_KEYS, get_palette, theme_signaller
 from app.i18n import tr, available_languages, explanation_languages
 from app.services.ollama_client import LOCAL_ENDPOINT
@@ -188,6 +189,16 @@ class SettingsScreen(QWidget):
     def set_settings_store(self, store):
         self._store = store
         self._load_from_store()
+        # About caches the config path when it builds its rows, so a store that
+        # arrives afterwards left that row reading "unavailable" with a dead
+        # Open folder button. main.py passes the store to __init__ and never
+        # hits this, but the setter is public and the failure is silent.
+        targets = getattr(self, "_storage_targets", None)
+        if targets is not None and store is not None:
+            targets["config"] = str(getattr(store, "config_path", "") or "")
+            lbl = getattr(self, "_config_path_lbl", None)
+            if lbl is not None:
+                lbl.setText(targets["config"] or tr("unavailable"))
 
     # ─── Persistence ────────────────────────────────────────
 
@@ -254,7 +265,6 @@ class SettingsScreen(QWidget):
         # Toggles
         self._cb_findings.setChecked(self._store.get("ai_findings_enabled", False))
         self._cb_startups.setChecked(self._store.get("ai_startups_enabled", True))
-        self._cb_cleanup_hints.setChecked(self._store.get("ai_cleanup_hints_enabled", False))
         self._cb_risky_only.setChecked(self._store.get("ai_explain_risky_only"))
 
         # Cleanup safety. Recycle Bin is the only method; the store also pins
@@ -647,7 +657,7 @@ class SettingsScreen(QWidget):
                 "close_behavior", self._close_behavior_combo.currentData()))
         win_lay.addLayout(_setting_row(
             tr("When closing while busy"),
-            tr("If a task is still running when you close the window, Vigil can "
+            tr("If a task is still running when you close the window, Podbye can "
                "ask, keep working in the system tray, or stop and quit."),
             self._close_behavior_combo,
         ))
@@ -693,7 +703,7 @@ class SettingsScreen(QWidget):
             tr("Connection mode"),
             tr("Local finds a model server already running on this machine — "
                "Ollama, LM Studio or llama.cpp — on its usual port. Server points "
-               "Vigil at another machine on your network (LAN addresses only)."),
+               "Podbye at another machine on your network (LAN addresses only)."),
             mode_w,
         ))
 
@@ -716,7 +726,7 @@ class SettingsScreen(QWidget):
         # leave the button invisible on a panel_alt panel.
         self._btn_test.clicked.connect(self._test_connection)
         ep_h.addWidget(self._btn_test)
-        srv_lay.addLayout(_setting_row(tr("Endpoint"), tr("Ollama-compatible HTTP server. Vigil never reaches the public network."), ep_w))
+        srv_lay.addLayout(_setting_row(tr("Endpoint"), tr("Ollama-compatible HTTP server. Podbye never reaches the public network."), ep_w))
 
         # Connection status: the state on one line, and what to do about it on
         # the next. A single line had to serve every outcome, so it ended up
@@ -772,7 +782,7 @@ class SettingsScreen(QWidget):
 
         # Local-only disclosure
         disc = QLabel(
-            tr("Vigil refuses to connect to non-loopback or non-LAN endpoints. "
+            tr("Podbye refuses to connect to non-loopback or non-LAN endpoints. "
                "There is no cloud fallback, no API key field, no analytics.")
         )
         disc.setObjectName("Dim")
@@ -884,10 +894,6 @@ class SettingsScreen(QWidget):
         self._style_checkbox(self._cb_startups)
         self._cb_startups.toggled.connect(lambda checked: self._save_value("ai_startups_enabled", checked))
         ai_toggle_l.addWidget(self._cb_startups)
-        self._cb_cleanup_hints = TacticalCheckBox(tr("Cleanup hints"))
-        self._style_checkbox(self._cb_cleanup_hints)
-        self._cb_cleanup_hints.toggled.connect(lambda checked: self._save_value("ai_cleanup_hints_enabled", checked))
-        ai_toggle_l.addWidget(self._cb_cleanup_hints)
         expl_lay.addLayout(_setting_row(tr("AI explanations"), tr("Per-item \"Ask AI\" always works. Automatic explanation of every "
                "finding is off by default — it is slow on a local model; turn it "
                "on for long background runs."), ai_toggle_w))
@@ -1010,6 +1016,31 @@ class SettingsScreen(QWidget):
 
         lay.addWidget(safe_panel)
 
+        # ── Items you keep ───────────────────────────────────────
+        # A Keep mark stops something being selected or deleted, in this and
+        # every later scan. That is exactly the kind of setting a user needs
+        # to be able to find again and take back, so it is listed rather than
+        # living only on the row it was made from.
+        self._keep_panel = Panel(alt=True)
+        keep_lay = self._keep_panel.with_layout(
+            vertical=True, margins=(14, 12, 14, 12), spacing=10)
+        keep_lay.addLayout(_panel_title(tr("Items you keep"), tr("never deleted")))
+        self._register_styled_panel(self._keep_panel)
+
+        self._keep_list_box = QWidget()
+        self._keep_list_box.setMinimumWidth(340)
+        self._keep_list_layout = QVBoxLayout(self._keep_list_box)
+        self._keep_list_layout.setContentsMargins(0, 0, 0, 0)
+        self._keep_list_layout.setSpacing(4)
+        keep_lay.addLayout(_setting_row(
+            tr("Kept paths"),
+            tr("Marked with Keep in Findings. Nothing inside these is ever "
+               "selected by a bulk action, and cleanup refuses them outright."),
+            self._keep_list_box,
+        ))
+        lay.addWidget(self._keep_panel)
+        self._refresh_kept_paths()
+
         # File Handling
         fh_panel = Panel(alt=True)
         fh_lay = fh_panel.with_layout(vertical=True, margins=(14, 12, 14, 12), spacing=10)
@@ -1026,7 +1057,7 @@ class SettingsScreen(QWidget):
         method_lbl.setMaximumWidth(360)
         fh_lay.addLayout(_setting_row(
             tr("Cleanup method"),
-            tr("Vigil never deletes permanently. Emptying the Recycle Bin is "
+            tr("Podbye never deletes permanently. Emptying the Recycle Bin is "
                "always your own, separate decision."),
             method_lbl,
         ))
@@ -1036,6 +1067,54 @@ class SettingsScreen(QWidget):
 
         scroll.setWidget(content)
         return scroll
+
+    def _refresh_kept_paths(self):
+        """Redraw the kept-path list from the store."""
+        from app.services import keep_list
+
+        layout = self._keep_list_layout
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+
+        paths = keep_list.kept_paths()
+        if not paths:
+            empty = QLabel(tr("Nothing yet — use Keep on any finding."))
+            empty.setObjectName("Dim")
+            empty.setStyleSheet("font-size: 11px;")
+            layout.addWidget(empty)
+            return
+
+        for path in paths:
+            row = QWidget()
+            row_l = QHBoxLayout(row)
+            row_l.setContentsMargins(0, 0, 0, 0)
+            row_l.setSpacing(8)
+            lbl = ElidedLabel(path, mode=Qt.ElideMiddle)
+            lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
+            lbl.setToolTip(path)
+            # An ElidedLabel carries the Ignored size policy so it never forces
+            # a panel wider. Next to a button that does state a width, the
+            # layout gave the button everything and collapsed the path to
+            # nothing: the row showed "Stop keeping" and no path at all.
+            lbl.setMinimumWidth(240)
+            row_l.addWidget(lbl, stretch=1)
+            btn = QPushButton(tr("Stop keeping"))
+            btn.setObjectName("Subtle")
+            btn.setStyleSheet("font-size: 10px; padding: 2px 8px;")
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(
+                lambda _checked=False, target=path: self._stop_keeping(target))
+            row_l.addWidget(btn)
+            layout.addWidget(row)
+
+    def _stop_keeping(self, path: str):
+        from app.services import keep_list
+        keep_list.unkeep(path)
+        self._refresh_kept_paths()
 
     def _build_about(self) -> QWidget:
         scroll = QScrollArea()
@@ -1054,7 +1133,7 @@ class SettingsScreen(QWidget):
         b_lay.addLayout(_panel_title(tr("Build"), tr("product")) )
         self._register_styled_panel(build_panel)
 
-        from app.version import __version__, BUILD
+        from app.version import __version__, BUILD, REPO_URL, RELEASES_URL
         for k, v in [
             (tr("Version"), __version__),
             (tr("Build"), BUILD),
@@ -1062,6 +1141,34 @@ class SettingsScreen(QWidget):
             val_lbl = QLabel(v)
             val_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 12px;")
             b_lay.addLayout(_setting_row(k, "", val_lbl))
+
+        b_lay.addWidget(_divider())
+
+        # Source and releases. Both are links handed to the system browser —
+        # Podbye itself never requests either. That is the whole reason there is
+        # no automatic update check: a program that promises it does not talk to
+        # the internet cannot quietly announce its version, IP and launch time
+        # on every start. The button says what it does so nobody assumes
+        # otherwise.
+        links = QWidget()
+        links_row = QHBoxLayout(links)
+        links_row.setContentsMargins(0, 0, 0, 0)
+        links_row.setSpacing(8)
+        for label, url in ((tr("Check for updates"), RELEASES_URL),
+                           (tr("View source"), REPO_URL)):
+            btn = QPushButton(label)
+            btn.setObjectName("Ghost")
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet(self._utility_btn_qss())
+            btn.setToolTip(url)
+            btn.clicked.connect(lambda _=False, u=url: self._open_external(u))
+            links_row.addWidget(btn)
+        links_row.addStretch()
+        b_lay.addLayout(_setting_row(
+            tr("Repository"),
+            tr("Opens in your browser. Podbye never contacts the internet "
+               "itself, so there is nothing to check from in here."),
+            links))
 
         lay.addWidget(build_panel)
 
@@ -1073,7 +1180,7 @@ class SettingsScreen(QWidget):
         # is not much better than no path at all.
         store_panel = Panel(alt=True)
         p_lay = store_panel.with_layout(vertical=True, margins=(14, 12, 14, 12), spacing=10)
-        p_lay.addLayout(_panel_title(tr("Storage"), tr("where Vigil keeps its data")))
+        p_lay.addLayout(_panel_title(tr("Storage"), tr("where Podbye keeps its data")))
         self._register_styled_panel(store_panel)
 
         from app.state.session_store import sessions_dir
@@ -1089,7 +1196,7 @@ class SettingsScreen(QWidget):
 
         p_lay.addLayout(self._storage_row(
             "config", tr("Settings"),
-            tr("Your preferences. Deleting it resets Vigil to defaults."),
+            tr("Your preferences. Deleting it resets Podbye to defaults."),
         ))
         p_lay.addWidget(_divider())
         p_lay.addLayout(self._storage_row(
@@ -1118,7 +1225,7 @@ class SettingsScreen(QWidget):
         br_lay.setContentsMargins(0, 0, 0, 0)
         br_lay.setSpacing(8)
 
-        # "Open logs folder" used to live here. Vigil configures logging to the
+        # "Open logs folder" used to live here. Podbye configures logging to the
         # console only, so the button created an empty directory and opened it —
         # a support action that could never produce anything to send.
         btn_reset = QPushButton(tr("Reset all settings"))
@@ -1164,6 +1271,8 @@ class SettingsScreen(QWidget):
         col.setSpacing(4)
 
         path_lbl = QLabel(path or tr("unavailable"))
+        if key == "config":
+            self._config_path_lbl = path_lbl
         path_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
         path_lbl.setWordWrap(True)
         path_lbl.setMaximumWidth(380)
@@ -1201,6 +1310,17 @@ class SettingsScreen(QWidget):
 
         return _setting_row(label, desc, holder)
 
+    def _open_external(self, url: str):
+        """Hand *url* to the system browser.
+
+        QDesktopServices, not urllib: this must not become a request Podbye
+        makes. Nothing here opens a socket, which is also why
+        test_offline_guarantee still passes with these buttons on screen.
+        """
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        QDesktopServices.openUrl(QUrl(url))
+
     def _reveal_path(self, path: str):
         """Show *path* in the system file manager.
 
@@ -1236,7 +1356,7 @@ class SettingsScreen(QWidget):
         lbl = self._storage_size_lbls.get("ai_cache")
         if lbl:
             lbl.setText(tr("cleared · {n} file(s) removed", n=removed))
-        QTimer.singleShot(600, self._refresh_storage_sizes)
+        QTimer.singleShot(600, self, self._refresh_storage_sizes)
 
     def _refresh_storage_sizes(self):
         """Measure the session store and AI cache off the UI thread.
@@ -1332,12 +1452,12 @@ class SettingsScreen(QWidget):
                     "review", hint)
         if status == oc.STATUS_NOT_RUNNING:
             return (tr("Ollama is installed but not running"), "review",
-                    tr("Start it and Vigil will connect on its own — "
+                    tr("Start it and Podbye will connect on its own — "
                        "nothing here needs to be filled in."))
         if status == oc.STATUS_NOT_INSTALLED:
             return (tr("no local AI runtime on this machine"), "risk",
                     tr("Install Ollama or LM Studio, then press Test. "
-                       "Vigil only ever talks to your own machine or LAN."))
+                       "Podbye only ever talks to your own machine or LAN."))
         if status == oc.STATUS_UNREACHABLE:
             return (tr("no answer from that address"), "risk",
                     tr("Check the machine is on, the runtime is running, and "
@@ -1345,7 +1465,7 @@ class SettingsScreen(QWidget):
                        "its own loopback."))
         if status == oc.STATUS_REFUSED:
             return (tr("refused · not a local address"), "risk",
-                    tr("Vigil only connects to this machine or your LAN, "
+                    tr("Podbye only connects to this machine or your LAN, "
                        "never to a cloud API."))
         return (tr("unknown state"), "risk", "")
 
@@ -1426,7 +1546,7 @@ class SettingsScreen(QWidget):
         self._btn_start_ollama.setEnabled(False)
         self._conn_status_lbl.setText(tr("starting Ollama…"))
         try:
-            # "ollama serve" is the daemon; detached so closing Vigil does not
+            # "ollama serve" is the daemon; detached so closing Podbye does not
             # take the model server down with it.
             subprocess.Popen(
                 [exe, "serve"],
@@ -1438,7 +1558,7 @@ class SettingsScreen(QWidget):
             self._conn_status_lbl.setText(tr("could not start Ollama"))
             return
         # It needs a moment to bind the port; re-test without blocking the UI.
-        QTimer.singleShot(1500, self._retest_after_start)
+        QTimer.singleShot(1500, self, self._retest_after_start)
 
     def _retest_after_start(self):
         self._btn_start_ollama.setEnabled(True)
@@ -1536,7 +1656,7 @@ class SettingsScreen(QWidget):
     def _show_no_models(self):
         """Empty the model list, keeping only a model the user really chose.
 
-        Vigil used to fill this with a placeholder catalogue — "llama3.2:3b",
+        Podbye used to fill this with a placeholder catalogue — "llama3.2:3b",
         "qwen2.5:7b", "mistral", "gemma2:2b" — whenever the server was offline.
         They looked exactly like real entries, so picking one was the obvious
         move, and every explanation then failed because that model had never

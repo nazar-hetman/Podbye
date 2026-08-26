@@ -1,7 +1,7 @@
-"""Generate a multi-resolution Windows .ico for the packaged Vigil exe.
+"""Generate a multi-resolution Windows .ico for the packaged Podbye exe.
 
 Renders the theme-accent cube logo (app/assets/logo.svg) at several sizes and
-writes app/assets/vigil.ico. Run with the venv Python before PyInstaller.
+writes app/assets/podbye.ico. Run with the venv Python before PyInstaller.
 """
 import os
 import sys
@@ -14,7 +14,7 @@ from app.widgets.logo import logo_pixmap
 
 ICON_COLOR = "#E8B339"  # amber accent — matches the default theme mark
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                   "app", "assets", "vigil.ico")
+                   "app", "assets", "podbye.ico")
 
 
 def main() -> None:

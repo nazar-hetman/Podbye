@@ -46,7 +46,10 @@ def test_size_is_exact_above_the_sample_cap():
 
     entities = _detect(findings)
     assert sum(e.size_bytes for e in entities) == n * MB
-    big = next(e for e in entities if e.name == "BigApp")
+    # By path, not by name: the display name carries a content descriptor
+    # ("BigApp · mostly unrecognized file types") and this test is about the
+    # numbers, which the descriptor has nothing to do with.
+    big = next(e for e in entities if e.path == "C:/T/BigApp")
     assert big.size_bytes == n * MB
     assert big.file_count == n
 

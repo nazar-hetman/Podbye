@@ -6,12 +6,12 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks — this is the most useful kind of report Vigil gets. Nearly every
+        Thanks — this is the most useful kind of report Podbye gets. Nearly every
         classification rule in it exists because someone hit a folder shape it
         had never seen.
 
         You do not need to know why it went wrong. What the folder *is* and
-        what Vigil *called it* is enough.
+        what Podbye *called it* is enough.
 
   - type: input
     id: path
@@ -28,7 +28,7 @@ body:
   - type: input
     id: got
     attributes:
-      label: What Vigil called it
+      label: What Podbye called it
       description: The category and risk shown on the row, e.g. "Documents · Review".
       placeholder: Documents · Review
     validations:
@@ -68,9 +68,9 @@ body:
   - type: input
     id: version
     attributes:
-      label: Vigil version
+      label: Podbye version
       description: Shown under the wordmark in the sidebar.
-      placeholder: v1.0.0-beta.3
+      placeholder: v1.0.0-beta.4
     validations:
       required: true
 

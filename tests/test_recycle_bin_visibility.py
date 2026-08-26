@@ -1,6 +1,6 @@
 """Cleaning does not free disk space until the bin is emptied — say so.
 
-Vigil never deletes permanently: every cleanup is a *move* to the Recycle Bin,
+Podbye never deletes permanently: every cleanup is a *move* to the Recycle Bin,
 so nothing it does is irreversible. But a move on the same volume is a rename,
 and not one byte comes back until the bin is emptied. Nobody was told that. On
 one real machine the bin held 16.7 GB across 795 items while the user kept
@@ -22,7 +22,7 @@ def test_status_returns_two_non_negative_numbers():
 
 
 def test_a_failed_query_reports_empty_not_a_windfall():
-    """A number Vigil could not read must never be shown as space to reclaim."""
+    """A number Podbye could not read must never be shown as space to reclaim."""
     import app.services.recycle_bin as rb
 
     class _Boom:

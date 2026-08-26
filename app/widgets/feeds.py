@@ -1,4 +1,4 @@
-"""Operator feed / log widget for Vigil."""
+"""Operator feed / log widget for Podbye."""
 from __future__ import annotations
 
 from PySide6.QtWidgets import QFrame, QVBoxLayout, QLabel, QPlainTextEdit

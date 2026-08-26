@@ -146,7 +146,7 @@ def is_loopback_endpoint(endpoint: str) -> bool:
     """True when *endpoint* points at this machine rather than the network.
 
     Narrower than is_local_endpoint, which also accepts LAN addresses. Advice
-    about starting a runtime only applies to the machine Vigil runs on.
+    about starting a runtime only applies to the machine Podbye runs on.
     """
     try:
         host = (urlparse(endpoint).hostname or "").strip("[]").lower()

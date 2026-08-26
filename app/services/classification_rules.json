@@ -643,5 +643,30 @@
     "mysql": "database",
     "mongodb": "database",
     "redis": "database"
+  },
+  "component_rules": {
+    "steamapps/common": "Installed games",
+    "steamapps/workshop": "Workshop content",
+    "steamapps/downloading": "Downloads in progress",
+    "steamapps/shadercache": "Shader cache",
+    "steamapps/temp": "Temporary files",
+    "steamapps/sourcemods": "Source mods",
+    "userdata/config": "Cloud saves & settings",
+    "config/htmlcache": "Browser cache",
+    "common/media cache files": "Media cache",
+    "common/media cache": "Media cache",
+    "common/peak files": "Audio peak files",
+    "common/team projects cache": "Team Projects cache",
+    "pkgs/cache": "Package download cache",
+    "lib/site-packages": "Installed packages",
+    "envs/.pkgs": "Environment packages",
+    "node_modules/.cache": "Build cache",
+    "saved/logs": "Logs",
+    "saved/crashes": "Crash reports",
+    "library/artifacts": "Imported assets",
+    "intermediate/build": "Build intermediates",
+    ".git/objects": "Version history",
+    "target/debug": "Debug build output",
+    "target/release": "Release build output"
   }
 }

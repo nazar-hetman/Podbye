@@ -172,8 +172,8 @@ def test_a_reopened_entity_keeps_the_fields_restore_used_to_drop(
     assert state._entities[0].to_dict()[key] == expected
 
 
-def test_a_reopened_entity_still_knows_it_is_vigils_own_data(sessions_dir):
-    """is_self is what keeps Vigil's own folder out of a cleanup selection."""
+def test_a_reopened_entity_still_knows_it_is_podbyes_own_data(sessions_dir):
+    """is_self is what keeps Podbye's own folder out of a cleanup selection."""
     state = _reopen(_snapshot(entities=[_entity(is_self=True)]))
     assert state._entities[0].is_self is True
 

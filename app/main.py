@@ -1,4 +1,4 @@
-"""Vigil — Main application entry point."""
+"""Podbye — Main application entry point."""
 
 import sys
 import os
@@ -10,10 +10,10 @@ import logging
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # ─── Logging ───
-# Quiet by default; set the VIGIL_DEBUG environment variable to 1 to surface
+# Quiet by default; set the PODBYE_DEBUG environment variable to 1 to surface
 # internal lifecycle/thread breadcrumbs on the console.
 logging.basicConfig(
-    level=logging.DEBUG if os.environ.get("VIGIL_DEBUG") else logging.WARNING,
+    level=logging.DEBUG if os.environ.get("PODBYE_DEBUG") else logging.WARNING,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 
@@ -32,7 +32,7 @@ from app.fonts import load_fonts, FONT_UI
 from app.widgets.sidebar import Sidebar
 from app.widgets.topbar import Topbar
 from app.widgets.logo import logo_icon
-from app.widgets.tray import VigilTray
+from app.widgets.tray import PodbyeTray
 from app.widgets.close_dialog import (
     CloseRunningDialog, OUTCOME_QUIT, OUTCOME_BACKGROUND,
 )
@@ -47,6 +47,7 @@ from app.screens.history import HistoryScreen
 from app.screens.settings import SettingsScreen
 from app.state.scan_state import ScanState
 from app.config.settings_store import SettingsStore
+from app.services import keep_list
 from app.services.ai_explainer import AIExplainer
 from app.i18n import init_language, tr
 
@@ -63,17 +64,17 @@ def _screen_subtitles() -> dict:
     }
 
 
-class VigilWindow(QMainWindow):
+class PodbyeWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("VIGIL")
+        self.setWindowTitle("PODBYE")
         self.setMinimumSize(1100, 700)
         self.resize(1440, 900)
         self._current_theme = "forest"
         self._current_screen_name = "Home"
         # Background / tray state.
-        self._tray: VigilTray | None = None
+        self._tray: PodbyeTray | None = None
         self._force_quit = False        # set by the tray "Quit" action
         self._in_background = False     # window hidden, work continuing in tray
         self._tray_intro_shown = False  # one-time "still running" balloon
@@ -81,6 +82,9 @@ class VigilWindow(QMainWindow):
         self._pending_lang = None       # deferred UI language (set mid-analysis)
         self._settings_store = SettingsStore()
         init_language(self._settings_store)
+        # Every layer reads the user's Keep list through this one store, so a
+        # mark made on Findings is in force for a cleanup started anywhere.
+        keep_list.set_store(self._settings_store)
         self._sweep_session_leftovers()
         self._scan_state = ScanState(self)
         self._scan_state.set_settings_store(self._settings_store)
@@ -95,7 +99,7 @@ class VigilWindow(QMainWindow):
     def _sweep_session_leftovers(self):
         """Reclaim crash leftovers in the sessions folder, once per launch.
 
-        Vigil protects its own data folder from cleanup, so nothing else will
+        Podbye protects its own data folder from cleanup, so nothing else will
         ever reclaim these. Unlinking is O(1) whatever the file size, and only
         files older than an hour are touched, so this is safe on the UI thread.
         """
@@ -274,11 +278,20 @@ class VigilWindow(QMainWindow):
 
     def _apply_theme(self, theme_key: str):
         self._current_theme = theme_key
-        # setStyleSheet re-polishes every live widget — ~1s with all screens
-        # built — and it blocks the UI thread. A wait cursor was tried here to
-        # show it was working; it did the opposite, reading as a freeze about
-        # to crash. The honest fix is to make it fast (build screens lazily),
-        # not to decorate the stall.
+        # setStyleSheet re-polishes every live widget and blocks the UI thread.
+        # A wait cursor was tried here to show it was working; it did the
+        # opposite, reading as a freeze about to crash. The honest fix is to
+        # make it fast (build screens lazily), not to decorate the stall.
+        #
+        # Measured 2026-08-20 against a restored 1,258-entity session, so the
+        # "~1s" this used to claim is optimistic: it is 1.3 s on a freshly
+        # built Findings screen and 3.2-3.6 s once every category has been
+        # opened. The cost tracks the widget count (325 at startup, 3,535 after
+        # browsing all 17 categories — the entity row pool keeps its
+        # high-water mark), and it is almost entirely Qt's own re-polish:
+        # profiling puts our Python at a few tens of milliseconds of it, so
+        # there is nothing to shave in changeEvent handlers. Fewer live widgets
+        # is the only lever.
         app = QApplication.instance()
         qss = build_qss(theme_key)
         app.setStyleSheet(qss)
@@ -326,7 +339,7 @@ class VigilWindow(QMainWindow):
         box.setIcon(QMessageBox.Icon.Information)
         box.setWindowTitle(tr("Language change pending"))
         box.setText(
-            tr("Vigil is busy: {reason}. The language will change "
+            tr("Podbye is busy: {reason}. The language will change "
                "automatically once that finishes or you stop it.",
                reason=reason or tr("an analysis is running"))
         )
@@ -358,7 +371,7 @@ class VigilWindow(QMainWindow):
         self._stop_pending_language_poll()
         lang = self._pending_lang
         self._pending_lang = None
-        QTimer.singleShot(0, lambda: self._apply_language_change(lang))
+        QTimer.singleShot(0, self, lambda: self._apply_language_change(lang))
 
     def _start_pending_language_poll(self):
         timer = getattr(self, "_lang_poll_timer", None)
@@ -420,8 +433,8 @@ class VigilWindow(QMainWindow):
         if not self._is_busy() and not self._bg_done_notified:
             self._bg_done_notified = True
             self._tray.notify(
-                tr("Vigil finished"),
-                tr("The task is done. Open Vigil to review, or quit from here."),
+                tr("Podbye finished"),
+                tr("The task is done. Open Podbye to review, or quit from here."),
             )
 
     def _on_resume_requested(self, session_data: dict):
@@ -436,7 +449,7 @@ class VigilWindow(QMainWindow):
         self._navigate("Analyze")
         analyze = self._screens.get("Analyze")
         if analyze and hasattr(analyze, "prepare_new_scan"):
-            QTimer.singleShot(0, analyze.prepare_new_scan)
+            QTimer.singleShot(0, analyze, analyze.prepare_new_scan)
 
     def _on_stop_from_home(self):
         """Stop active scan from the Home screen."""
@@ -444,8 +457,48 @@ class VigilWindow(QMainWindow):
         if analyze and self._scan_state.is_running:
             analyze._stop_scan()
 
+    def _confirm_interrupting_running_work(self) -> bool:
+        """Ask before an action that would displace work already in progress.
+
+        Both History actions reach past the running scan and take its state
+        away from it. Opening a session calls restore_from_session() on the very
+        ScanState the scan is writing into — the running results are gone, and
+        the restored ones are then overwritten by whatever the worker emits
+        next. Neither outcome is one the user asked for, and nothing said a word
+        about it.
+
+        Returns True when the caller may proceed; the running work has been
+        stopped by then, so it is not still writing underneath.
+        """
+        if not self._is_busy():
+            return True
+        from PySide6.QtWidgets import QMessageBox
+        answer = QMessageBox.question(
+            self,
+            tr("Something is still running"),
+            tr("{activity} is still running. Continuing will stop it and "
+               "discard the results it has collected so far.\n\n"
+               "Continue?", activity=self._activity_label()),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return False
+        # Stop before displacing anything, so no worker is still writing into
+        # the state that is about to be replaced.
+        for screen in self._screens.values():
+            stop = getattr(screen, "stop_background_work", None)
+            if callable(stop):
+                try:
+                    stop(3000)
+                except Exception:
+                    pass
+        return True
+
     def _on_rerun_from_history(self, target: str):
         """Navigate to Analyze and prefill the target from a history entry."""
+        if not self._confirm_interrupting_running_work():
+            return
         self._navigate("Analyze")
         analyze = self._screens.get("Analyze")
         if analyze and target and hasattr(analyze, "set_target"):
@@ -453,11 +506,13 @@ class VigilWindow(QMainWindow):
 
     def _on_open_findings_requested(self, session_data: dict):
         """Open Findings with restored session data — no re-analysis."""
+        if not self._confirm_interrupting_running_work():
+            return
         if self._scan_state:
             # Set restore mode so AI cache shows appropriate messages
             self._scan_state._run_mode = "restore"
             self._scan_state.restore_from_session(session_data)
-        
+
         # Navigate to Findings
         self._navigate("Findings")
 
@@ -485,14 +540,14 @@ class VigilWindow(QMainWindow):
             return tr("A scan")
         return tr("A task")
 
-    def _ensure_tray(self) -> "VigilTray | None":
+    def _ensure_tray(self) -> "PodbyeTray | None":
         """Create the tray icon on first use; return None if unavailable."""
         if self._tray is not None:
             return self._tray
-        if not VigilTray.is_available():
+        if not PodbyeTray.is_available():
             return None
         icon = logo_icon(get_palette(self._current_theme)["accent"])
-        self._tray = VigilTray(icon, parent=self)
+        self._tray = PodbyeTray(icon, parent=self)
         self._tray.show_requested.connect(self._restore_from_tray)
         self._tray.quit_requested.connect(self._quit_from_tray)
         return self._tray
@@ -513,7 +568,7 @@ class VigilWindow(QMainWindow):
         if not self._tray_intro_shown:
             self._tray_intro_shown = True
             tray.notify(
-                tr("Vigil is still running"),
+                tr("Podbye is still running"),
                 tr("Your task continues in the background. "
                    "Right-click the tray icon to quit."),
             )
@@ -656,6 +711,17 @@ class VigilWindow(QMainWindow):
 
 
 def main():
+    # Before anything reads a setting: an install that predates the rename
+    # keeps everything under %APPDATA%\Vigil, and starting against an empty
+    # Podbye directory would look exactly like losing every saved session and
+    # every Keep mark. Idempotent, and never fatal — see legacy_migration.
+    try:
+        from app.config.legacy_migration import migrate
+        migrate(log_fn=logging.getLogger("podbye.migrate").info)
+    except Exception:
+        logging.getLogger("podbye.migrate").exception(
+            "could not carry Vigil-era data over")
+
     # High-DPI attribute (Qt 5 compat, harmless on Qt 6)
     try:
         QApplication.setHighDpiScaleFactorRoundingPolicy(
@@ -670,7 +736,7 @@ def main():
         try:
             import ctypes
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                "Vigil.App"
+                "Podbye.App"
             )
         except Exception:
             pass
@@ -688,7 +754,7 @@ def main():
     font.setHintingPreference(QFont.PreferFullHinting)
     app.setFont(font)
 
-    window = VigilWindow()
+    window = PodbyeWindow()
     window.show()
 
     sys.exit(app.exec())

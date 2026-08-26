@@ -25,9 +25,10 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox,
     QLineEdit, QTextEdit, QFrame, QMessageBox,
     QScrollArea, QGridLayout, QAbstractItemView, QHeaderView,
-    QSizePolicy, QStackedWidget, QTabWidget, QTreeWidget, QTreeWidgetItem
+    QSizePolicy, QSplitter, QStackedWidget, QTabWidget, QTreeWidget,
+    QTreeWidgetItem
 )
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPainter, QPen
 
 from app.widgets.pills import Badge
@@ -41,37 +42,23 @@ from app.models.risk import (
     RISK_ORDER, normalize_risk, risk_fg as _risk_fg, risk_variant as _risk_variant,  # noqa: E501
 )
 from app.models.smart_entity import actionability_for_type
-from app.models.entity_grouping import group_entities, group_label, owner_key
+from app.models.entity_grouping import (group_entities, group_label,
+                                        group_locations, location_label,
+                                        owner_key)
 from app.models.reasons import translate_reason
+from app.services.keep_list import (is_kept, kept_root_for, keep as keep_path,
+                                    unkeep as unkeep_path, can_keep,
+                                    display_name as keep_display_name)
 from app.models.path_tree import PathNode, build_tree, collapse_single_child_chains
 from app.widgets.tables import install_header_fit
 from app.i18n import tr
 from app.widgets.panels import apply_tactical_label
-from app.widgets.controls import ElidedLabel, TacticalCheckBox, TacticalComboBox
+from app.widgets.controls import (
+    ElidedLabel, TacticalCheckBox, TacticalComboBox, ask_ai_button_qss,
+)
 
 
 # ── Performance Constants ───────────────────────────────────────────
-
-def _ask_ai_button_qss() -> str:
-    """Accent-tinted style so an 'Ask AI' button reads clearly as an action,
-    not as a run of plain text. Themed via the live palette, with a filled
-    hover state."""
-    p = get_palette()
-    accent = p.get("accent", "#7cc596")
-    soft = p.get("accent_soft", "#1b2e22")
-    bg = p.get("panel", "#141d18")
-    faint = p.get("text_faint", "#57685e")
-    border = p.get("border", "#213028")
-    return (
-        f"QPushButton {{ background: {soft}; color: {accent}; "
-        f"border: 1px solid {accent}; border-radius: 3px; "
-        f"padding: 3px 12px; font-size: 11px; font-weight: 600; }}"
-        f"QPushButton:hover {{ background: {accent}; color: {bg}; }}"
-        f"QPushButton:pressed {{ background: {accent}; color: {bg}; }}"
-        f"QPushButton:disabled {{ background: transparent; color: {faint}; "
-        f"border-color: {border}; }}"
-    )
-
 
 # Maximum number of blocks to render (prevent UI freeze with many categories)
 MAX_BLOCKS = 20
@@ -511,9 +498,136 @@ def _entity_file_group_size(entity: dict) -> int:
     return len([p for p in (entity.get("removable_file_paths") or []) if p])
 
 
+def _group_contains_text(entity: dict) -> str:
+    """Subtitle for a group header — the general line, not a per-folder one.
+
+    "33,258 files · 12 items in this app" says how much without ever saying
+    what or where, so the header read as a lid on the list rather than a
+    summary of it. The locations are the group's own claim in a form the user
+    can check at a glance.
+    """
+    parts = []
+    count = int(entity.get("file_count", 0) or 0)
+    if count:
+        parts.append(tr("{n:,} files", n=count))
+    label = entity.get("entity_type_label") or ""
+    if label:
+        parts.append(label)
+    locations = entity.get("group_locations") or []
+    if locations:
+        parts.append(tr("in {places}", places=", ".join(tr(l) for l in locations)))
+    return " · ".join(parts) if parts else tr("Contents not summarized")
+
+
+def _group_members_text(entity: dict) -> str:
+    """One line per member: what it is called, how big it is, where it lives."""
+    lines = []
+    for member in (entity.get("group_members") or []):
+        name = member.get("name", "")
+        where = _location_of(member.get("path", ""))
+        # Some member names already carry the location as a disambiguation
+        # hint. "Microsoft (Roaming)  (Roaming)" says it twice. Matched as the
+        # trailing hint and not as a word: "Microsoft SQL Server Local DB"
+        # contains "Local" and still needs to be told where it lives.
+        if where and name.lower().endswith(f"({where.lower()})"):
+            where = ""
+        size = member.get("size") or _format_size(member.get("size_bytes", 0))
+        lines.append(f"{size:>10}  {name}" + (f"  ({where})" if where else ""))
+    return "\n".join(lines)
+
+
+_APPDATA_LOCATIONS = ("Roaming", "Local", "LocalLow")
+
+
+def _appdata_location(path: str) -> str:
+    """"Roaming" / "Local" / "LocalLow" for a path under AppData, else ""."""
+    label = location_label(path)
+    return label if label in _APPDATA_LOCATIONS else ""
+
+
+def _location_of(path: str) -> str:
+    """The Windows location a path sits in, translated, or ""."""
+    label = location_label(path)
+    return tr(label) if label else ""
+
+
+def _entity_is_single_file(entity: dict) -> bool:
+    """True when this row stands for exactly one file, not a folder."""
+    paths = [p for p in (entity.get("removable_file_paths") or []) if p]
+    if len(paths) != 1:
+        return False
+    return _norm_path(paths[0]) == _norm_path(entity.get("path", ""))
+
+
+def _file_type_breakdown(paths: list, limit: int = 3) -> str:
+    """"11 CSV · 3 PDF · 2 XLSX" for a list of file paths.
+
+    A loose bucket's subtitle used to be its type label — "Loose documents in
+    Downloads · 16 files · Documents Folder" — which repeats the row's own
+    name, calls a list of files a folder, and still does not say what is in
+    it. The user's report was blunt: it does not show what is proposed to
+    delete. The extensions do, in the width a row has.
+    """
+    from app.models.file_grouping import extension_of, kind_of
+    counts: dict[str, int] = {}
+    for path in paths:
+        ext = extension_of(path)
+        label = ext[1:].upper() if ext else kind_of(path)
+        counts[label] = counts.get(label, 0) + 1
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    shown = [tr("{n} {kind}", n=n, kind=label) for label, n in ranked[:limit]]
+    rest = len(ranked) - limit
+    if rest > 0:
+        shown.append(tr("+{n} more kinds", n=rest))
+    return " · ".join(shown)
+
+
+def _entity_scale_text(entity: dict) -> str:
+    """"160.1 GB · 40,349 files · 4,344 folders · updated Aug 22".
+
+    "Last active" is only shown when it is a fact. NTFS last-access updates
+    are off by default on Windows — measured on the reporting machine,
+    ``fsutil`` reports DisableLastAccess=1 and 82% of entities have an access
+    time within a day of their modification time, median gap 0.0 days. Printing
+    it regardless dresses the modification date up as something it is not.
+    """
+    bits = [entity.get("size", "") or _format_size(entity.get("size_bytes", 0))]
+    files = int(entity.get("file_count", 0) or 0)
+    folders = int(entity.get("folder_count", 0) or 0)
+    # "412 MB · 1 files" on a row that *is* one file counts the thing the
+    # reader is already looking at, and gets the plural wrong doing it.
+    if files and not _entity_is_single_file(entity):
+        bits.append(tr("{n:,} files", n=files))
+    if folders:
+        bits.append(tr("{n:,} folders", n=folders))
+
+    modified = entity.get("first_seen", "")
+    accessed = entity.get("last_access", "")
+    try:
+        gap_days = (float(entity.get("accessed", 0) or 0)
+                    - float(entity.get("modified", 0) or 0)) / 86400.0
+    except (TypeError, ValueError):
+        gap_days = 0.0
+    if accessed and accessed != "—" and gap_days > 7:
+        bits.append(tr("last active {when}", when=accessed))
+    elif modified and modified != "—":
+        bits.append(tr("updated {when}", when=modified))
+    return " · ".join(b for b in bits if b)
+
+
 def _entity_contains_text(entity: dict) -> str:
+    if entity.get("is_group"):
+        return _group_contains_text(entity)
     if entity.get("entity_type") == "duplicate_group":
         return _duplicate_subtitle(entity)
+    # One file is not "1 files · Mixed Content Folder". Say what kind of file
+    # it is and where it sits, because for a single-file row the folder is the
+    # only thing the name does not already tell you.
+    if _entity_is_single_file(entity):
+        from app.models.file_grouping import kind_of
+        where = os.path.dirname(entity.get("path", "")) or entity.get("path", "")
+        return tr("{kind} · in {folder}", kind=kind_of(entity.get("path", "")),
+                  folder=where)
     file_count = entity.get("file_count", 0)
     folder_count = entity.get("folder_count", 0)
     parts = []
@@ -521,6 +635,18 @@ def _entity_contains_text(entity: dict) -> str:
         parts.append(tr("{n:,} files", n=file_count))
     if folder_count:
         parts.append(tr("{n:,} folders", n=folder_count))
+    # Say so when the row stands for a list rather than a folder. Without this
+    # "Loose archives in Downloads" looks like one indivisible thing, and the
+    # per-file view — which is what a group row is for — goes unnoticed. The
+    # kinds take the type label's place here: on a list of files the label
+    # says "Documents Folder", which is neither.
+    files = [p for p in (entity.get("removable_file_paths") or []) if p]
+    if len(files) >= 2:
+        breakdown = _file_type_breakdown(files)
+        if breakdown:
+            parts.append(breakdown)
+        parts.append(tr("choose individual files"))
+        return " · ".join(parts)
     # entity_type_label comes from the ENTITY_TYPES table, whose values are
     # translated — but only if someone calls tr() on them. This is the row
     # subtitle under every finding, so it was the most-repeated piece of
@@ -528,11 +654,14 @@ def _entity_contains_text(entity: dict) -> str:
     label = entity.get("entity_type_label") or entity.get("semantic_label") or ""
     if label:
         parts.append(tr(label))
-    # Say so when the row stands for a list rather than a folder. Without this
-    # "Loose archives in Downloads" looks like one indivisible thing, and the
-    # per-file view — which is what a group row is for — goes unnoticed.
-    if _entity_file_group_size(entity) >= 2:
-        parts.append(tr("choose individual files"))
+    # Roaming or Local? For app data that is the whole question, and the row
+    # never answered it: the path is not on the row, and the "(Local)" hint is
+    # only added when two rows happen to collide by name. Named here for the
+    # three AppData containers only — "in Program Files" on 124 application
+    # rows would be noise, not information.
+    where = _appdata_location(entity.get("path", ""))
+    if where:
+        parts.append(tr("in {places}", places=tr(where)))
     return " · ".join(parts) if parts else tr("Contents not summarized")
 
 
@@ -551,6 +680,7 @@ def _entity_context_text(entity: dict) -> str:
         "browser_profile": "Browser profile data",
         "database": "App or user database",
         "dev_project": "Development project",
+        "dev_workspace": "Folder holding several projects",
         "dev_artifacts": "Generated development files",
         "cache_folder": "Temporary or cache data",
         "temp_folder": "Temporary files",
@@ -578,14 +708,76 @@ _APP_SMART_ACTION_TYPES = frozenset({
 
 
 def _entity_actionability(entity: dict) -> str:
-    """recycle | uninstall | review_only | protected for a finding dict.
+    """kept | protected | uninstall | review_only | recycle for a finding dict.
 
     Reads the value baked in by SmartEntity.to_dict, falling back to deriving
     it from the entity type so findings restored from older saved sessions
     (which predate the field) are still gated correctly.
+
+    "kept" outranks everything and is *not* baked in: the user can mark a path
+    Keep long after the scan that produced this dict, and can unmark it just as
+    easily, so it is read live from the keep list on every call.
     """
+    if is_kept(entity.get("path", "")):
+        return "kept"
     return entity.get("actionability") or actionability_for_type(
         entity.get("entity_type", ""), normalize_risk(entity.get("risk", "Review"))
+    )
+
+
+def _part_reason_text(entity: dict) -> str:
+    """The one line under a part's name: why it is what it is.
+
+    A checkbox next to a name is not enough to decide on. The row carries the
+    same evidence the inspector opens with, so arming something never requires
+    a second click to find out what it is.
+    """
+    if is_kept(entity.get("path", "")):
+        root = kept_root_for(entity.get("path", ""))
+        leaf = keep_display_name(root)
+        return (tr("You are keeping {name} — nothing inside it is offered",
+                   name=leaf) if leaf else tr("You are keeping this"))
+    reason = translate_reason(entity) or ""
+    contains = _entity_contains_text(entity)
+    if reason and contains:
+        return f"{contains} · {reason}"
+    return reason or contains
+
+
+def _finding_for_path(path: str):
+    """Build a Finding for *path* from disk, or None if it is not there.
+
+    "Ask AI" on a file used to look the path up in the scan's findings list and
+    give up when it was missing — which is *every* file on a reopened session,
+    because a large scan deliberately does not persist its 1.8M raw findings.
+    Measured on a real 1,258-entity session: 79 of 79 buckets answered "This
+    file is not part of the current scan results". The Files tab also lists
+    files from a live folder listing, which were never findings in the first
+    place.
+
+    Nothing here needs the scan: the file is on disk, and its path, size and
+    dates are the whole input to the prompt. A live object from the model is
+    still preferred when there is one, so the answer lands on the instance the
+    rest of the UI reads from.
+    """
+    if not path:
+        return None
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    from app.models.finding import Finding, categorize
+    name = os.path.basename(path) or path
+    ext = os.path.splitext(name)[1].lower()
+    is_dir = os.path.isdir(path)
+    category, source_rule, semantic_label, confidence = categorize(
+        path, name, ext, is_dir, st.st_size)
+    return Finding(
+        path=path, name=name, is_dir=is_dir, size_bytes=st.st_size,
+        extension=ext, modified=st.st_mtime, accessed=st.st_atime,
+        parent=os.path.dirname(path), category=category,
+        source_rule=source_rule, semantic_label=semantic_label,
+        owner_confidence=confidence,
     )
 
 
@@ -617,6 +809,12 @@ def _container_explanation(entity: dict) -> str:
             f"things you still want. Open it to see what's inside, or clean only "
             f"specific items — duplicates and very old large files are the safe wins."
         )
+    if entity_type == "dev_workspace":
+        return (
+            f"{name} is where several separate projects live ({scale}). It is not "
+            f"one thing to delete — open the projects inside and decide about "
+            f"each of them, or reclaim their generated parts under Dev Artifacts."
+        )
     if entity_type == "dev_project":
         return (
             f"{name} looks like a source/project folder ({scale}). The source is "
@@ -625,7 +823,7 @@ def _container_explanation(entity: dict) -> str:
         )
     label = (category or "personal").lower()
     return (
-        f"{name} is a personal {label} location with {scale}. Vigil keeps personal "
+        f"{name} is a personal {label} location with {scale}. Podbye keeps personal "
         f"data intact, so it won't bulk-delete this folder. Open it to review, or "
         f"target only reclaimable items inside — duplicates or files untouched for years."
     )
@@ -671,7 +869,7 @@ def _has_uninstaller(entity: dict) -> bool:
 
     Not merely "the registry mentions one": 19 of 475 uninstall commands on a
     real machine pointed at an executable that no longer existed, so the
-    button promised something Vigil could never deliver.
+    button promised something Podbye could never deliver.
     """
     from app.services.uninstaller import uninstaller_is_runnable
     return uninstaller_is_runnable(entity.get("uninstall_string") or "")
@@ -680,6 +878,59 @@ def _has_uninstaller(entity: dict) -> bool:
 def _finding_rgba(hex_color: str, alpha: int) -> str:
     color = QColor(hex_color)
     return f"rgba({color.red()}, {color.green()}, {color.blue()}, {alpha})"
+
+
+# What Podbye recommends *doing*, per actionability. Deliberately free of any
+# hedging: the uncertainty belongs to the detection, and is shown there.
+_REMOVAL_METHODS = {
+    "uninstall": "Use the application's own uninstaller",
+    "recycle": "Move to the Recycle Bin",
+    "review_only": "Review the contents before removing anything",
+    "protected": "Podbye will not remove this",
+    "kept": "You are keeping this",
+}
+
+
+def _detected_as_text(entity: dict) -> str:
+    """What Podbye believes this is — the type, in the user's language.
+
+    A single loose file says what kind of file it is rather than which bucket
+    it came out of: a promoted .docx is a document, not a "Documents Folder".
+    """
+    if _entity_is_single_file(entity):
+        from app.models.file_grouping import kind_of
+        return tr(kind_of(entity.get("path", "")))
+    label = (entity.get("entity_type_label") or entity.get("semantic_label")
+             or entity.get("entity_type") or "")
+    return tr(label) if label else tr("Unclassified")
+
+
+def _detection_confidence_text(entity: dict) -> str:
+    """Verified / Strong / Likely / Uncertain — the existing grading.
+
+    SmartEntity.confidence_label already buckets confidence_score; this is the
+    first place it reaches the screen on its own rather than being folded into
+    a recommendation sentence.
+    """
+    label = (entity.get("confidence_label") or "").strip()
+    return tr(label).upper() if label else ""
+
+
+def _removal_method_text(entity: dict) -> str:
+    """How Podbye recommends removing it.
+
+    Actionability decides the method, with one exception: when the detection
+    behind it is graded Uncertain, an instruction like "move to the Recycle
+    Bin" asserts a confidence the classifier does not have. The button stays
+    — the user may know perfectly well what the folder is — but the sentence
+    stops pretending Podbye does.
+    """
+    action = _entity_actionability(entity)
+    if (action in ("recycle", "uninstall")
+            and (entity.get("confidence_label") or "").lower() == "uncertain"):
+        return tr("Check what this is before removing it")
+    method = _REMOVAL_METHODS.get(action)
+    return tr(method) if method else tr("Review before removing")
 
 
 def _finding_recommendation(entity: dict) -> tuple[str, str, str, str]:
@@ -700,11 +951,11 @@ def _finding_recommendation(entity: dict) -> tuple[str, str, str, str]:
             tr("THAT'S ME"),
             # No trailing smiley: U+1F642 has no glyph in the bundled fonts or
             # in Segoe UI Symbol, so it drew as a .notdef box mid-sentence.
-            tr("Recommendation: this is Vigil — the app doing the cleaning. You can "
+            tr("Recommendation: this is Podbye — the app doing the cleaning. You can "
                "remove it whenever you like, but it would be good to let it finish "
                "the job first."),
-            tr("Vigil's own files: the app, your settings, and the scan history "
-               "this screen is showing. Vigil will not clean itself up."),
+            tr("Podbye's own files: the app, your settings, and the scan history "
+               "this screen is showing. Podbye will not clean itself up."),
             accent_info,
         )
     if risk == "Protected":
@@ -724,7 +975,7 @@ def _finding_recommendation(entity: dict) -> tuple[str, str, str, str]:
     if not is_duplicate and not is_app and _is_content_container(entity):
         return (
             tr("REVIEW INSIDE"),
-            tr("Recommendation: Vigil won't delete this whole folder — it holds personal or mixed content. Open it to review, or reclaim space from specific items inside (duplicates, very old large files)."),
+            tr("Recommendation: Podbye won't delete this whole folder — it holds personal or mixed content. Open it to review, or reclaim space from specific items inside (duplicates, very old large files)."),
             translate_reason(entity) or tr("Personal or mixed content — deleting everything here is rarely what you want."),
             accent_review,
         )
@@ -759,7 +1010,7 @@ def _finding_recommendation(entity: dict) -> tuple[str, str, str, str]:
     return (
         tr("NEEDS REVIEW"),
         tr("Recommendation: inspect the path, owner, and AI reasoning before cleanup."),
-        translate_reason(entity) or tr("Vigil does not have enough confidence to mark this as safe."),
+        translate_reason(entity) or tr("Podbye does not have enough confidence to mark this as safe."),
         accent_review,
     )
 
@@ -1255,7 +1506,7 @@ class StorageOverviewWidget(QFrame):
         self._btn_by_folder.setStyleSheet("font-size: 11px; padding: 6px 12px;")
         self._btn_by_folder.setCursor(Qt.PointingHandCursor)
         self._btn_by_folder.setToolTip(
-            tr("See everything by where it lives on disk, not by what Vigil "
+            tr("See everything by where it lives on disk, not by what Podbye "
                "thinks it is."))
         self._btn_by_folder.clicked.connect(
             lambda: self.browse_by_folder.emit())
@@ -1534,6 +1785,134 @@ class StorageOverviewWidget(QFrame):
 
 
 
+# Contents walks in flight. A QThread needs a live Python reference and no
+# widget parent; see _start_contents_walk.
+_LIVE_CONTENT_WALKS: list = []
+
+
+class ContentsWalkWorker(QThread):
+    """Measures what is inside a folder, off the UI thread.
+
+    Measured on the reporting machine: the median entity takes 2 ms, the 90th
+    percentile 338 ms, and Steam's 40,349 files ~640 ms. So this cannot run on
+    the UI thread, and it cannot run without a budget \u2014 E:/My Projects does not
+    finish at all. It stops on request too, because the user clicks through
+    rows faster than the biggest of them can be measured.
+    """
+
+    measured = Signal(str, object)      # path, Contents
+
+    def __init__(self, path: str, file_paths=None):
+        super().__init__()
+        self._path = path
+        self._file_paths = list(file_paths or [])
+        self._stop = False
+
+    def cancel(self):
+        self._stop = True
+
+    def run(self):
+        from app.models.entity_contents import measure_files, walk_contents
+        try:
+            if self._file_paths:
+                contents = measure_files(self._file_paths,
+                                         should_stop=lambda: self._stop)
+            else:
+                contents = walk_contents(self._path,
+                                         should_stop=lambda: self._stop)
+        except Exception:
+            return
+        if not self._stop:
+            self.measured.emit(self._path, contents)
+
+
+class ContentRowWidget(QFrame):
+    """One line of the contents section: a name, a size, sometimes a box.
+
+    The box appears only for a collection of independently removable files.
+    For the components of one indivisible folder there is nothing to tick \u2014
+    they go when it goes, and offering a checkbox would say otherwise.
+    """
+
+    toggled = Signal(str, bool)         # path, checked
+    clicked = Signal(str)               # path
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("ContentRow")
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(2, 1, 2, 1)
+        row.setSpacing(8)
+
+        self._check = _FindingSelectionCheckBox()
+        self._check.clicked.connect(
+            lambda checked: self.toggled.emit(self._path, checked))
+        row.addWidget(self._check, alignment=Qt.AlignVCenter)
+
+        self._name = ElidedLabel("")
+        self._name.setStyleSheet("font-size: 12px;")
+        row.addWidget(self._name, stretch=1)
+
+        self._size = QLabel("")
+        self._size.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 11px;")
+        self._size.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._size.setMinimumWidth(72)
+        row.addWidget(self._size)
+
+        # Only an item gets this. A row that opens something has to look
+        # different from a row that merely lists something, or the first
+        # click is an accident.
+        self._chevron = QLabel("›")
+        self._chevron.setStyleSheet("font-size: 13px;")
+        self._chevron.setFixedWidth(10)
+        self._chevron.setVisible(False)
+        row.addWidget(self._chevron, alignment=Qt.AlignVCenter)
+
+        self._path = ""
+        self._drillable = False
+
+    def bind(self, content_row, *, selectable: bool, checked: bool = False,
+             provisional: bool = False, drillable: bool = False):
+        from app.models.finding import _format_size
+        self._path = content_row.path
+        label = content_row.label or tr("Other data")
+        self._name.setText(label)
+        self._name.setToolTip(content_row.path or label)
+        self._size.setText("" if provisional and not content_row.size_bytes
+                           else _format_size(content_row.size_bytes))
+        self._check.setVisible(selectable)
+        self._check.blockSignals(True)
+        self._check.setChecked(bool(checked))
+        self._check.blockSignals(False)
+        self._drillable = bool(drillable)
+        self._chevron.setVisible(self._drillable)
+        self.setCursor(Qt.PointingHandCursor if self._drillable
+                       else Qt.ArrowCursor)
+        if self._drillable:
+            self._name.setToolTip(
+                tr("Inspect {name}", name=label) + "\n" + (content_row.path or ""))
+        self.apply_style(named=content_row.named)
+
+    def apply_style(self, named: bool = False):
+        p = get_palette()
+        colour = p.get("text" if named else "text_dim", "#d6e2da")
+        self._name.setStyleSheet(f"font-size: 12px; color: {colour};")
+        self._chevron.setStyleSheet(
+            f"font-size: 13px; color: {p.get('text_faint', '#57685e')};")
+        self._size.setStyleSheet(
+            f"font-family: 'JetBrains Mono'; font-size: 11px; "
+            f"color: {p.get('text_dim', '#8a9b8f')};")
+        self.setStyleSheet("QFrame#ContentRow { background: transparent; "
+                           "border: none; }")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self._path:
+            self.clicked.emit(self._path)
+        super().mousePressEvent(event)
+
+
 class _PreallocDetailPanel(QWidget):
     """Pre-allocated detail panel — all widgets built once, updated in place.
 
@@ -1557,18 +1936,14 @@ class _PreallocDetailPanel(QWidget):
             self._sync_key_column()
 
     def _sync_key_column(self):
-        """Give every field label the width the widest one actually needs."""
-        keys = getattr(self, "_meta_keys", None)
-        if not keys:
-            return
-        try:
-            widest = max(
-                QFontMetrics(k.font()).horizontalAdvance(k.text()) for k in keys)
-        except RuntimeError:
-            return
-        width = min(self._KEY_COLUMN_MAX, max(88, widest + 6))
-        for key in keys:
-            key.setFixedWidth(width)
+        """No-op since the property table went.
+
+        Kept because showEvent and changeEvent call it, and because the
+        problem it solved will come back the moment anything reintroduces a
+        two-column label layout: "LAST ACTIVE:" becomes
+        "ОСТАННЯ АКТИВНІСТЬ:" and wants 135px against a hard-coded 88.
+        """
+        return
 
     def __init__(
         self,
@@ -1578,6 +1953,11 @@ class _PreallocDetailPanel(QWidget):
         uninstall_cb: Callable | None = None,
         ask_ai_cb: Callable | None = None,
         ask_ai_file_cb: Callable | None = None,
+        keep_cb: Callable | None = None,
+        arm_cb: Callable | None = None,
+        entities_cb: Callable | None = None,
+        drill_cb: Callable | None = None,
+        back_cb: Callable | None = None,
         parent=None,
         compact: bool = False,
     ):
@@ -1588,6 +1968,11 @@ class _PreallocDetailPanel(QWidget):
         self._uninstall_cb = uninstall_cb
         self._ask_ai_cb = ask_ai_cb
         self._ask_ai_file_cb = ask_ai_file_cb
+        self._keep_cb = keep_cb
+        self._arm_cb = arm_cb
+        self._entities_cb = entities_cb
+        self._drill_cb = drill_cb
+        self._back_cb = back_cb
         self._compact = compact
         self._current_path: str = ""
         self._current_entity: dict = {}
@@ -1596,27 +1981,56 @@ class _PreallocDetailPanel(QWidget):
         self._current_recommendation: str = ""
         self._current_recommendation_accent: str = get_palette().get("text_dim", "#8a9b8f")
         self._ai_has_long_reasoning = False
+        # Contents state: what was measured, whether the tail is unfolded,
+        # which files of a collection are ticked, and the walk in flight.
+        self._contents = None
+        self._contents_expanded = False
+        self._checked_files: set = set()
+        self._contents_worker = None
+        self._activity_lbl_text = ""
 
         p = get_palette()
         faint = p.get("text_faint", "#57685e")
 
-        # Two tabs: "Information" (everything below) and "Files" (paginated
-        # per-file browser for grouped/loose entities). The existing content is
-        # built into the Information page so behaviour is unchanged.
+        # One page. There used to be a second tab holding the file list, which
+        # meant the contents of a 160 GB folder sat one click away from a
+        # delete button — and a click nobody makes is a click that does not
+        # happen. Everything the decision needs is on this page, in the order
+        # the decision needs it: what is this, what will go, what happens.
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-        self._tabs = QTabWidget()
-        outer.addWidget(self._tabs)
 
         self._info_page = QWidget()
+        outer.addWidget(self._info_page)
         root = QVBoxLayout(self._info_page)
-        # Breathing room from the tab pane border (the pane itself only adds 4px).
         root.setContentsMargins(12, 10, 12, 12)
         root.setSpacing(10)
 
-        # ── Header row ────────────────────────────────────────────────
+        # ── Identity ───────────────────────────────────────
+        # Four lines instead of a seven-row CATEGORY:/TYPE:/PATH:/SIZE: table.
+        # The table gave every field the same weight and repeated the column
+        # heading on each row; a person reading it wants the name, then what
+        # kind of thing it is, then where, then how big.
+        # Where you are, when you have drilled into something. Hidden at the
+        # top level, which is almost always.
+        self._crumb_btn = QPushButton("")
+        self._crumb_btn.setObjectName("Subtle")
+        self._crumb_btn.setStyleSheet("font-size: 10px; padding: 1px 7px;")
+        self._crumb_btn.setCursor(Qt.PointingHandCursor)
+        self._crumb_btn.clicked.connect(self._on_crumb_clicked)
+        self._crumb_btn.setVisible(False)
+        root.addWidget(self._crumb_btn, alignment=Qt.AlignLeft)
+
         hdr = QHBoxLayout()
+        # The parts pane disappears for a thing with one part, so this is the
+        # only place a lone folder can be armed for a batch cleanup. It arms
+        # whatever the inspector is showing, which is the deletion unit.
+        self._check_btn = _FindingSelectionCheckBox()
+        self._check_btn.clicked.connect(self._on_arm_clicked)
+        self._check_btn.setToolTip(tr("Include this in the cleanup selection"))
+        hdr.addWidget(self._check_btn, alignment=Qt.AlignVCenter)
+
         self._name_lbl = QLabel()
         self._name_lbl.setStyleSheet(
             "font-family: 'JetBrains Mono'; font-size: 15px; font-weight: bold;"
@@ -1632,6 +2046,23 @@ class _PreallocDetailPanel(QWidget):
         hdr.addWidget(self._ai_badge)
         root.addLayout(hdr)
 
+        self._kind_lbl = ElidedLabel("")
+        self._kind_lbl.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 11px;")
+        root.addWidget(self._kind_lbl)
+
+        # Elided in the middle so the drive and the leaf both survive; the
+        # whole path is the tooltip.
+        self._path_lbl = ElidedLabel("", mode=Qt.ElideMiddle)
+        self._path_lbl.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 11px;")
+        root.addWidget(self._path_lbl)
+
+        self._scale_lbl = ElidedLabel("")
+        self._scale_lbl.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 11px;")
+        root.addWidget(self._scale_lbl)
+
         self._recommendation_frame = QFrame()
         self._recommendation_frame.setObjectName("FindingRecommendationSection")
         rec_layout = QVBoxLayout(self._recommendation_frame)
@@ -1640,16 +2071,33 @@ class _PreallocDetailPanel(QWidget):
 
         rec_hdr = QHBoxLayout()
         rec_hdr.setSpacing(8)
-        rec_title = QLabel(tr("AI RECOMMENDATIONS"))
+        # Two dimensions, never one sentence. What Podbye thinks the entity IS
+        # carries a confidence; how Podbye thinks it should be REMOVED does
+        # not, and fusing them turned "we found an executable marker" into a
+        # confident removal instruction. The uncertainty has to survive to
+        # the screen.
+        rec_title = QLabel(tr("DETECTED AS"))
         apply_tactical_label(rec_title, font_size=8, letter_spacing=2)
         rec_hdr.addWidget(rec_title)
-        self._rec_status_lbl = QLabel(tr("WAITING"))
-        self._rec_status_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 10px;")
-        rec_hdr.addWidget(self._rec_status_lbl)
         rec_hdr.addStretch()
+        self._rec_status_lbl = QLabel("")
+        self._rec_status_lbl.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 10px;")
+        rec_hdr.addWidget(self._rec_status_lbl)
         rec_layout.addLayout(rec_hdr)
 
-        self._rec_text_lbl = QLabel(tr("Select a finding to see Vigil's recommendation."))
+        self._detected_lbl = QLabel("")
+        self._detected_lbl.setWordWrap(True)
+        self._detected_lbl.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 12px;")
+        rec_layout.addWidget(self._detected_lbl)
+
+        removal_title = QLabel(tr("REMOVAL METHOD"))
+        apply_tactical_label(removal_title, font_size=8, letter_spacing=2)
+        rec_layout.addSpacing(6)
+        rec_layout.addWidget(removal_title)
+
+        self._rec_text_lbl = QLabel("")
         self._rec_text_lbl.setWordWrap(True)
         rec_layout.addWidget(self._rec_text_lbl)
 
@@ -1657,98 +2105,57 @@ class _PreallocDetailPanel(QWidget):
         self._rec_evidence_lbl.setWordWrap(True)
         rec_layout.addWidget(self._rec_evidence_lbl)
 
-        # ── Shared label factories ────────────────────────────────────
-        _faint_style = "font-family: 'JetBrains Mono'; font-size: 11px; font-weight: 600;"
-        _val_style   = "font-family: 'JetBrains Mono'; font-size: 12px;"
+        # ── Contents ─────────────────────────────────────
+        # What will actually go. Named components where Podbye has a rule for
+        # them ("Installed games"), the biggest folders where it does not, and
+        # one "Other" row for the tail — never the raw directory tree, and
+        # never at all for something with no inside worth describing.
+        self._contents_section = QFrame()
+        self._contents_section.setObjectName("ContentsBlock")
+        contents_l = QVBoxLayout(self._contents_section)
+        contents_l.setContentsMargins(0, 0, 0, 0)
+        contents_l.setSpacing(5)
 
-        def _mk_key(text: str) -> QLabel:
-            # Translate here, once, rather than at seven call sites — every
-            # field label in the inspector stayed English in translated
-            # builds because each was a bare literal.
-            l = QLabel(tr(text))
-            l.setStyleSheet(f"{_faint_style} color: {faint};")
-            return l
+        contents_hdr = QHBoxLayout()
+        contents_hdr.setSpacing(8)
+        self._contents_title = QLabel(tr("CONTENTS"))
+        apply_tactical_label(self._contents_title, font_size=8, letter_spacing=2)
+        contents_hdr.addWidget(self._contents_title)
+        self._contents_meta = QLabel("")
+        self._contents_meta.setObjectName("Muted")
+        self._contents_meta.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 10px;")
+        contents_hdr.addWidget(self._contents_meta)
+        contents_hdr.addStretch()
+        # Secondary by design: the default view already answers the question,
+        # and this only widens the tail.
+        self._btn_contents_more = QPushButton("")
+        self._btn_contents_more.setObjectName("Subtle")
+        self._btn_contents_more.setStyleSheet(
+            "font-size: 10px; padding: 1px 7px;")
+        self._btn_contents_more.setCursor(Qt.PointingHandCursor)
+        self._btn_contents_more.clicked.connect(self._on_contents_more)
+        self._btn_contents_more.setVisible(False)
+        contents_hdr.addWidget(self._btn_contents_more)
+        contents_l.addLayout(contents_hdr)
 
-        def _mk_val() -> QLabel:
-            l = QLabel()
-            l.setStyleSheet(_val_style)
-            l.setWordWrap(True)
-            return l
+        self._contents_rows_host = QWidget()
+        self._contents_rows = QVBoxLayout(self._contents_rows_host)
+        self._contents_rows.setContentsMargins(0, 0, 0, 0)
+        self._contents_rows.setSpacing(2)
+        contents_l.addWidget(self._contents_rows_host)
+        self._content_row_pool: list = []
 
-        # ── Metadata rows ─────────────────────────────────────────────
-        meta_stack = QVBoxLayout()
-        meta_stack.setSpacing(6)
+        # Said out loud, computed, and never behind a model that may not have
+        # run: this is the line that stops a deletion someone would regret.
+        self._consequence_lbl = QLabel("")
+        self._consequence_lbl.setWordWrap(True)
+        self._consequence_lbl.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 11px;")
+        contents_l.addWidget(self._consequence_lbl)
+        self._contents_section.setVisible(False)
 
-        self._cat_key  = _mk_key("CATEGORY:")
-        self._cat_val  = _mk_val()
-        self._lbl_key  = _mk_key("TYPE:")
-        self._lbl_val  = _mk_val()
-        self._conf_lbl = QLabel()
-        self._conf_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
-
-        # TYPE row is a composite: label text + confidence chip
-        lbl_row_w = QWidget()
-        lbl_row_l = QHBoxLayout(lbl_row_w)
-        lbl_row_l.setContentsMargins(0, 0, 0, 0)
-        lbl_row_l.setSpacing(6)
-        lbl_row_l.addWidget(self._lbl_val)
-        lbl_row_l.addWidget(self._conf_lbl)
-        lbl_row_l.addStretch()
-
-        self._path_key  = _mk_key("PATH:")
-        # Elided to one line (full path in the tooltip) so a long path can't
-        # stretch the inspection panel. ElidedLabel fits the width it is given
-        # instead of a fixed character budget, so widening the window reveals
-        # more of the path rather than keeping it cut at the same place.
-        self._path_val  = ElidedLabel(mode=Qt.ElideMiddle)
-        self._path_val.setStyleSheet(_val_style)
-        self._size_key  = _mk_key("SIZE:")
-        self._size_val  = _mk_val()
-        self._items_key = _mk_key("CONTAINS:")
-        self._items_val = _mk_val()
-        self._activity_key = _mk_key("LAST ACTIVE:")
-        self._activity_val = _mk_val()
-        self._importance_key = _mk_key("IMPORTANCE:")
-        self._importance_val = _mk_val()
-
-        # The key column is one width for every row so the values line up.
-        # It used to be a hard 88px, measured against the English labels;
-        # "LAST ACTIVE:" becomes "ОСТАННЯ АКТИВНІСТЬ:" and wanted 135px, so
-        # the heading was cut. _sync_key_column() measures the real strings
-        # once the stylesheet is applied — before that the labels still carry
-        # the application default font and come out too narrow.
-        self._meta_keys: list[QLabel] = []
-
-        def _meta_row(key_widget: QLabel, value_widget: QWidget) -> QWidget:
-            row = QWidget()
-            row_l = QHBoxLayout(row)
-            row_l.setContentsMargins(0, 0, 0, 0)
-            row_l.setSpacing(10)
-            key_widget.setFixedWidth(88 if self._compact else 112)
-            self._meta_keys.append(key_widget)
-            row_l.addWidget(key_widget, 0, Qt.AlignTop)
-            row_l.addWidget(value_widget, 1)
-            return row
-
-        for k, v in [
-            (self._cat_key,        self._cat_val),
-            (self._lbl_key,        lbl_row_w),
-            (self._path_key,       self._path_val),
-            (self._size_key,       self._size_val),
-            (self._items_key,      self._items_val),
-            (self._activity_key,   self._activity_val),
-            (self._importance_key, self._importance_val),
-        ]:
-            meta_stack.addWidget(_meta_row(k, v))
-        meta_stack.addStretch()
-        self._sync_key_column()
-
-        left_w = QWidget()
-        left_l = QVBoxLayout(left_w)
-        left_l.setContentsMargins(0, 0, 0, 0)
-        left_l.setSpacing(0)
-        left_l.addLayout(meta_stack)
-        root.addWidget(left_w)
+        root.addWidget(self._contents_section)
         root.addWidget(self._recommendation_frame)
 
         # ── Duplicate locations block ────────────────────────────────
@@ -1792,7 +2199,7 @@ class _PreallocDetailPanel(QWidget):
         # only one shrinkable pinned the other at its minimum: with the caption
         # fixed the badge sat permanently truncated, and with the caption on an
         # Ignored policy it lost every pixel to the row's stretch and vanished.
-        self._ai_title = ElidedLabel(tr("CONTEXTUAL REASONING"))
+        self._ai_title = ElidedLabel(tr("AI ASSESSMENT"))
         self._ai_title.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         self._ai_title.setMinimumWidth(90)
         self._ai_title.setStyleSheet(
@@ -1829,7 +2236,7 @@ class _PreallocDetailPanel(QWidget):
         # wasn't run. Hidden unless the item has no answer yet (set in update()).
         self._ai_ask_btn = QPushButton(tr("Ask AI"))
         self._ai_ask_btn.setCursor(Qt.PointingHandCursor)
-        self._ai_ask_btn.setStyleSheet(_ask_ai_button_qss())
+        self._ai_ask_btn.setStyleSheet(ask_ai_button_qss())
         self._ai_ask_btn.setVisible(False)
         self._ai_ask_btn.clicked.connect(self._on_ask_ai_clicked)
         ai_hdr_row.addWidget(self._ai_ask_btn)
@@ -1910,6 +2317,16 @@ class _PreallocDetailPanel(QWidget):
         self._btn_copy.clicked.connect(self._on_copy)
         utility_row.addWidget(self._btn_copy)
 
+        # Keep — the user's own standing instruction about this path. Sits
+        # with the utility actions rather than the destructive ones: it is
+        # the opposite of a delete, and it must be reachable on a row whose
+        # delete button is hidden precisely because it is kept.
+        self._btn_keep = QPushButton(tr("Keep"))
+        self._btn_keep.setObjectName("SecondaryAction")
+        self._btn_keep.setCursor(Qt.PointingHandCursor)
+        self._btn_keep.clicked.connect(self._on_keep)
+        utility_row.addWidget(self._btn_keep)
+
         utility_row.addStretch()
         action_stack.addLayout(utility_row)
         # Stretch BEFORE the action buttons so they always sit at the bottom of
@@ -1920,97 +2337,11 @@ class _PreallocDetailPanel(QWidget):
         root.addStretch(1)
         root.addLayout(action_stack)
 
-        self._tabs.addTab(self._info_page, tr("Information"))
-        self._tabs.addTab(self._build_files_page(), tr("Files"))
-        # Hidden (not just disabled) until an entity with browsable files is
-        # selected — a greyed-out empty tab reads as "broken" to users.
-        self._tabs.setTabEnabled(1, False)
-        self._tabs.setTabVisible(1, False)
-
         self._apply_block_styles()
 
     # ── Files tab (paginated per-file browser) ────────────────────────
 
     _FILES_PER_PAGE = 50
-
-    def _build_files_page(self) -> QWidget:
-        page = QWidget()
-        lay = QVBoxLayout(page)
-        lay.setContentsMargins(12, 10, 12, 10)
-        lay.setSpacing(6)
-
-        # Top row: live selection counter + per-page select / clear.
-        top = QHBoxLayout()
-        top.setSpacing(8)
-        self._files_count_lbl = QLabel(tr("0 selected"))
-        self._files_count_lbl.setStyleSheet(
-            "font-family: 'JetBrains Mono'; font-size: 12px; font-weight: bold;"
-        )
-        top.addWidget(self._files_count_lbl)
-        top.addStretch()
-        self._btn_files_select_page = QPushButton(tr("Select page"))
-        self._btn_files_select_page.setObjectName("Subtle")
-        self._btn_files_select_page.setStyleSheet("font-size: 10px; padding: 2px 8px;")
-        self._btn_files_select_page.setCursor(Qt.PointingHandCursor)
-        self._btn_files_select_page.clicked.connect(self._files_select_page)
-        top.addWidget(self._btn_files_select_page)
-        self._btn_files_clear = QPushButton(tr("Clear"))
-        self._btn_files_clear.setObjectName("Subtle")
-        self._btn_files_clear.setStyleSheet("font-size: 10px; padding: 2px 8px;")
-        self._btn_files_clear.setCursor(Qt.PointingHandCursor)
-        self._btn_files_clear.clicked.connect(self._files_clear_selection)
-        top.addWidget(self._btn_files_clear)
-        lay.addLayout(top)
-
-        # File rows.
-        self._files_scroll = QScrollArea()
-        self._files_scroll.setWidgetResizable(True)
-        self._files_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._files_scroll.setStyleSheet("QScrollArea { border: none; }")
-        self._files_container = QWidget()
-        self._files_clay = QVBoxLayout(self._files_container)
-        self._files_clay.setContentsMargins(0, 0, 0, 0)
-        self._files_clay.setSpacing(2)
-        self._files_clay.addStretch()
-        self._files_scroll.setWidget(self._files_container)
-        lay.addWidget(self._files_scroll, stretch=1)
-
-        # Pagination row.
-        pager = QHBoxLayout()
-        pager.setSpacing(8)
-        self._btn_files_prev = QPushButton(tr("‹ Prev"))
-        self._btn_files_prev.setObjectName("Subtle")
-        self._btn_files_prev.setStyleSheet("font-size: 10px; padding: 2px 10px;")
-        self._btn_files_prev.setCursor(Qt.PointingHandCursor)
-        self._btn_files_prev.clicked.connect(lambda: self._files_change_page(-1))
-        pager.addWidget(self._btn_files_prev)
-        self._files_page_lbl = QLabel("")
-        self._files_page_lbl.setObjectName("Dim")
-        self._files_page_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
-        self._files_page_lbl.setAlignment(Qt.AlignCenter)
-        pager.addWidget(self._files_page_lbl, stretch=1)
-        self._btn_files_next = QPushButton(tr("Next ›"))
-        self._btn_files_next.setObjectName("Subtle")
-        self._btn_files_next.setStyleSheet("font-size: 10px; padding: 2px 10px;")
-        self._btn_files_next.setCursor(Qt.PointingHandCursor)
-        self._btn_files_next.clicked.connect(lambda: self._files_change_page(1))
-        pager.addWidget(self._btn_files_next)
-        lay.addLayout(pager)
-
-        # Action.
-        self._btn_recycle_files = QPushButton(tr("Recycle selected files"))
-        self._btn_recycle_files.setObjectName("Primary")
-        self._btn_recycle_files.setCursor(Qt.PointingHandCursor)
-        self._btn_recycle_files.setEnabled(False)
-        self._btn_recycle_files.clicked.connect(self._on_recycle_files)
-        lay.addWidget(self._btn_recycle_files)
-
-        # State.
-        self._all_file_paths: list = []
-        self._selected_files: set = set()
-        self._files_page_idx = 0
-        self._file_checks: list = []   # (QCheckBox, path) for the CURRENT page
-        return page
 
     # ── Slot helpers ──────────────────────────────────────────────────
 
@@ -2049,6 +2380,21 @@ class _PreallocDetailPanel(QWidget):
     def _on_open(self):
         if self._current_path:
             self._open_cb(self._current_path)
+
+    def _on_arm_clicked(self, checked: bool):
+        if self._arm_cb and self._current_path:
+            self._arm_cb(self._current_path, checked)
+
+    def set_armed(self, armed: bool):
+        """Reflect the selection state without re-running populate()."""
+        self._check_btn.blockSignals(True)
+        self._check_btn.setChecked(bool(armed) and self._check_btn.isEnabled())
+        self._check_btn.blockSignals(False)
+        self._check_btn.update()
+
+    def _on_keep(self):
+        if self._keep_cb and self._current_path:
+            self._keep_cb(self._current_path)
 
     def _on_copy(self):
         if self._current_path:
@@ -2092,184 +2438,248 @@ class _PreallocDetailPanel(QWidget):
 
     # ── Contained-files list ──────────────────────────────────────────
 
-    def _collect_entity_files(self, entity: dict) -> list:
-        """Concrete files this entity stands for, for the expandable list.
+    # How many files of a folder the list will draw, and how many entries it
+    # will look at to choose them. The scan cap is generous because reading a
+    # directory entry is cheap — 1,639 of them with sizes measured 3 ms — while
+    # the draw cap exists so the panel does not build thousands of rows.
 
-        Prefers the stored ``removable_file_paths`` (loose buckets, installers);
-        falls back to a live, capped folder listing for content-collection
-        folders so photo/video/document groups can also be inspected.
-        """
-        rfp = [p for p in (entity.get("removable_file_paths") or []) if p]
-        if rfp:
-            return rfp
-        if not _is_content_container(entity):
-            return []
-        path = entity.get("path", "")
-        if not path or not os.path.isdir(path):
-            return []
-        out: list = []
-        try:
-            for de in os.scandir(path):
-                try:
-                    if de.is_file(follow_symlinks=False):
-                        out.append(de.path)
-                except OSError:
-                    pass
-                if len(out) >= 500:
-                    break
-        except OSError:
-            pass
-        return out
+    # ── Contents ──────────────────────────────────────
 
-    def _populate_files_section(self, entity: dict):
-        """Load the entity's files into the paginated Files tab (or disable it)."""
-        is_app = _is_application_action_target(entity)
-        paths = [] if is_app else self._collect_entity_files(entity)
+    _CONTENT_ROWS_SHOWN = 5
 
-        # A single-file or contentless entity adds no insight — keep Files off.
-        if len(paths) < 2:
-            self._all_file_paths = []
-            self._selected_files = set()
-            self._files_page_idx = 0
-            self._file_checks = []
-            self._tabs.setTabEnabled(1, False)
-            self._tabs.setTabVisible(1, False)
-            self._tabs.setTabText(1, tr("Files"))
-            if self._tabs.currentIndex() == 1:
-                self._tabs.setCurrentIndex(0)
-            return
-
-        self._all_file_paths = paths
-        self._selected_files = set()
-        self._files_page_idx = 0
-        self._tabs.setTabEnabled(1, True)
-        self._tabs.setTabVisible(1, True)
-        self._tabs.setTabText(1, tr("Files ({n})").format(n=len(paths)))
-        self._render_files_page()
-
-        # Open on the list for entities whose meaning *is* the list. A loose
-        # bucket's Information tab can say little beyond which folder the files
-        # were found in, while the per-file view is the reason the row exists —
-        # and it was a click away with nothing pointing at it.
-        #
-        # A folder-backed entity (a photo library, an app) keeps Information:
-        # there the folder is the subject and the file list is a detail.
-        if _entity_file_group_size(entity) >= 2:
-            self._tabs.setCurrentIndex(1)
-        elif self._tabs.currentIndex() == 1:
-            self._tabs.setCurrentIndex(0)
-
-    def _file_page_count(self) -> int:
-        return max(1, (len(self._all_file_paths) + self._FILES_PER_PAGE - 1)
-                   // self._FILES_PER_PAGE)
-
-    def _render_files_page(self):
-        """Draw the current page of file rows; selection persists across pages."""
-        while self._files_clay.count() > 1:
-            item = self._files_clay.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                w.hide()   # else the old page paints over the new one
-                w.deleteLater()
-        self._file_checks = []
-
-        pages = self._file_page_count()
-        self._files_page_idx = max(0, min(self._files_page_idx, pages - 1))
-        start = self._files_page_idx * self._FILES_PER_PAGE
-        page_paths = self._all_file_paths[start:start + self._FILES_PER_PAGE]
-
-        faint = get_palette().get("text_faint", "#57685e")
-        for p in page_paths:
-            row = QWidget()
-            rl = QHBoxLayout(row)
-            rl.setContentsMargins(0, 0, 0, 0)
-            rl.setSpacing(8)
-            cb = TacticalCheckBox(os.path.basename(p) or p)
-            cb.setToolTip(p)
-            cb.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
-            cb.setChecked(p in self._selected_files)
-            cb.toggled.connect(lambda checked, path=p: self._on_file_toggle(path, checked))
-            rl.addWidget(cb, stretch=1)
-            size_lbl = QLabel(self._file_size_str(p))
-            size_lbl.setStyleSheet(
-                f"font-family: 'JetBrains Mono'; font-size: 10px; color: {faint};"
-            )
-            size_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            rl.addWidget(size_lbl)
-            # Per-file on-demand AI: explain just this one file, without
-            # needing the bulk AI pass to have run.
-            if self._ask_ai_file_cb is not None:
-                ask = QPushButton(tr("Ask AI"))
-                ask.setStyleSheet(_ask_ai_button_qss())
-                ask.setCursor(Qt.PointingHandCursor)
-                ask.setToolTip(tr("Explain this file with AI"))
-                ask.clicked.connect(
-                    lambda _checked=False, path=p: self._ask_ai_file_cb(path)
-                )
-                rl.addWidget(ask)
-            self._files_clay.insertWidget(self._files_clay.count() - 1, row)
-            self._file_checks.append((cb, p))
-
-        self._files_page_lbl.setText(
-            tr("Page {i} of {n}").format(i=self._files_page_idx + 1, n=pages))
-        self._btn_files_prev.setEnabled(self._files_page_idx > 0)
-        self._btn_files_next.setEnabled(self._files_page_idx < pages - 1)
-        self._update_files_counter()
-
-    @staticmethod
-    def _file_size_str(path: str) -> str:
-        try:
-            return _format_size(os.path.getsize(path))
-        except OSError:
-            return "—"
-
-    def _on_file_toggle(self, path: str, checked: bool):
-        if checked:
-            self._selected_files.add(path)
-        else:
-            self._selected_files.discard(path)
-        self._update_files_counter()
-
-    def _files_select_page(self):
-        for cb, p in self._file_checks:
-            if not cb.isChecked():
-                cb.setChecked(True)   # toggled → adds to _selected_files
-        self._update_files_counter()
-
-    def _files_clear_selection(self):
-        self._selected_files = set()
-        for cb, _p in self._file_checks:
-            cb.blockSignals(True)
-            cb.setChecked(False)
-            cb.blockSignals(False)
-        self._update_files_counter()
-
-    def _files_change_page(self, delta: int):
-        self._files_page_idx += delta
-        self._render_files_page()
-
-    def _update_files_counter(self):
-        n = len(self._selected_files)
-        total = len(self._all_file_paths)
-        self._files_count_lbl.setText(tr("{n} of {total} selected").format(n=n, total=total))
-        self._btn_recycle_files.setEnabled(n > 0 and self._recycle_cb is not None)
-        self._btn_recycle_files.setText(
-            tr("Recycle {n} selected file(s)").format(n=n) if n
-            else tr("Recycle selected files")
+    def _populate_contents(self, entity: dict):
+        """Show what is inside, immediately, then better once measured."""
+        from app.models.entity_contents import (
+            MODE_CONTENTS, MODE_FILES, MODE_NONE, items_summary, mode_for,
+            quick_summary,
         )
+        self._stop_contents_walk()
+        self._contents_expanded = False
 
-    def _on_recycle_files(self):
-        selected = sorted(self._selected_files)
-        if not selected or not self._recycle_cb:
+        mode = mode_for(entity)
+        world = self._entities_cb() if self._entities_cb else []
+        if mode == MODE_NONE and not (world and items_summary(entity, world)):
+            # A single file, or a folder with nothing inside worth naming.
+            # "Steam contains Steam" is the redundancy this removes.
+            self._hide_contents()
             return
-        item = dict(self._current_entity)
-        item["removable_file_paths"] = selected
-        item["entity_type"] = self._current_entity.get("entity_type", "")
-        item["name"] = tr("{n} file(s) from {group}").format(
-            n=len(selected), group=self._current_entity.get("name", "group"))
-        self._recycle_cb(item)
 
-    # ── Theming ───────────────────────────────────────────────────────
+        # Things that live inside win over parts that explain: if real
+        # entities sit within this one, they are what a person needs to see,
+        # and each is its own decision rather than a component of this.
+        world = self._entities_cb() if self._entities_cb else []
+        items = items_summary(entity, world) if world else None
+        if items:
+            self._contents = items
+            self._render_contents()
+            return
+
+        self._contents = quick_summary(entity)
+        self._render_contents()
+        if mode == MODE_FILES:
+            from app.models.entity_contents import file_paths_of
+            self._start_contents_walk(entity.get("path", ""),
+                                      file_paths_of(entity))
+        elif entity.get("path"):
+            self._start_contents_walk(entity["path"])
+
+    def _start_contents_walk(self, path: str, file_paths=None):
+        """Start measuring, with the thread deliberately unparented.
+
+        Parenting it to this panel is the obvious thing and it crashes: Qt
+        destroys a child QThread with its parent, and destroying a *running*
+        one calls std::terminate \u2014 0xC0000409, no traceback. The panel is a
+        widget the garbage collector can take at any moment (a test that lets
+        its sidebar fall out of scope did exactly that, and took the whole
+        suite with it). Parentless, the thread outlives the widget harmlessly
+        and Qt drops the signal connection when the receiver goes.
+        """
+        worker = ContentsWalkWorker(path, file_paths)
+        worker.measured.connect(self._on_contents_measured)
+        # Python has to hold it too: drop the last reference and PySide
+        # destroys the C++ QThread, which is the same crash by another route.
+        _LIVE_CONTENT_WALKS.append(worker)
+        worker.finished.connect(
+            lambda w=worker: _LIVE_CONTENT_WALKS.remove(w)
+            if w in _LIVE_CONTENT_WALKS else None)
+        self._contents_worker = worker
+        worker.start()
+
+    def _stop_contents_walk(self, timeout_ms: int = 1500):
+        """Cancel any walk in flight.
+
+        The user clicks through rows faster than the biggest folder can be
+        measured, so this runs on every populate. A walk that will not stop in
+        time is left to finish on its own \u2014 it holds no widget.
+        """
+        worker = getattr(self, "_contents_worker", None)
+        self._contents_worker = None
+        if worker is None:
+            return
+        try:
+            worker.measured.disconnect(self._on_contents_measured)
+        except (RuntimeError, TypeError):
+            pass
+        from app.services.workers import stop_worker
+        stop_worker(worker, timeout_ms)
+
+    def _on_contents_measured(self, path: str, contents):
+        if path != self._current_path:
+            return                      # the user moved on
+        self._contents = contents
+        self._render_contents()
+
+    def _hide_contents(self):
+        """Put the section away and unbind what it was showing.
+
+        isHidden() is a widget's own flag, not its ancestors'. Rows left bound
+        inside a hidden section stay "not hidden" — invisible for now, but
+        ready to flash the previous entity's contents the moment the section
+        comes back. Drilling from a folder that has items into one that has
+        none is exactly that sequence.
+        """
+        self._contents = None
+        self._contents_section.setVisible(False)
+        for spare in self._content_row_pool:
+            spare.setVisible(False)
+        self._contents_title.setText("")
+        self._contents_meta.setText("")
+        self._consequence_lbl.setText("")
+        self._consequence_lbl.setVisible(False)
+
+    def _render_contents(self):
+        from app.models.entity_contents import (
+            MODE_FILES, MODE_ITEMS, removal_consequence,
+        )
+        contents = self._contents
+        if not contents:
+            self._hide_contents()
+            return
+
+        is_files = contents.mode == MODE_FILES
+        is_items = contents.mode == MODE_ITEMS
+        self._contents_title.setText(
+            tr("ITEMS") if is_items else
+            tr("FILES") if is_files else tr("CONTENTS"))
+
+        shown = (contents.rows if self._contents_expanded
+                 else contents.rows[:self._CONTENT_ROWS_SHOWN])
+        hidden = len(contents.rows) - len(shown)
+
+        meta = [_format_size(contents.total_bytes)]
+        if is_files or is_items:
+            meta.insert(0, tr("{n} items", n=len(contents.rows)))
+        if contents.truncated:
+            # A marker, not a paragraph. "The scan stopped measuring before it
+            # reached the end" is Podbye describing its own internals, and it
+            # made the size next to it look unreliable. The reason lives in
+            # the tooltip for anyone who wants it.
+            meta.append(tr("PARTIAL"))
+        self._contents_meta.setText(" · ".join(meta))
+        self._contents_meta.setToolTip(
+            tr("Only part of this folder was measured, so the breakdown "
+               "covers what was reached.") if contents.truncated else "")
+
+        for index, row in enumerate(shown):
+            if index < len(self._content_row_pool):
+                widget = self._content_row_pool[index]
+            else:
+                widget = ContentRowWidget()
+                widget.toggled.connect(self._on_content_toggled)
+                widget.clicked.connect(self._on_content_clicked)
+                self._content_row_pool.append(widget)
+                self._contents_rows.addWidget(widget)
+            checked = row.path in self._checked_files if is_files else False
+            # No checkbox on an item: it is a finding in its own right, with
+            # its own row and its own buttons one click away. Two ways to arm
+            # one thing is how a screen starts disagreeing with itself.
+            widget.bind(row, selectable=is_files, checked=checked,
+                        provisional=contents.provisional,
+                        drillable=is_items)
+            widget.setVisible(True)
+        for spare in self._content_row_pool[len(shown):]:
+            spare.setVisible(False)
+
+        self._btn_contents_more.setVisible(bool(hidden) or self._contents_expanded)
+        self._btn_contents_more.setText(
+            tr("Show less") if self._contents_expanded
+            else tr("+{n} more", n=hidden))
+
+        consequence = removal_consequence(self._current_entity, contents)
+        self._consequence_lbl.setText(consequence)
+        self._consequence_lbl.setVisible(bool(consequence))
+        self._apply_contents_style()
+        self._contents_section.setVisible(True)
+
+    def _apply_contents_style(self):
+        p = get_palette()
+        self._contents_meta.setStyleSheet(
+            f"font-family: 'JetBrains Mono'; font-size: 10px; "
+            f"color: {p.get('text_faint', '#57685e')};")
+        self._consequence_lbl.setStyleSheet(
+            f"font-family: 'JetBrains Mono'; font-size: 11px; "
+            f"color: {p.get('text_dim', '#8a9b8f')};")
+        for widget in self._content_row_pool:
+            if not widget.isHidden():
+                widget.apply_style()
+
+    def stop_background_work(self, timeout_ms: int = 3000) -> bool:
+        """Stop the contents walk. Named for the hook the app already uses.
+
+        Destroying a widget that owns a *running* QThread aborts the process
+        with 0xC0000409 and no traceback, which is how a language switch used
+        to take the app down. Both the shell teardown and the test suite look
+        for a method by this name, so the walk is stopped by the same
+        machinery as every other background job.
+        """
+        self._stop_contents_walk(timeout_ms)
+        return True
+
+    def closeEvent(self, event):
+        self._stop_contents_walk()
+        super().closeEvent(event)
+
+    def _on_contents_more(self):
+        self._contents_expanded = not self._contents_expanded
+        self._render_contents()
+
+    def _on_content_toggled(self, path: str, checked: bool):
+        """Tick one file of a collection.
+
+        Only a collection of independently removable files gets boxes; the
+        components of one folder go with it whether or not anyone ticks them.
+        """
+        if checked:
+            self._checked_files.add(path)
+        else:
+            self._checked_files.discard(path)
+
+    def _on_content_clicked(self, path: str):
+        """A file asks about itself; an item is drilled into."""
+        if not path:
+            return
+        from app.models.entity_contents import MODE_ITEMS
+        if self._contents is not None and self._contents.mode == MODE_ITEMS:
+            if self._drill_cb:
+                self._drill_cb(path)
+            return
+        # No Ask AI button beside every file: selecting one is what opens the
+        # question, which keeps the list quiet and scannable.
+        if self._ask_ai_file_cb:
+            self._ask_ai_file_cb(path)
+
+    def _on_crumb_clicked(self):
+        if self._back_cb:
+            self._back_cb()
+
+    def set_trail(self, names: list):
+        """Show where the inspector has been drilled to, or hide the crumb."""
+        if not names:
+            self._crumb_btn.setVisible(False)
+            return
+        self._crumb_btn.setText("‹  " + " / ".join(names))
+        self._crumb_btn.setToolTip(tr("Back to {name}", name=names[-1]))
+        self._crumb_btn.setVisible(True)
 
     def _apply_block_styles(self):
         """Quiet workstation styling for the inspector sections."""
@@ -2290,32 +2700,24 @@ class _PreallocDetailPanel(QWidget):
         self._name_lbl.setStyleSheet(
             f"font-family: 'JetBrains Mono'; font-size: 15px; font-weight: bold; color: {p.get('text', '#d6e2da')};"
         )
-        key_style = (
-            f"font-family: 'JetBrains Mono'; font-size: 11px; font-weight: 600; "
+        # The identity block: one bright line (what kind of thing), two quiet
+        # ones (where, how big). No repeated column headings.
+        self._kind_lbl.setStyleSheet(
+            f"font-family: 'JetBrains Mono'; font-size: 11px; "
             f"color: {p.get('text_dim', '#8a9b8f')};"
         )
-        for key in (
-            self._cat_key,
-            self._lbl_key,
-            self._path_key,
-            self._size_key,
-            self._items_key,
-            self._activity_key,
-            self._importance_key,
-        ):
-            key.setStyleSheet(key_style)
-        for lbl in (
-            self._cat_val,
-            self._lbl_val,
-            self._path_val,
-            self._size_val,
-            self._items_val,
-            self._activity_val,
-            self._importance_val,
-        ):
+        for lbl in (self._path_lbl, self._scale_lbl):
             lbl.setStyleSheet(
-                f"font-family: 'JetBrains Mono'; font-size: 12px; color: {p.get('text', '#d6e2da')};"
+                f"font-family: 'JetBrains Mono'; font-size: 11px; "
+                f"color: {p.get('text_faint', '#57685e')};"
             )
+        self._contents_section.setStyleSheet(
+            f"QFrame#ContentsBlock {{ background: transparent; "
+            f"border: 1px solid {border}; border-radius: 2px; }}"
+        )
+        if self._contents_section.layout():
+            self._contents_section.layout().setContentsMargins(10, 9, 10, 9)
+        self._apply_contents_style()
         self._ai_content_lbl.setStyleSheet(
             f"font-family: 'JetBrains Mono'; font-size: 12px; color: {p.get('text', '#d6e2da')};"
         )
@@ -2372,6 +2774,10 @@ class _PreallocDetailPanel(QWidget):
             f"color: {accent}; padding: 1px 6px; border: 1px solid {border}; "
             "border-radius: 2px; background: transparent;"
         )
+        self._detected_lbl.setStyleSheet(
+            f"font-family: 'JetBrains Mono'; font-size: 12px; "
+            f"color: {p.get('text', '#d6e2da')};"
+        )
         self._rec_text_lbl.setStyleSheet(
             f"font-size: 12px; font-weight: 650; color: {p.get('text', '#d6e2da')};"
         )
@@ -2409,6 +2815,7 @@ class _PreallocDetailPanel(QWidget):
         from PySide6.QtCore import QEvent
         if event.type() == QEvent.StyleChange:
             self._apply_block_styles()
+            self._apply_contents_style()
         super().changeEvent(event)
 
     # ── Public API ────────────────────────────────────────────────────
@@ -2464,7 +2871,13 @@ class _PreallocDetailPanel(QWidget):
         # Header
         self._name_lbl.setText(_duplicate_title(entity) if is_duplicate else name)
 
-        self._risk_badge.set_badge(tr(risk).upper(), _status_variant(risk))
+        # A kept item says KEEP here too. The row above the inspector already
+        # does, and two badges disagreeing about the same path is exactly the
+        # kind of thing that makes a screen untrustworthy.
+        if is_kept(path):
+            self._risk_badge.set_badge(tr("Keep").upper(), "locked")
+        else:
+            self._risk_badge.set_badge(tr(risk).upper(), _status_variant(risk))
 
         _pal = get_palette()
         _ai_safe  = _pal.get("safe",       "#7aa88a")
@@ -2484,53 +2897,35 @@ class _PreallocDetailPanel(QWidget):
             f"font-family: 'JetBrains Mono'; font-size: 11px; color: {ai_col};"
         )
 
-        # Info rows
-        self._cat_val.setText(tr(category))
-        if is_duplicate:
-            self._path_val.setText(_norm_path(_duplicate_path_preview(entity)))
-        else:
-            self._path_val.setText(_norm_path(path) if path else "—")
-        self._size_val.setText(size)
-        self._items_val.setText(
-            contains_text or tr("{n:,} items", n=item_count))
-        # For duplicates the dedicated DUPLICATE LOCATIONS block below already
-        # spells out copies/locations, so the CONTAINS row is pure repetition.
-        items_row = self._items_val.parentWidget()
-        if items_row is not None:
-            items_row.setVisible(not is_duplicate)
-        self._activity_val.setText(activity_text)
-        self._importance_val.setText(importance_text)
+        # ── Identity: what is this? ──────────────────────────────
+        # The category is the screen the user is already standing on, so it is
+        # only worth a line when the entity disagrees with it.
+        # The same words as DETECTED AS below. They read "Archive Files"
+        # here and "Archives" there — two names for one thing, two lines
+        # apart. The confidence has its own row now and is not repeated.
+        kind = _detected_as_text(entity)
+        self._kind_lbl.setText(kind)
+        self._kind_lbl.setVisible(bool(kind))
+
+        self._path_lbl.setText(
+            _norm_path(_duplicate_path_preview(entity)) if is_duplicate
+            else (_norm_path(path) if path else "—"))
+
+        self._scale_lbl.setText(_entity_scale_text(entity))
+        self._activity_lbl_text = activity_text
+
         rec_status, rec_text, rec_evidence, rec_accent = _finding_recommendation(entity)
         self._current_recommendation_accent = rec_accent
-        self._rec_status_lbl.setText(rec_status)
-        self._rec_text_lbl.setText(rec_text)
-        self._rec_evidence_lbl.setText(rec_evidence)
+        self._detected_lbl.setText(_detected_as_text(entity))
+        self._rec_status_lbl.setText(_detection_confidence_text(entity))
+        self._rec_text_lbl.setText(_removal_method_text(entity))
+        # The old "Recommendation: …" prose becomes the reason line under the
+        # method, which is where the evidence for it belongs.
+        self._rec_evidence_lbl.setText(rec_evidence or rec_text)
         self._apply_recommendation_card_style(rec_accent)
 
-        # LABEL row — show only when a semantic label is present
-        has_label = bool(semantic_label)
-        self._lbl_key.setVisible(has_label)
-        # ENTITY_TYPES values are in the locale files; they only reach them
-        # through tr(), and this call site was passing the raw English.
-        self._lbl_val.setText(tr(semantic_label))
-        lbl_row_w = self._lbl_val.parentWidget()
-        if lbl_row_w:
-            lbl_row_w.setVisible(has_label)
-
-        if has_label:
-            dim = get_palette().get("text_dim", "#8a9b8f")
-            _conf_colors = {
-                "exact":     get_palette().get("safe",       "#7cc596"),
-                "probable":  get_palette().get("review",     "#d8b46a"),
-                "heuristic": dim,
-            }
-            conf_visible = owner_confidence not in ("", "none", None)
-            cc = _conf_colors.get(owner_confidence, dim)
-            self._conf_lbl.setVisible(conf_visible)
-            self._conf_lbl.setText(owner_confidence if conf_visible else "")
-            self._conf_lbl.setStyleSheet(
-                f"font-family: 'JetBrains Mono'; font-size: 11px; color: {cc};"
-            )
+        # ── Contents: what exactly will be removed? ────────────────
+        self._populate_contents(entity)
 
         # ── Reasoning section ─────────────────────────────────────────
         # Duplicates always carry a plain-language explanation (rule-based)
@@ -2650,6 +3045,7 @@ class _PreallocDetailPanel(QWidget):
             self._ai_body.setVisible(False)
 
         if is_duplicate:
+            self._dup_title.setText(tr("DUPLICATE COPIES"))
             locations = _duplicate_locations(entity)
             self._dup_meta.setText(tr("// {n} copies",
                                       n=len(locations) or _duplicate_copy_count(entity)))
@@ -2670,7 +3066,7 @@ class _PreallocDetailPanel(QWidget):
         actionability = _entity_actionability(entity)
         allow_recycle = (
             has_path and self._recycle_cb is not None
-            and actionability != "protected"
+            and actionability not in ("protected", "kept")
         )
         # For an application, Deep Uninstall (the app's own uninstaller) is the
         # correct removal — recycling the install tree leaves registry/state
@@ -2692,16 +3088,37 @@ class _PreallocDetailPanel(QWidget):
         # fallback, because allow_recycle is only suppressed when a real
         # uninstaller exists.
         can_uninstall = (is_app and has_uninstaller
+                         and actionability != "kept"
                          and self._uninstall_cb is not None)
         self._btn_uninstall.setVisible(can_uninstall)
         self._btn_uninstall.setEnabled(can_uninstall)
         self._btn_open.setEnabled(has_path)
         self._btn_copy.setEnabled(has_path)
+
+        # Protected is Podbye's refusal, Keep is the user's; neither can be
+        # armed. The checked state itself comes from the model, through
+        # set_armed().
+        armable = has_path and actionability not in ("protected", "kept")
+        self._check_btn.setEnabled(armable)
+        self._check_btn.setVisible(armable)
+
+        # Keep: offered on anything with a real path that is not already
+        # protected by Podbye, and never on a group, whose path names one of
+        # several folders. On something already kept the button is the way
+        # back out, so it says so.
+        kept_now = actionability == "kept"
+        can_offer = (self._keep_cb is not None and has_path
+                     and actionability != "protected"
+                     and (kept_now or can_keep(path)))
+        self._btn_keep.setVisible(can_offer)
+        self._btn_keep.setText(tr("Stop keeping") if kept_now else tr("Keep"))
+        self._btn_keep.setToolTip(
+            tr("Podbye will offer this for cleanup again")
+            if kept_now else
+            tr("Never select or delete this, in this or any later scan"))
         # When no whole-folder delete is offered, make Open the prominent action.
         self._style_open_as_primary(is_container and not allow_recycle and not is_app)
 
-        # Expandable per-file list for grouped/loose entities.
-        self._populate_files_section(entity)
 
 
 class RightSidebar(QFrame):
@@ -2715,6 +3132,11 @@ class RightSidebar(QFrame):
         uninstall_cb: Callable | None = None,
         ask_ai_cb: Callable | None = None,
         ask_ai_file_cb: Callable | None = None,
+        keep_cb: Callable | None = None,
+        arm_cb: Callable | None = None,
+        entities_cb: Callable | None = None,
+        drill_cb: Callable | None = None,
+        back_cb: Callable | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -2765,6 +3187,11 @@ class RightSidebar(QFrame):
             uninstall_cb=uninstall_cb,
             ask_ai_cb=ask_ai_cb,
             ask_ai_file_cb=ask_ai_file_cb,
+            keep_cb=keep_cb,
+            arm_cb=arm_cb,
+            entities_cb=entities_cb,
+            drill_cb=drill_cb,
+            back_cb=back_cb,
             compact=True,
         )
         self.detail_widget.setStyleSheet("background: transparent; border: none;")
@@ -2796,9 +3223,10 @@ class RightSidebar(QFrame):
         self.detail_widget.setStyleSheet(f"background: {detail_bg}; border: none;")
         self.detail_widget._apply_block_styles()
 
-    def populate(self, entity: dict):
+    def populate(self, entity: dict, trail: list | None = None):
         self.detail_widget.populate(entity)
-        self._meta.setText(tr("// selected"))
+        self.detail_widget.set_trail(trail or [])
+        self._meta.setText(tr("// inside") if trail else tr("// selected"))
         self._stack.setCurrentWidget(self._scroll)
 
     def clear(self):
@@ -2813,126 +3241,126 @@ class RightSidebar(QFrame):
 _FindingSelectionCheckBox = TacticalCheckBox
 
 
-class FindingsEntityRow(QFrame):
-    """Softer entity row for the category inspection list.
+class ThingRow(QFrame):
+    """One *thing* in the left pane: an app, a folder, a group of both.
 
-    Doubles as the header of an app group — see rebind(). The header carries
-    the group's totals and an expand chevron; its members render as the same
-    widget, indented.
+    It carries no checkbox, and that is the whole point of the redesign. The
+    old list mixed rolled-up headers and plain rows, each with a box, and a
+    collapsed header could not say how much of what was under it was armed —
+    reported as "we are grouping up items and it can be unclear for the user
+    what exactly he is deleting". Here a thing is only ever a place to look;
+    arming happens in the right pane, on parts you can see.
+
+    What it must always show is how much of itself is selected, so a thing can
+    never hide a decision the way the old header did.
     """
 
-    clicked = Signal(int)
-    check_toggled = Signal(int, bool)
-    group_toggled = Signal(str)      # group key, emitted by a header row
+    clicked = Signal(str)          # thing key
 
-    def __init__(self, source_row: int, entity: dict, checked: bool = False, parent=None):
+    def __init__(self, thing: dict, parent=None):
         super().__init__(parent)
-        self._source_row = source_row
-        self._entity = entity
-        self._selected = False
-        self._hovered = False
-        self.setObjectName("FindingEntityRow")
+        self.setObjectName("ThingRow")
         self.setCursor(Qt.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        # Two-line row with enough vertical air for quick scanning.
-        self.setMinimumHeight(52)
+        self.setMinimumHeight(54)
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 8, 14, 8)
-        layout.setSpacing(12)
+        self._thing: dict = thing
+        self._selected = False
+        self._hovered = False
 
-        self._check_btn = _FindingSelectionCheckBox()
-        self._check_btn.clicked.connect(self._on_check_clicked)
-        layout.addWidget(self._check_btn, alignment=Qt.AlignVCenter)
-
-        # Expand/collapse affordance — only shown on a group header row.
-        self._group: dict | None = None
-        self._depth: int = 0
-        # Always present, never hidden: hiding it collapsed the column and
-        # pushed ungrouped rows 22px left of grouped ones, which read as
-        # broken alignment rather than hierarchy. Blank text reserves the
-        # space instead.
-        self._chevron = QLabel("")
-        self._chevron.setFixedWidth(14)
-        self._chevron.setAlignment(Qt.AlignCenter)
-        self._chevron.setCursor(Qt.PointingHandCursor)
-        layout.addWidget(self._chevron, alignment=Qt.AlignVCenter)
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(12, 8, 12, 8)
+        outer.setSpacing(10)
 
         center = QVBoxLayout()
         center.setSpacing(3)
 
         title_row = QHBoxLayout()
         title_row.setSpacing(6)
-        # Elided, not plain: both of these already carried an Ignored size
-        # policy so the row would never force the list wider, which meant a
-        # plain QLabel simply had its tail cut off — no ellipsis, no tooltip.
-        # At the 1100px minimum window the meta line lost a third of itself.
-        self._name_lbl = ElidedLabel(entity.get("name", "Unknown"))
-        self._name_lbl.setStyleSheet("font-size: 14px; font-weight: 760;")
+        self._name_lbl = ElidedLabel("")
+        self._name_lbl.setStyleSheet("font-size: 13px; font-weight: 700;")
         title_row.addWidget(self._name_lbl, stretch=1)
-
-        _risk0 = entity.get("risk", "Review")
-        # tr(): the badge sat next to filter chips that WERE translated, so
-        # one screen showed "REVIEW" and "À vérifier" for the same thing.
-        self._risk_badge = Badge(tr(_risk0), _status_variant(_risk0))
+        self._risk_badge = Badge(tr("Review"), "review")
         title_row.addWidget(self._risk_badge, alignment=Qt.AlignVCenter)
         center.addLayout(title_row)
 
-        self._meta_lbl = ElidedLabel()
+        self._meta_lbl = ElidedLabel("")
         self._meta_lbl.setObjectName("Muted")
         self._meta_lbl.setStyleSheet(
-            "font-family: 'JetBrains Mono'; font-size: 11px;"
-        )
+            "font-family: 'JetBrains Mono'; font-size: 10px;")
         center.addWidget(self._meta_lbl)
-
-        # Path label kept as a hidden attribute so update_entity can still
-        # populate it for selection / preview, but it's no longer added to
-        # the row layout — path is shown in the Entity Inspection panel.
-        self._path_lbl = QLabel(entity.get("path", "—"))
-        self._path_lbl.setObjectName("Dim")
-        self._path_lbl.setVisible(False)
-        layout.addLayout(center, stretch=1)
+        outer.addLayout(center, stretch=1)
 
         right = QVBoxLayout()
         right.setSpacing(2)
         right.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
-
-        self._size_lbl = QLabel(entity.get("size", "—"))
-        self._size_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 13px; font-weight: 600;")
+        self._size_lbl = QLabel("")
+        self._size_lbl.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 12px; font-weight: 600;")
         self._size_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._size_lbl.setMinimumWidth(110)
+        self._size_lbl.setMinimumWidth(78)
         right.addWidget(self._size_lbl)
 
-        self._aux_lbl = QLabel()
-        self._aux_lbl.setObjectName("Dim")
-        self._aux_lbl.setStyleSheet(
-            "font-family: 'JetBrains Mono'; font-size: 10px;"
-        )
-        self._aux_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._aux_lbl.setMinimumWidth(110)
-        right.addWidget(self._aux_lbl)
+        # The armed count. Never hidden once anything in the thing is armed —
+        # a thing that is partly selected has to say so on its own row.
+        self._armed_lbl = QLabel("")
+        self._armed_lbl.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 10px;")
+        self._armed_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._armed_lbl.setMinimumWidth(78)
+        right.addWidget(self._armed_lbl)
+        outer.addLayout(right)
 
-        self._ai_lbl = QLabel()
-        self._ai_lbl.setObjectName("Muted")
-        self._ai_lbl.setStyleSheet(
-            "font-family: 'JetBrains Mono'; font-size: 10px;"
-        )
-        self._ai_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._ai_lbl.setMinimumWidth(110)
-        right.addWidget(self._ai_lbl)
-        layout.addLayout(right)
+        self.bind(thing)
 
-        self.update_entity(entity, checked)
+    # ── binding ───────────────────────────────────────────────────
+
+    def bind(self, thing: dict):
+        """Repoint a pooled row at another thing."""
+        self._thing = thing
+        self._name_lbl.setText(thing.get("name") or tr("Unknown"))
+        risk = normalize_risk(thing.get("risk", "Review"))
+        self._risk_badge.set_badge(tr(risk), _status_variant(risk))
+        self._meta_lbl.setText(thing.get("meta", ""))
+        self._size_lbl.setText(_format_size(thing.get("size_bytes", 0)))
+        self.refresh_armed()
         self._apply_style()
 
+    def key(self) -> str:
+        return self._thing.get("key", "")
+
+    def thing(self) -> dict:
+        return self._thing
+
+    def refresh_armed(self):
+        armed = int(self._thing.get("armed", 0) or 0)
+        total = len(self._thing.get("parts") or [])
+        kept = int(self._thing.get("kept", 0) or 0)
+        p = get_palette()
+        if armed and armed == total:
+            # "all 1 selected" on a thing with one part is noise; it is just
+            # selected.
+            self._armed_lbl.setText(tr("selected") if total == 1
+                                    else tr("all {n} selected", n=total))
+            colour = p.get("accent", "#7cc596")
+        elif armed:
+            self._armed_lbl.setText(tr("{n} of {total} selected",
+                                       n=armed, total=total))
+            colour = p.get("accent", "#7cc596")
+        elif kept:
+            self._armed_lbl.setText(tr("{n} kept", n=kept))
+            colour = p.get("text_faint", "#57685e")
+        else:
+            self._armed_lbl.setText("")
+            colour = p.get("text_faint", "#57685e")
+        self._armed_lbl.setStyleSheet(
+            f"font-family: 'JetBrains Mono'; font-size: 10px; color: {colour};")
+
+    # ── interaction / paint ───────────────────────────────────────
+
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton and not self._check_btn.geometry().contains(event.position().toPoint()):
-            if self.is_group_header():
-                # The whole header toggles, not just the chevron — a 10px
-                # target for the primary action of the row would be unkind.
-                self.group_toggled.emit(self.group_key())
-            else:
-                self.clicked.emit(self._source_row)
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self.key())
         super().mousePressEvent(event)
 
     def enterEvent(self, event):
@@ -2945,161 +3373,181 @@ class FindingsEntityRow(QFrame):
         self._apply_style()
         super().leaveEvent(event)
 
-    def _on_check_clicked(self, checked: bool):
-        self.check_toggled.emit(self._source_row, checked)
+    def set_selected(self, selected: bool):
+        self._selected = selected
+        self._apply_style()
+
+    def _apply_style(self):
+        p = get_palette()
+        primary = p.get("text", "#d6e2da")
+        if self._selected:
+            accent = p.get("accent", "#7cc596")
+            self.setStyleSheet(
+                f"QFrame#ThingRow {{ background: {p.get('accent_soft', '#1b2e22')}; "
+                f"border-left: 3px solid {accent}; "
+                f"border-top: 1px solid {p.get('border_hover', '#3a5648')}; "
+                f"border-bottom: 1px solid {p.get('border_hover', '#3a5648')}; "
+                f"border-right: 1px solid {p.get('border_hover', '#3a5648')}; }}")
+        elif self._hovered:
+            self.setStyleSheet(
+                f"QFrame#ThingRow {{ background: {p.get('panel_hover', '#1d2c25')}; "
+                f"border: 1px solid {p.get('border', '#213028')}; }}")
+        else:
+            self.setStyleSheet(
+                "QFrame#ThingRow { background: transparent; border: none; }")
+        self._name_lbl.setStyleSheet(
+            f"font-size: 13px; font-weight: 700; color: {primary};")
+        self._meta_lbl.setStyleSheet(
+            f"font-family: 'JetBrains Mono'; font-size: 10px; "
+            f"color: {p.get('text_dim', '#8a9b8f')};")
+        self._size_lbl.setStyleSheet(
+            f"font-family: 'JetBrains Mono'; font-size: 12px; "
+            f"font-weight: 600; color: {primary};")
+        self.refresh_armed()
+
+
+class PartRow(QFrame):
+    """One selectable part in the right pane — the only place arming happens.
+
+    A part is a concrete thing on disk: a cache folder, an app's data folder, a
+    bucket of loose files. Its row states its own risk and its own reason, so
+    the checkbox is never a click on something the user has not read.
+    """
+
+    clicked = Signal(int)            # source row
+    check_toggled = Signal(int, bool)
+    keep_toggled = Signal(str)       # path
+
+    def __init__(self, source_row: int, entity: dict, checked: bool = False,
+                 parent=None):
+        super().__init__(parent)
+        self.setObjectName("PartRow")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self.setMinimumHeight(50)
+
+        self._source_row = source_row
+        self._entity = entity
+        self._selected = False
+        self._hovered = False
+
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(12, 7, 12, 7)
+        outer.setSpacing(10)
+
+        self._check_btn = _FindingSelectionCheckBox()
+        self._check_btn.clicked.connect(
+            lambda checked_: self.check_toggled.emit(self._source_row, checked_))
+        outer.addWidget(self._check_btn, alignment=Qt.AlignVCenter)
+
+        center = QVBoxLayout()
+        center.setSpacing(2)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(6)
+        self._name_lbl = ElidedLabel("")
+        self._name_lbl.setStyleSheet("font-size: 13px; font-weight: 650;")
+        title_row.addWidget(self._name_lbl, stretch=1)
+        self._risk_badge = Badge(tr("Review"), "review")
+        title_row.addWidget(self._risk_badge, alignment=Qt.AlignVCenter)
+        center.addLayout(title_row)
+
+        self._why_lbl = ElidedLabel("")
+        self._why_lbl.setObjectName("Muted")
+        self._why_lbl.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 10px;")
+        center.addWidget(self._why_lbl)
+        outer.addLayout(center, stretch=1)
+
+        self._size_lbl = QLabel("")
+        self._size_lbl.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 12px; font-weight: 600;")
+        self._size_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._size_lbl.setMinimumWidth(78)
+        outer.addWidget(self._size_lbl)
+
+        self.bind(source_row, entity, checked)
+
+    def bind(self, source_row: int, entity: dict, checked: bool):
+        self._source_row = source_row
+        self._entity = entity
+        is_duplicate = entity.get("entity_type") == "duplicate_group"
+        self._name_lbl.setText(_duplicate_title(entity) if is_duplicate
+                               else entity.get("name", tr("Unknown")))
+        self._size_lbl.setText(entity.get("size", "\u2014"))
+        self._why_lbl.setText(_part_reason_text(entity))
+
+        action = _entity_actionability(entity)
+        if action == "kept":
+            # "locked", not a risk colour: Keep is the user's own decision,
+            # not a warning about the files.
+            self._risk_badge.set_badge(tr("Keep"), "locked")
+        else:
+            risk = normalize_risk(entity.get("risk", "Review"))
+            self._risk_badge.set_badge(tr(risk), _status_variant(risk))
+
+        selectable = action not in ("protected", "kept")
+        self._check_btn.setEnabled(selectable)
+        self._check_btn.blockSignals(True)
+        self._check_btn.setChecked(bool(checked) and selectable)
+        self._check_btn.blockSignals(False)
+        self._apply_style()
+
+    def source_row(self) -> int:
+        return self._source_row
+
+    def entity(self) -> dict:
+        return self._entity
+
+    def set_checked(self, checked: bool):
+        self._check_btn.blockSignals(True)
+        self._check_btn.setChecked(checked and self._check_btn.isEnabled())
+        self._check_btn.blockSignals(False)
+        self._check_btn.update()
 
     def set_selected(self, selected: bool):
         self._selected = selected
         self._apply_style()
 
-    def set_checked(self, checked: bool):
-        """Lightweight checkbox-only update — no text or style recompute.
+    def mousePressEvent(self, event):
+        if (event.button() == Qt.LeftButton
+                and not self._check_btn.geometry().contains(
+                    event.position().toPoint())):
+            self.clicked.emit(self._source_row)
+        super().mousePressEvent(event)
 
-        Used on selection changes so toggling one checkbox doesn't re-render
-        every row's labels.
-        """
-        self._check_btn.blockSignals(True)
-        self._check_btn.setChecked(checked)
-        self._check_btn.blockSignals(False)
-        self._check_btn.update()
+    def enterEvent(self, event):
+        self._hovered = True
+        self._apply_style()
+        super().enterEvent(event)
 
-    def rebind(self, source_row: int, entity: dict, checked: bool,
-               *, depth: int = 0, group: dict | None = None):
-        """Repoint a pooled row at a new entity instead of recreating it.
-
-        ``depth`` indents a row that belongs to a group; ``group`` turns the
-        row into that group's header, carrying the expand state and the
-        aggregate figures. One widget serves both jobs on purpose: headers and
-        members share a single ordered pool, so the visual order is simply the
-        order rows are bound in. Two pools could not interleave, because a
-        QVBoxLayout fixes widget order when they are inserted.
-        """
-        self._source_row = source_row
-        self._selected = False
+    def leaveEvent(self, event):
         self._hovered = False
-        self._group = group
-        self._depth = depth
-        self.update_entity(entity, checked)
-        self._apply_group_chrome()
-
-    def _apply_group_chrome(self):
-        """Show the expand chevron and indent for grouped rows."""
-        group = getattr(self, "_group", None)
-        depth = getattr(self, "_depth", 0)
-        lay = self.layout()
-        lay.setContentsMargins(12 + depth * 22, 8, 14, 8)
-        accent = get_palette().get("accent", "#7cc596")
-        if group is None:
-            self._chevron.setText("")
-            self._chevron.setToolTip("")
-            return
-        # Large enough and coloured enough to read as a control. At 9px in the
-        # body colour it was a speck, and the one affordance the whole
-        # grouping feature depends on went unnoticed.
-        # U+25BC/U+25B6, not the "small triangle" pair U+25BE/U+25B8: the
-        # small variants render at roughly half height whatever the font size,
-        # which is why the affordance stayed invisible after being enlarged.
-        self._chevron.setStyleSheet(
-            f"font-size: 10px; color: {accent}; background: transparent;")
-        self._chevron.setText("▼" if group.get("expanded") else "▶")
-        self._chevron.setToolTip(
-            tr("Hide the {n} items inside", n=group.get("count", 0))
-            if group.get("expanded")
-            else tr("Show the {n} items inside", n=group.get("count", 0)))
-
-    def is_group_header(self) -> bool:
-        return getattr(self, "_group", None) is not None
-
-    def group_key(self) -> str:
-        group = getattr(self, "_group", None)
-        return group.get("key", "") if group else ""
-
-    def update_entity(self, entity: dict, checked: bool):
-        self._entity = entity
-        risk = entity.get("risk", "Review")
-        is_duplicate = entity.get("entity_type") == "duplicate_group"
-        self._name_lbl.setText(_duplicate_title(entity) if is_duplicate else entity.get("name", "Unknown"))
-        self._risk_badge.set_badge(tr(risk), _status_variant(risk))
-        if is_duplicate:
-            self._meta_lbl.setText(_duplicate_row_meta(entity))
-            self._path_lbl.setText(_duplicate_path_preview(entity))
-        else:
-            # _entity_contains_text() already returns the type label at the
-            # end (e.g. "956 files · 44 folders · Python Virtual Environment")
-            # — adding 'semantic' on top duplicated the type name.
-            self._meta_lbl.setText(_entity_contains_text(entity))
-            self._path_lbl.setText(entity.get("path", "—"))
-        self._size_lbl.setText(entity.get("size", "—"))
-        self._aux_lbl.setText(_entity_activity_text(entity))
-        ai_text = {
-            "ready": tr("AI reviewed"),
-            "done": tr("AI reviewed"),
-            "pending": tr("AI queued"),
-            "analyzing": tr("AI analyzing"),
-            "failed": tr("AI unavailable"),
-            "error": tr("AI unavailable"),
-            "disabled": tr("AI disabled"),
-        }.get(entity.get("ai_status", "none"), "")
-        self._ai_lbl.setText(ai_text)
-        # Only system-protected entities can never be selected. Review and
-        # "uncertain" (Unknown/mixed) items ARE selectable — deleting them just
-        # requires the explicit acknowledgment in the cleanup dialog.
-        selectable = _entity_actionability(entity) != "protected"
-        self._check_btn.setEnabled(selectable)
-        self._check_btn.blockSignals(True)
-        self._check_btn.setChecked(checked and selectable)
-        self._check_btn.blockSignals(False)
-        self._apply_check_style()
-
-    def _apply_check_style(self):
-        self._check_btn.update()
+        self._apply_style()
+        super().leaveEvent(event)
 
     def _apply_style(self):
         p = get_palette()
         primary = p.get("text", "#d6e2da")
-        meta = p.get("text_dim", "#8a9b8f")
-        aux = p.get("text_faint", "#57685e")
         if self._selected:
-            accent = p.get("accent", "#7cc596")
-            bg = p.get("accent_soft", "#1b2e22")
-            border = p.get("border_hover", "#3a5648")
             self.setStyleSheet(
-                f"QFrame#FindingEntityRow {{ background: {bg}; "
-                f"border-left: 3px solid {accent}; "
-                f"border-top: 1px solid {border}; "
-                f"border-bottom: 1px solid {border}; "
-                f"border-right: 1px solid {border}; }}"
-            )
-            self._name_lbl.setStyleSheet(
-                f"font-size: 14px; font-weight: 800; color: {primary};"
-            )
+                f"QFrame#PartRow {{ background: {p.get('accent_soft', '#1b2e22')}; "
+                f"border-left: 3px solid {p.get('accent', '#7cc596')}; }}")
         elif self._hovered:
-            bg = p.get("panel_hover", "#1d2c25")
             self.setStyleSheet(
-                f"QFrame#FindingEntityRow {{ background: {bg}; "
-                f"border: 1px solid {p.get('border', '#213028')}; }}"
-            )
-            self._name_lbl.setStyleSheet(
-                f"font-size: 14px; font-weight: 760; color: {primary};"
-            )
+                f"QFrame#PartRow {{ background: {p.get('panel_hover', '#1d2c25')}; "
+                f"border: none; }}")
         else:
-            bg = "transparent"
             self.setStyleSheet(
-                f"QFrame#FindingEntityRow {{ background: {bg}; border: none; }}"
-            )
-            self._name_lbl.setStyleSheet(
-                f"font-size: 14px; font-weight: 760; color: {primary};"
-            )
-        self._meta_lbl.setStyleSheet(
-            f"font-family: 'JetBrains Mono'; font-size: 11px; color: {meta};"
-        )
-        self._aux_lbl.setStyleSheet(
-            f"font-family: 'JetBrains Mono'; font-size: 10px; color: {aux};"
-        )
-        self._ai_lbl.setStyleSheet(
-            f"font-family: 'JetBrains Mono'; font-size: 10px; color: {aux};"
-        )
-        self._apply_check_style()
+                "QFrame#PartRow { background: transparent; border: none; }")
+        self._name_lbl.setStyleSheet(
+            f"font-size: 13px; font-weight: 650; color: {primary};")
+        self._why_lbl.setStyleSheet(
+            f"font-family: 'JetBrains Mono'; font-size: 10px; "
+            f"color: {p.get('text_dim', '#8a9b8f')};")
+        self._size_lbl.setStyleSheet(
+            f"font-family: 'JetBrains Mono'; font-size: 12px; "
+            f"font-weight: 600; color: {primary};")
+        self._check_btn.update()
 
 
 def _group_risk(group: dict) -> str:
@@ -3272,9 +3720,18 @@ class CategoryDetailView(QFrame):
         self.entities: list = []
         self._scan_state = None
         self._selected_path: str = ""
-        self._row_widgets: dict[str, FindingsEntityRow] = {}
-        self._row_pool: list[FindingsEntityRow] = []
-        self._expanded_groups: set[str] = set()
+        # What the inspector is showing, and how it got there. Equal to
+        # the selection until someone drills into an item.
+        self._inspected_path: str = ""
+        self._inspect_trail: list = []
+        # Left pane: one pooled row per thing. Right pane: one per part, and
+        # _row_widgets maps a part's path to its row so a single entity update
+        # can find it without a rebuild.
+        self._row_pool: list[ThingRow] = []
+        self._part_pool: list[PartRow] = []
+        self._row_widgets: dict[str, PartRow] = {}
+        self._things_by_key: dict[str, dict] = {}
+        self._selected_thing_key: str = ""
         self._app_index_cache: dict | None = None
 
         self.setObjectName("Panel")
@@ -3399,7 +3856,7 @@ class CategoryDetailView(QFrame):
         # Bulk select — shown only for disposable-data categories (see
         # _BULK_SELECT_CATEGORIES). Selects every item passing the current
         # filters, skipping anything Protected.
-        self._btn_select_all = QPushButton(tr("Select all visible"))
+        self._btn_select_all = QPushButton(tr("Select all"))
         self._btn_select_all.setObjectName("Subtle")
         self._btn_select_all.setStyleSheet("font-size: 10px; padding: 2px 8px;")
         self._btn_select_all.setCursor(Qt.PointingHandCursor)
@@ -3451,11 +3908,15 @@ class CategoryDetailView(QFrame):
         self._results_stack_layout = QVBoxLayout(self._results_stack)
         self._results_stack_layout.setContentsMargins(0, 0, 0, 0)
         self._results_stack_layout.setSpacing(0)
-        results_shell_layout.addWidget(self._results_stack, stretch=7)
+        results_shell_layout.addWidget(self._results_stack, stretch=4)
 
+        # ── Left pane: the things ────────────────────────────────
+        # Apps and folders, with no checkbox anywhere on them. Selecting is
+        # the right pane's job, on parts the user can actually see.
         self._list_panel = QFrame()
         self._list_panel.setObjectName("PanelAlt")
         self._list_panel.setMinimumHeight(320)
+        self._list_panel.setMinimumWidth(300)
         self._list_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         list_outer = QVBoxLayout(self._list_panel)
         list_outer.setContentsMargins(0, 0, 0, 0)
@@ -3464,7 +3925,7 @@ class CategoryDetailView(QFrame):
         list_hdr = QHBoxLayout()
         list_hdr.setContentsMargins(14, 12, 14, 10)
         list_hdr.setSpacing(8)
-        self._list_title_lbl = QLabel(tr("FINDINGS LIST"))
+        self._list_title_lbl = QLabel(tr("APPS & FOLDERS"))
         apply_tactical_label(self._list_title_lbl, font_size=9, letter_spacing=2)
         list_hdr.addWidget(self._list_title_lbl)
         self._list_count_lbl = QLabel(tr("// 0 visible"))
@@ -3501,6 +3962,64 @@ class CategoryDetailView(QFrame):
         list_outer.addWidget(self._list_scroll, stretch=1)
         self._results_stack_layout.addWidget(self._list_panel, stretch=1)
 
+        # ── Right pane: what is inside the selected thing ────────
+        self._parts_panel = QFrame()
+        self._parts_panel.setObjectName("PanelAlt")
+        self._parts_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        parts_outer = QVBoxLayout(self._parts_panel)
+        parts_outer.setContentsMargins(0, 0, 0, 0)
+        parts_outer.setSpacing(0)
+
+        parts_hdr = QHBoxLayout()
+        parts_hdr.setContentsMargins(14, 12, 14, 6)
+        parts_hdr.setSpacing(8)
+        self._parts_title_lbl = QLabel(tr("WHAT IS INSIDE"))
+        apply_tactical_label(self._parts_title_lbl, font_size=9, letter_spacing=2)
+        parts_hdr.addWidget(self._parts_title_lbl)
+        self._parts_name_lbl = ElidedLabel("")
+        self._parts_name_lbl.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 11px; font-weight: 700;")
+        parts_hdr.addWidget(self._parts_name_lbl, stretch=1)
+        # Scoped, and it says its scope. The old "Select all visible" armed
+        # every entity behind every collapsed header without showing it.
+        self._btn_select_parts = QPushButton(tr("Select all parts"))
+        self._btn_select_parts.setObjectName("Subtle")
+        self._btn_select_parts.setStyleSheet("font-size: 10px; padding: 2px 8px;")
+        self._btn_select_parts.setCursor(Qt.PointingHandCursor)
+        self._btn_select_parts.clicked.connect(self._select_all_parts)
+        self._btn_select_parts.setVisible(False)
+        parts_hdr.addWidget(self._btn_select_parts)
+        parts_outer.addLayout(parts_hdr)
+
+        self._parts_summary_lbl = ElidedLabel("")
+        self._parts_summary_lbl.setObjectName("Muted")
+        self._parts_summary_lbl.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 10px; padding: 0 14px 8px 14px;")
+        parts_outer.addWidget(self._parts_summary_lbl)
+
+        self._parts_sep = QFrame()
+        self._parts_sep.setFixedHeight(1)
+        parts_outer.addWidget(self._parts_sep)
+
+        self._parts_scroll = QScrollArea()
+        self._parts_scroll.setWidgetResizable(True)
+        self._parts_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._parts_scroll.setFrameShape(QFrame.NoFrame)
+        self._parts_scroll.setStyleSheet("border: none; background: transparent;")
+        self._parts_host = QWidget()
+        self._parts_layout = QVBoxLayout(self._parts_host)
+        self._parts_layout.setContentsMargins(6, 6, 14, 6)
+        self._parts_layout.setSpacing(4)
+        self._parts_empty_lbl = QLabel(
+            tr("Pick an app or folder on the left to see what is inside it."))
+        self._parts_empty_lbl.setAlignment(Qt.AlignCenter)
+        self._parts_empty_lbl.setObjectName("Muted")
+        self._parts_empty_lbl.setStyleSheet("font-size: 12px; padding: 24px 0px;")
+        self._parts_layout.addWidget(self._parts_empty_lbl)
+        self._parts_layout.addStretch()
+        self._parts_scroll.setWidget(self._parts_host)
+        parts_outer.addWidget(self._parts_scroll, stretch=1)
+
         self._right_sidebar = RightSidebar(
             open_cb=self._open_in_explorer,
             copy_cb=self._copy_path,
@@ -3508,9 +4027,25 @@ class CategoryDetailView(QFrame):
             uninstall_cb=self._handle_deep_uninstall,
             ask_ai_cb=self._on_ask_ai,
             ask_ai_file_cb=self._on_ask_ai_file,
+            keep_cb=self._toggle_keep,
+            arm_cb=self._arm_path,
+            entities_cb=self._all_entities,
+            drill_cb=self._drill_into,
+            back_cb=self._drill_back,
         )
         self._detail_widget = self._right_sidebar.detail_widget
-        results_shell_layout.addWidget(self._right_sidebar, stretch=3)
+
+        # The parts list and the detail share the right pane, and the user
+        # decides how much of each they want.
+        self._right_split = QSplitter(Qt.Vertical)
+        self._right_split.setChildrenCollapsible(False)
+        self._right_split.addWidget(self._parts_panel)
+        self._right_split.addWidget(self._right_sidebar)
+        # Sized to its contents, not to a fixed share — see _fit_parts_pane.
+        self._parts_panel.setMinimumHeight(96)
+        self._right_split.setStretchFactor(0, 0)
+        self._right_split.setStretchFactor(1, 1)
+        results_shell_layout.addWidget(self._right_split, stretch=7)
 
         soft_line = QColor(get_palette().get("border", "#213028"))
         soft_line.setAlpha(58)
@@ -3519,6 +4054,7 @@ class CategoryDetailView(QFrame):
             f"{soft_line.blue()}, {soft_line.alpha()})"
         )
         self._list_sep.setStyleSheet(f"background: {line_rgba}; border: none;")
+        self._parts_sep.setStyleSheet(f"background: {line_rgba}; border: none;")
         self._right_sidebar.apply_style()
 
         layout.addWidget(self._results_shell, stretch=1)
@@ -3570,6 +4106,7 @@ class CategoryDetailView(QFrame):
         self._update_selection_display()
         self._clear_detail_sidebar()
         self._btn_select_all.setVisible(category in _BULK_SELECT_CATEGORIES)
+        self._refresh_select_all_label()
 
         self._title_lbl.setText(category.upper())
         self._apply_title_color()
@@ -3617,8 +4154,18 @@ class CategoryDetailView(QFrame):
             if not entity:
                 continue
             row = self._row_widgets.get(entity.get("path", f"row:{src}"))
-            if row is not None and row._source_row == src:
+            if row is not None and row.source_row() == src:
                 row.set_checked(self._model.is_checked(src))
+        # The left pane states how much of each thing is armed. It used to be
+        # updated only by a full rebuild, so "select all" left every group
+        # header showing an empty box over 77 armed items.
+        self._refresh_thing_counters()
+        self._sync_inspector_arm()
+        thing = self._current_thing()
+        if thing is not None:
+            thing["armed"] = sum(1 for r in thing["rows"]
+                                 if r >= 0 and self._model.is_checked(r))
+            self._parts_summary_lbl.setText(self._thing_summary(thing))
 
     def _on_search_text_changed(self, text: str):
         if not text:
@@ -3647,20 +4194,46 @@ class CategoryDetailView(QFrame):
         self._rebuild_entity_rows()
         self._update_footer()
 
-    def _select_all_visible(self):
-        """Check every currently-visible (filtered) item that can actually be
-        recycled — never personal/mixed containers or protected items."""
+    def _eligible_rows(self) -> set:
+        """Every filtered row a bulk action may arm.
+
+        Protected is Podbye's own refusal; Keep is the user's. Neither is ever
+        swept up by a bulk action, and Keep is checked live because the mark
+        can be made after the scan that produced these rows.
+        """
         rows: set[int] = set()
         for proxy_row in range(self._proxy.rowCount()):
-            src = self._proxy.mapToSource(self._proxy.index(proxy_row, COL_NAME)).row()
+            src = self._proxy.mapToSource(
+                self._proxy.index(proxy_row, COL_NAME)).row()
             entity = self._model.get_entity(src)
             if not entity:
                 continue
-            if _entity_actionability(entity) == "protected":
+            if _entity_actionability(entity) in ("protected", "kept"):
                 continue
             rows.add(src)
+        return rows
+
+    def _select_all_visible(self):
+        """Arm every filtered item that a bulk action may touch.
+
+        It arms entities, not rows — which is what it always did, and what
+        made the old list dishonest: 77 of the 384 it armed were folded inside
+        collapsed group headers that went on showing an empty checkbox. Here
+        every thing on the left states how much of itself is armed, so the
+        count on the button and the state on screen cannot disagree.
+        """
+        rows = self._eligible_rows()
         if rows:
             self._model.set_checked_rows(rows, True)
+
+    def _refresh_select_all_label(self):
+        """Say how many the button will arm, before it is pressed."""
+        if self._btn_select_all.isHidden():
+            return
+        n = len(self._eligible_rows())
+        self._btn_select_all.setText(tr("Select all {n}", n=n) if n
+                                     else tr("Select all"))
+        self._btn_select_all.setEnabled(bool(n))
 
     def _on_sort_changed(self, index: int):
         key = self._sort_combo.itemData(index)
@@ -3721,11 +4294,84 @@ class CategoryDetailView(QFrame):
             self._right_sidebar.apply_style()
         super().changeEvent(event)
 
-    def _show_detail_sidebar(self, entity: dict):
+    def stop_background_work(self, timeout_ms: int = 3000) -> bool:
+        """Chain to the inspector, which owns the contents walk."""
+        panel = getattr(self._right_sidebar, "detail_widget", None)
+        if panel is not None:
+            panel.stop_background_work(timeout_ms)
+        return True
+
+    def _sync_inspector_arm(self):
+        """Mirror the model's tick onto the inspector's own checkbox."""
+        panel = getattr(self._right_sidebar, "detail_widget", None)
+        # Drilled in, the inspector is showing an item rather than the row
+        # that is selected in the list, and its tick belongs to that item.
+        path = self._inspected_path or self._selected_path
+        if panel is None or not path:
+            return
+        row = self._model.row_for_entity({"path": path})
+        if row < 0:
+            for candidate in range(self._model.rowCount()):
+                entity = self._model.get_entity(candidate)
+                if entity and entity.get("path", "") == path:
+                    row = candidate
+                    break
+        panel.set_armed(row >= 0 and self._model.is_checked(row))
+
+    def _all_entities(self) -> list:
+        """Every entity the model holds, for working out what lives inside what."""
+        return [e for e in (self._model.get_entity(row)
+                            for row in range(self._model.rowCount())) if e]
+
+    def _drill_into(self, path: str):
+        """Inspect an item that lives inside whatever is on screen now.
+
+        Only ever an entity: the ITEMS list is built from findings, so there
+        is no path here that is not already something Podbye has a verdict
+        about. That is what keeps this from turning into a file browser.
+        """
+        for entity in self._all_entities():
+            if entity.get("path", "") != path:
+                continue
+            if self._inspected_path:
+                self._inspect_trail.append(self._inspected_path)
+            self._show_detail_sidebar(entity, keep_trail=True)
+            return
+
+    def _drill_back(self):
+        """Up one level, to whatever we drilled in from."""
+        if not self._inspect_trail:
+            return
+        path = self._inspect_trail.pop()
+        for entity in self._all_entities():
+            if entity.get("path", "") == path:
+                self._show_detail_sidebar(entity, keep_trail=True)
+                return
+        # The row it came from is gone — deleted, or filtered away. Land on
+        # the selection rather than on nothing.
+        self._inspect_trail = []
+        if self._selected_path:
+            self.select_by_path(self._selected_path)
+
+    def _trail_names(self) -> list:
+        names = []
+        for path in self._inspect_trail:
+            for entity in self._all_entities():
+                if entity.get("path", "") == path:
+                    names.append(entity.get("name") or path)
+                    break
+        return names
+
+    def _show_detail_sidebar(self, entity: dict, keep_trail: bool = False):
         """Populate the persistent right-side inspector."""
+        if not keep_trail:
+            # A fresh click in either pane leaves wherever you had drilled to.
+            self._inspect_trail = []
+        self._inspected_path = entity.get("path", "")
         try:
-            self._right_sidebar.populate(entity)
-            QTimer.singleShot(0, self._ensure_selected_row_visible)
+            self._right_sidebar.populate(entity, self._trail_names())
+            self._sync_inspector_arm()
+            QTimer.singleShot(0, self, self._ensure_selected_row_visible)
         except Exception as exc:
             import traceback
             print(f"[findings] detail sidebar error: {exc}\n{traceback.format_exc()}")
@@ -3739,6 +4385,8 @@ class CategoryDetailView(QFrame):
             self._list_scroll.ensureWidgetVisible(row, 0, 28)
 
     def _clear_detail_sidebar(self):
+        self._inspect_trail = []
+        self._inspected_path = ""
         self._right_sidebar.clear()
 
     def _open_in_explorer(self, path: str):
@@ -3819,13 +4467,14 @@ class CategoryDetailView(QFrame):
         ai = getattr(self._scan_state, "ai_explainer", None)
         if not ai:
             return
-        live = self._find_live_item(path)
+        live = self._find_live_item(path) or _finding_for_path(path)
         if live is None:
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.information(
                 self,
                 tr("File not available"),
-                tr("This file is not part of the current scan results."),
+                tr("This file is no longer on disk, so there is nothing to "
+                   "explain."),
             )
             return
         # Stamp the session so the streamed result isn't discarded as stale.
@@ -3845,7 +4494,7 @@ class CategoryDetailView(QFrame):
             self._btn_clean.setEnabled(False)
         else:
             total_size = self._model.checked_size()
-            self._sel_count_lbl.setText(f"{count} selected")
+            self._sel_count_lbl.setText(tr("{n} selected", n=count))
             self._sel_size_lbl.setText(f"· {_format_size(total_size)}")
             self._btn_clear_sel.setVisible(True)
             self._btn_clean.setEnabled(True)
@@ -3897,7 +4546,13 @@ class CategoryDetailView(QFrame):
             self._clear_detail_sidebar()
             freed = _format_size(result.total_bytes_freed)
             n = len(result.succeeded)
-            self._show_toast(f"✓  {n} item(s) moved to Recycle Bin · {freed} freed")
+            # The same sentence the cleanup dialog reports, and the locale
+            # already carried it — this copy was an f-string, so the one
+            # place a user reads the outcome after the dialog closes stayed
+            # English in every language.
+            self._show_toast(tr(
+                "✓  {count} item(s) moved to Recycle Bin · {freed} freed",
+                count=n, freed=freed))
             return True
         return False
 
@@ -3960,7 +4615,9 @@ class CategoryDetailView(QFrame):
                 reset_presence_cache()
             except Exception:
                 pass
-            self._show_toast(f"Uninstaller launched · {name} — re-scan to confirm removal")
+            self._show_toast(tr(
+                "Uninstaller launched · {name} — re-scan to confirm removal",
+                name=name))
         else:
             QMessageBox.warning(self, tr("Deep Uninstall failed"), message)
 
@@ -3970,7 +4627,7 @@ class CategoryDetailView(QFrame):
             "font-family: 'JetBrains Mono'; font-size: 11px; "
             f"color: {get_palette().get('safe', '#7aa88a')};"
         )
-        QTimer.singleShot(ms, self._clear_toast)
+        QTimer.singleShot(ms, self, self._clear_toast)
 
     def _clear_toast(self):
         self._sel_size_lbl.setText("")
@@ -3984,42 +4641,49 @@ class CategoryDetailView(QFrame):
         self._selected_path = ""
         for row in self._row_widgets.values():
             row.set_selected(False)
+        self._refresh_thing_counters()
         self._clear_detail_sidebar()
 
     def select_by_path(self, path: str) -> bool:
-        """Select the row for *path*, expanding its group if it is folded away.
+        """Open the thing that owns *path* and highlight that part.
 
         Used when the by-folder view hands an entity back: the user found it
-        by location, so the list has to land on it rather than merely open in
-        the vicinity.
+        by location, so both panes have to land on it rather than merely open
+        in the vicinity.
         """
         for row in range(self._model.rowCount()):
             entity = self._model.get_entity(row)
             if not entity or entity.get("path", "") != path:
                 continue
-            owner = owner_key(path, self._app_index())
-            if owner:
-                self._expanded_groups.add(owner.lower())
             self._selected_path = path
             self._rebuild_entity_rows()
+            for thing in self._things_by_key.values():
+                if any(e.get("path", "") == path for e in thing["parts"]):
+                    self._select_thing(thing["key"])
+                    break
             self._show_detail_sidebar(entity)
             return True
         return False
 
     # ── grouping ──────────────────────────────────────────────────
 
-    def _display_rows(self):
-        """Yield ``(source_row, entity, depth, group)`` in visual order.
+    # ── Things: the left pane ─────────────────────────────────────
 
-        One app is one row. A real scan put 23 Discord rows in this list —
-        `shared_proto_db`, `Session Storage`, `WidevineCdm` — none of which is
-        a decision anyone can make, and ~120 more for AppData/Local/Packages.
-        Members are folded under the app that owns them.
+    def _app_index(self):
+        """Registry install-location -> display name, read once per screen."""
+        if getattr(self, "_app_index_cache", None) is None:
+            from app.models.entity_grouping import build_app_index
+            self._app_index_cache = build_app_index()
+        return self._app_index_cache
 
-        Nothing is dropped: a collapsed group still reports its own totals and
-        its members are one click away. Small items in particular stay
-        reachable, because clearing them out is a thing people actually want
-        to do — the group just lets them do it in one go.
+    def _things(self) -> list[dict]:
+        """One row per app, folder or group, in the order the proxy gives.
+
+        A *thing* is a place to look; a *part* is something you can act on. A
+        group's parts are its members, and a standalone entity is a thing with
+        exactly one part — itself. That is what makes the left pane one list
+        with one rhythm, instead of the old mix of rolled-up headers and bare
+        rows where only some carried a chevron.
         """
         ordered = []
         for proxy_row in range(self._proxy.rowCount()):
@@ -4032,11 +4696,9 @@ class CategoryDetailView(QFrame):
         groups = group_entities([e for _sr, e in ordered], self._app_index())
         row_of = {id(e): sr for sr, e in ordered}
 
-        # A group's row shows the whole app's total, so it has to be RANKED by
-        # that total. Left in first-appearance order it was positioned by its
-        # largest single member instead, and a 618 MB Discord could sit below
-        # a 300 MB row while claiming to be bigger. Only the size-like sorts
-        # have a meaningful aggregate; the rest keep the proxy's order.
+        # A thing's row shows the whole thing's total, so it has to be RANKED
+        # by that total. Left in first-appearance order it was positioned by
+        # its largest single member instead.
         sort_key = self._proxy.sort_key()
         if sort_key in ("largest", "smallest", "reclaimable"):
             field = ("reclaimable_bytes" if sort_key == "reclaimable"
@@ -4044,159 +4706,310 @@ class CategoryDetailView(QFrame):
             groups.sort(key=lambda g: g.get(field, 0),
                         reverse=(sort_key != "smallest"))
 
+        things: list[dict] = []
         for group in groups:
-            members = group["members"]
-            root = group["root"]
-            total = len(members) + (1 if root else 0)
-            if total <= 1:
-                only = root or (members[0] if members else None)
-                if only is not None:
-                    yield row_of.get(id(only), -1), only, 0, None
+            root = group.get("root")
+            parts = ([root] if root else []) + list(group.get("members") or [])
+            if not parts:
                 continue
-
-            key = (group.get("owner") or "").lower()
-            expanded = key in self._expanded_groups
-            header = {
-                "count": total, "expanded": expanded, "key": key,
-                "members": members, "root": root,
-            }
-            yield (row_of.get(id(root), -1) if root else -1,
-                   self._group_header_entity(group, total),
-                   0, header)
-            if expanded:
-                if root is not None:
-                    yield row_of.get(id(root), -1), root, 1, None
-                for member in members:
-                    yield row_of.get(id(member), -1), member, 1, None
-
-    def _app_index(self):
-        """Registry install-location → display name, read once per screen."""
-        if getattr(self, "_app_index_cache", None) is None:
-            from app.models.entity_grouping import build_app_index
-            self._app_index_cache = build_app_index()
-        return self._app_index_cache
+            parts.sort(key=lambda e: -int(e.get("size_bytes", 0) or 0))
+            rows = [row_of.get(id(e), -1) for e in parts]
+            solo = parts[0] if len(parts) == 1 else None
+            if solo is not None:
+                key = f"row:{rows[0]}"
+                name = solo.get("name", "")
+                meta = _entity_contains_text(solo)
+                risk = normalize_risk(solo.get("risk", "Review"))
+                size_bytes = int(solo.get("size_bytes", 0) or 0)
+            else:
+                key = "group:" + (group.get("owner") or "").lower()
+                header = self._group_header_entity(group, len(parts))
+                name = header["name"]
+                meta = _entity_contains_text(header)
+                risk = header["risk"]
+                size_bytes = header["size_bytes"]
+            things.append({
+                "key": key,
+                "name": name,
+                "meta": meta,
+                "risk": risk,
+                "size_bytes": size_bytes,
+                "parts": parts,
+                "rows": rows,
+                "group": None if solo is not None else group,
+                "armed": sum(1 for r in rows
+                             if r >= 0 and self._model.is_checked(r)),
+                "kept": sum(1 for e in parts
+                            if _entity_actionability(e) == "kept"),
+            })
+        return things
 
     def _group_header_entity(self, group: dict, total: int) -> dict:
-        """A display-only dict describing the group as a whole."""
+        """A display-only dict describing a group as a whole.
+
+        The thing's name without the (Roaming)/(Local) hint one of its members
+        carries, the whole thing's size, and — the part that was missing —
+        *where* those items are.
+        """
         root = group.get("root") or {}
+        members = ([root] if root else []) + list(group.get("members") or [])
         return {
             "name": group_label(group),
             "path": group.get("owner", ""),
             "size": _format_size(group.get("size_bytes", 0)),
             "size_bytes": group.get("size_bytes", 0),
             "reclaimable_bytes": sum(
-                int(e.get("reclaimable_bytes", 0) or 0)
-                for e in ([root] if root else []) + group["members"]),
+                int(e.get("reclaimable_bytes", 0) or 0) for e in members),
             "file_count": group.get("file_count", 0),
+            "folder_count": sum(int(e.get("folder_count", 0) or 0)
+                                for e in members),
+            "category": root.get("category", "") or next(
+                (e.get("category", "") for e in members if e.get("category")), ""),
             "risk": _group_risk(group),
             "entity_type": root.get("entity_type", "application"),
             "entity_type_label": tr("{n} items in this app", n=total),
+            "group_locations": group_locations(group),
             "is_group": True,
             "ai_status": "none",
         }
 
-    def _group_fully_checked(self, group: dict | None) -> bool:
-        if not group:
-            return False
-        rows = self._group_source_rows(group)
-        return bool(rows) and all(self._model.is_checked(r) for r in rows)
-
-    def _group_source_rows(self, group: dict) -> list[int]:
-        entities = list(group.get("members") or [])
-        if group.get("root") is not None:
-            entities.append(group["root"])
-        rows = []
-        for e in entities:
-            r = self._model.row_for_entity(e)
-            if r >= 0:
-                rows.append(r)
-        return rows
-
-    def _toggle_group(self, key: str):
-        if key in self._expanded_groups:
-            self._expanded_groups.discard(key)
-        else:
-            self._expanded_groups.add(key)
-        self._rebuild_entity_rows()
-
     def _rebuild_entity_rows(self):
-        """Repopulate the list by reusing pooled row widgets.
-
-        Filtering/sorting/searching only rebinds existing widgets to the new
-        set of entities (and hides any surplus) instead of destroying and
-        recreating the whole list, which is what made filter clicks janky.
-        """
+        """Repopulate the left pane, reusing pooled row widgets."""
+        things = self._things()
+        self._things_by_key = {t["key"]: t for t in things}
         visible = self._proxy.rowCount()
-        self._row_widgets.clear()
-
-        # Count the ROWS on screen, not the entities behind them. Grouping
-        # folds 9 findings into 3 rows, and a header reading "9 visible" above
-        # 3 rows just looks wrong.
-        rows = list(self._display_rows())
-        shown = len(rows)
+        shown = len(things)
         self._list_count_lbl.setText(
             tr("// {n:,} visible", n=shown) if shown == visible
-            else tr("// {shown:,} rows · {total:,} items", shown=shown, total=visible))
+            else tr("// {shown:,} rows · {total:,} items",
+                    shown=shown, total=visible))
 
-        if visible == 0:
+        if not things:
             for row in self._row_pool:
                 row.setVisible(False)
             self._list_empty_lbl.setVisible(True)
+            self._selected_thing_key = ""
             self._selected_path = ""
-            self._clear_detail_sidebar()
+            self._rebuild_parts()
             self._update_footer()
             return
 
         self._list_empty_lbl.setVisible(False)
-
-        selected_visible = False
-        idx = 0
-        for sr, entity, depth, group in rows:
-            checked = (self._model.is_checked(sr) if sr >= 0
-                       else self._group_fully_checked(group))
+        for idx, thing in enumerate(things):
             if idx < len(self._row_pool):
                 row = self._row_pool[idx]
-                row.rebind(sr, entity, checked, depth=depth, group=group)
+                row.bind(thing)
                 row.setVisible(True)
             else:
-                row = FindingsEntityRow(sr, entity, checked)
-                row.clicked.connect(self._select_source_row)
-                row.check_toggled.connect(self._set_checked_state)
-                row.group_toggled.connect(self._toggle_group)
+                row = ThingRow(thing)
+                row.clicked.connect(self._select_thing)
                 self._row_pool.append(row)
-                # Insert just before the trailing stretch so order stays stable.
-                self._list_layout.insertWidget(self._list_layout.count() - 1, row)
-                row.rebind(sr, entity, checked, depth=depth, group=group)
-            path = entity.get("path", "")
-            is_selected = (group is None and bool(path)
-                           and path == self._selected_path)
-            row.set_selected(is_selected)
-            selected_visible = selected_visible or is_selected
-            if group is None:
-                self._row_widgets[path or f"row:{sr}"] = row
-            idx += 1
-
-        # Park any unused pooled rows.
-        for j in range(idx, len(self._row_pool)):
+                # Insert before the trailing stretch so order stays stable.
+                self._list_layout.insertWidget(
+                    self._list_layout.count() - 1, row)
+                # Adding a parentless widget to a layout reparents it, and a
+                # reparented widget is hidden until it is shown. Pooled rows
+                # created after the first paint stayed invisible without this
+                # — 27 of a 28-part list simply were not there.
+                row.setVisible(True)
+            row.set_selected(thing["key"] == self._selected_thing_key)
+        for j in range(len(things), len(self._row_pool)):
             self._row_pool[j].setVisible(False)
 
-        if not selected_visible:
-            self._selected_path = ""
-            self._clear_detail_sidebar()
+        if self._selected_thing_key not in self._things_by_key:
+            self._select_thing(things[0]["key"])
+        else:
+            self._rebuild_parts()
+        self._refresh_select_all_label()
         self._update_footer()
+
+    def _select_thing(self, key: str):
+        """Open a thing in the right pane."""
+        self._selected_thing_key = key
+        for row in self._row_pool:
+            # isHidden(), not isVisible(): a row whose window has not been
+            # shown yet is not "visible", and skipping those left every
+            # pooled row unbound until the first paint.
+            if not row.isHidden():
+                row.set_selected(row.key() == key)
+        self._rebuild_parts()
+
+    def _refresh_thing_counters(self):
+        """Re-read how much of each thing is armed, without a full rebuild."""
+        for row in self._row_pool:
+            if row.isHidden():
+                continue
+            thing = self._things_by_key.get(row.key())
+            if thing is None:
+                continue
+            thing["armed"] = sum(1 for r in thing["rows"]
+                                 if r >= 0 and self._model.is_checked(r))
+            row.refresh_armed()
+
+    # ── Parts: the right pane ─────────────────────────────────────
+
+    def _current_thing(self) -> dict | None:
+        return self._things_by_key.get(self._selected_thing_key)
+
+    def _rebuild_parts(self):
+        """List the selected thing's parts — the only place arming happens."""
+        thing = self._current_thing()
+        self._row_widgets.clear()
+        if thing is None:
+            for row in self._part_pool:
+                row.setVisible(False)
+            self._parts_name_lbl.setText("")
+            self._parts_summary_lbl.setText("")
+            self._parts_empty_lbl.setVisible(True)
+            self._btn_select_parts.setVisible(False)
+            self._parts_panel.setVisible(True)
+            self._clear_detail_sidebar()
+            return
+
+        self._parts_name_lbl.setText(thing["name"])
+        self._parts_summary_lbl.setText(self._thing_summary(thing))
+        self._parts_empty_lbl.setVisible(False)
+        eligible = [r for r, e in zip(thing["rows"], thing["parts"])
+                    if r >= 0 and _entity_actionability(e)
+                    not in ("protected", "kept")]
+        self._btn_select_parts.setVisible(len(eligible) > 1)
+
+        for idx, (sr, entity) in enumerate(zip(thing["rows"], thing["parts"])):
+            checked = self._model.is_checked(sr) if sr >= 0 else False
+            if idx < len(self._part_pool):
+                row = self._part_pool[idx]
+                row.bind(sr, entity, checked)
+                row.setVisible(True)
+            else:
+                row = PartRow(sr, entity, checked)
+                row.clicked.connect(self._select_source_row)
+                row.check_toggled.connect(self._set_checked_state)
+                self._part_pool.append(row)
+                self._parts_layout.insertWidget(
+                    self._parts_layout.count() - 1, row)
+                row.setVisible(True)
+            path = entity.get("path", "")
+            row.set_selected(bool(path) and path == self._selected_path)
+            self._row_widgets[path or f"row:{sr}"] = row
+        for j in range(len(thing["parts"]), len(self._part_pool)):
+            self._part_pool[j].setVisible(False)
+
+        # One part is not a decomposition — it is the thing restating its own
+        # name and size ("WHAT IS INSIDE Models / Models 90.6 GB"). Shrinking
+        # that pane was not enough; there is nothing in it worth a pane. The
+        # inspector below carries the checkbox, so nothing is lost.
+        self._parts_panel.setVisible(len(thing["parts"]) > 1)
+        self._fit_parts_pane(len(thing["parts"]))
+
+        # Open on a part, always. The inspector is the evidence for the row
+        # the user is about to tick, so it must never be empty while a thing
+        # is on screen.
+        paths = [e.get("path", "") for e in thing["parts"]]
+        if self._selected_path not in paths:
+            self._select_source_row(thing["rows"][0])
+        elif self._selected_path:
+            entity = next((e for e in thing["parts"]
+                           if e.get("path", "") == self._selected_path), None)
+            if entity is not None:
+                self._show_detail_sidebar(entity)
+
+    _PART_ROW_PX = 54
+    _PARTS_CHROME_PX = 74
+    _PARTS_MAX_SHARE = 0.55
+
+    def _fit_parts_pane(self, part_count: int):
+        """Give the parts list the height its rows need and no more.
+
+        A thing with one part was drawing a half-height pane to say "Models
+        contains Models" — the redundancy that made the old "What is inside"
+        panel feel like wasted space, reproduced faithfully. A thing with 28
+        parts still gets its half; a thing with one gets a strip.
+
+        It stays a splitter, so a user who wants a different balance can drag
+        it; this only sets where it starts.
+        """
+        available = max(self._right_split.height(), 320)
+        if part_count <= 1:
+            self._right_split.setSizes([0, available])
+            return
+        wanted = self._PARTS_CHROME_PX + part_count * self._PART_ROW_PX
+        wanted = int(min(wanted, available * self._PARTS_MAX_SHARE))
+        wanted = max(wanted, self._parts_panel.minimumHeight())
+        self._right_split.setSizes([wanted, max(available - wanted, 200)])
+
+    def _thing_summary(self, thing: dict) -> str:
+        """The line under a thing's name: its size, its parts, its state."""
+        bits = [_format_size(thing["size_bytes"])]
+        total = len(thing["parts"])
+        bits.append(tr("{n} parts", n=total) if total != 1
+                    else tr("1 part"))
+        if thing.get("kept"):
+            bits.append(tr("{n} kept", n=thing["kept"]))
+        armed = thing.get("armed", 0)
+        if armed:
+            bits.append(tr("{n} selected", n=armed))
+        return " · ".join(bits)
+
+    def _select_all_parts(self):
+        """Arm every part of the thing on screen — and only those."""
+        thing = self._current_thing()
+        if thing is None:
+            return
+        rows = {r for r, e in zip(thing["rows"], thing["parts"])
+                if r >= 0 and _entity_actionability(e)
+                not in ("protected", "kept")}
+        if rows:
+            self._model.set_checked_rows(rows, True)
+
+    def _arm_path(self, path: str, checked: bool):
+        """Tick the entity the inspector is showing."""
+        for row in range(self._model.rowCount()):
+            entity = self._model.get_entity(row)
+            if entity and entity.get("path", "") == path:
+                self._apply_check(row, checked)
+                return
+
+    def _toggle_keep(self, path: str):
+        """Start or stop keeping *path*, and re-read every row that shows it."""
+        if not path:
+            return
+        if is_kept(path):
+            root = kept_root_for(path)
+            unkeep_path(root or path)
+        elif not keep_path(path):
+            self._show_toast(tr(
+                "{name} is too broad to keep — pick the folder you actually "
+                "want to protect.", name=os.path.basename(path.rstrip("/\\"))
+                or path))
+            return
+        # A Keep mark can un-arm something that was already ticked.
+        for row in range(self._model.rowCount()):
+            entity = self._model.get_entity(row)
+            if entity and is_kept(entity.get("path", "")):
+                self._apply_check(row, False)
+        self._rebuild_entity_rows()
+        for row in range(self._model.rowCount()):
+            entity = self._model.get_entity(row)
+            if entity and entity.get("path", "") == path:
+                self._show_detail_sidebar(entity, keep_trail=True)
+                break
 
     def _sync_row_selection(self):
         for path, row in self._row_widgets.items():
-            row.set_selected(path == self._selected_path and bool(self._selected_path))
+            row.set_selected(path == self._selected_path
+                             and bool(self._selected_path))
 
     def _sync_row_check_states(self):
-        # Called on theme change: restyle each visible row (set_selected →
-        # _apply_style refreshes frame + label colors) and re-tint its badge,
-        # which Badge only does when explicitly asked.
+        # Called on theme change: restyle each visible row and re-tint its
+        # badge, which Badge only does when explicitly asked.
         for path, row in self._row_widgets.items():
-            row.set_checked(self._model.is_checked(row._source_row))
-            row.set_selected(path == self._selected_path and bool(self._selected_path))
+            row.set_checked(self._model.is_checked(row.source_row()))
+            row.set_selected(path == self._selected_path
+                             and bool(self._selected_path))
             row._risk_badge.refresh_style()
+        for row in self._row_pool:
+            row._risk_badge.refresh_style()
+            row._apply_style()
 
     def update_entity(self, entity: dict):
         """Update a single entity in-place without resetting filters/checks."""
@@ -4206,37 +5019,21 @@ class CategoryDetailView(QFrame):
         path = entity.get("path", "")
         row = self._row_widgets.get(path)
         if row:
-            checked = self._model.data(self._model.index(row_idx, COL_CHECK), Qt.CheckStateRole) == Qt.Checked
-            row.update_entity(entity, checked)
+            checked = self._model.is_checked(row_idx)
+            row.bind(row_idx, entity, checked)
             row.set_selected(path == self._selected_path and bool(self._selected_path))
-        if path and path == self._selected_path:
-            self._show_detail_sidebar(entity)
+        if path and path == self._inspected_path:
+            self._show_detail_sidebar(entity, keep_trail=True)
 
     def _select_source_row(self, source_row: int):
         entity = self._model.get_entity(source_row)
         if not entity:
             return
-        path = entity.get("path", "")
-        if path and path == self._selected_path:
-            self._selected_path = ""
-            self._sync_row_selection()
-            self._clear_detail_sidebar()
-            return
-        self._selected_path = path
+        self._selected_path = entity.get("path", "")
         self._sync_row_selection()
         self._show_detail_sidebar(entity)
 
     def _set_checked_state(self, source_row: int, checked: bool):
-        # A group header owns no row of its own (source_row -1 when the app
-        # folder produced no entity), so ticking it has to fan out to every
-        # member. This is the point of grouping for small items: clearing 363
-        # scattered fragments is one click, not 363.
-        sender = self.sender()
-        if isinstance(sender, FindingsEntityRow) and sender.is_group_header():
-            for row in self._group_source_rows(sender._group):
-                self._apply_check(row, checked)
-            self._rebuild_entity_rows()
-            return
         self._apply_check(source_row, checked)
 
     def _apply_check(self, source_row: int, checked: bool):
@@ -4285,7 +5082,7 @@ class EmptyStateWidget(QFrame):
         # Description
         desc = QLabel(
             tr("Run an analysis to see a visual breakdown of your storage.\n"
-               "Vigil will categorize files into meaningful groups.")
+               "Podbye will categorize files into meaningful groups.")
         )
         desc.setStyleSheet(
             f"font-size: 13px; color: {p.get('text_faint', '#57685e')}; line-height: 1.5;"
@@ -4556,7 +5353,7 @@ class FindingsDashboard(QWidget):
                     # accent and border after a switch.
                     btn = getattr(cv._detail_widget, "_ai_ask_btn", None)
                     if btn is not None:
-                        btn.setStyleSheet(_ask_ai_button_qss())
+                        btn.setStyleSheet(ask_ai_button_qss())
                 # Same for the sort dropdown: apply_reference_style() bakes the
                 # palette in, and nothing re-applied it.
                 combo = getattr(cv, "_sort_combo", None)

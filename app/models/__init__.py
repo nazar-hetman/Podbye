@@ -1,4 +1,4 @@
-"""Models package for Vigil."""
+"""Models package for Podbye."""
 from app.models.finding import Finding
 from app.models.smart_entity import SmartEntity, ENTITY_TYPES
 

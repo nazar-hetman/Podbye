@@ -1,4 +1,4 @@
-# Vigil — Roadmap 2
+# Podbye — Roadmap 2
 
 Working plan. Not meant to be done in one sitting — phases are ordered so the
 riskiest correctness work lands before polish, and language work lands last.

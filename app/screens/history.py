@@ -180,14 +180,25 @@ def _item_size_bytes(item: dict) -> int:
     return 0
 
 
-def _cleanup_top_categories(items: list, limit: int = 3) -> list[tuple[str, int, int]]:
+def _cleanup_top_categories(items: list, limit: int = 3,
+                            sizes_trusted: bool = True
+                            ) -> list[tuple[str, int, int]]:
+    """Rows of ``(label, count, size)`` for the "TOP CLEANED" block.
+
+    *sizes_trusted* is false for records written before per-file sizes were
+    measured, where a bucket's total was copied onto each of its members. Those
+    add up to more than the run actually freed, and the card printed the two
+    figures a few pixels apart — "CLEANED 3.9 GB" over a breakdown summing to
+    5.9 GB. The counts in those records are still right, so the rows fall back
+    to counts; _breakdown_rows already shows a count when there is no size.
+    """
     grouped: dict[str, dict[str, int]] = {}
     for item in items:
         label = _cleanup_target_label(item)
         if label not in grouped:
             grouped[label] = {"count": 0, "size": 0}
         grouped[label]["count"] += 1
-        grouped[label]["size"] += _item_size_bytes(item)
+        grouped[label]["size"] += _item_size_bytes(item) if sizes_trusted else 0
     rows = [
         (label, data["count"], data["size"])
         for label, data in grouped.items()
@@ -513,8 +524,12 @@ class CleanupRecordDetail(QFrame):
 
         # ── Targets — grouped, structured preview ─────────────────
         layout.addWidget(_eyebrow(tr("TOP CLEANED"), p))
-        _breakdown_rows(layout, _cleanup_top_categories(items, self._MAX_GROUPS),
-                        p, tr("No cleaned categories recorded"))
+        _breakdown_rows(
+            layout,
+            _cleanup_top_categories(
+                items, self._MAX_GROUPS,
+                sizes_trusted=record.get("item_sizes") == "measured"),
+            p, tr("No cleaned categories recorded"))
 
 
 class SessionDetail(QFrame):

@@ -1,4 +1,4 @@
-"""Vigil logo — renders the monochrome `currentColor` cube SVG in any colour.
+"""Podbye logo — renders the monochrome `currentColor` cube SVG in any colour.
 
 Qt's QSvgRenderer does not resolve CSS `currentColor`, so we substitute it with
 a concrete hex colour before rendering. Per-path opacity is preserved, which is

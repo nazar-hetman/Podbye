@@ -1,12 +1,12 @@
 name: A translation, or a language you want
-description: Offer a locale file, fix a wrong string, or ask for a language Vigil does not ship
+description: Offer a locale file, fix a wrong string, or ask for a language Podbye does not ship
 title: "[i18n] "
 labels: ["i18n"]
 body:
   - type: markdown
     attributes:
       value: |
-        Vigil ships English, Ukrainian and French. That is how far one person
+        Podbye ships English, Ukrainian and French. That is how far one person
         got, not a judgement about which languages matter.
 
         A **partial** translation is genuinely useful — translated strings show
@@ -41,7 +41,7 @@ body:
         whatever is easiest. Start from `app/locales/fr.json`, keep the keys
         exactly as they are, and keep every `{placeholder}` in braces.
 
-        For a fix: the English string, what Vigil currently shows, and what it
+        For a fix: the English string, what Podbye currently shows, and what it
         should say.
     validations:
       required: true

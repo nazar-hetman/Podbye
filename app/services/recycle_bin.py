@@ -1,6 +1,6 @@
 """Query and empty the Windows Recycle Bin.
 
-Vigil deliberately never deletes permanently — every cleanup is a *move* to
+Podbye deliberately never deletes permanently — every cleanup is a *move* to
 the Recycle Bin, so nothing it does is irreversible. The catch is that moving
 a file to the Recycle Bin on the same volume is a rename: **not one byte of
 disk space is freed until the bin is emptied.**
@@ -28,7 +28,7 @@ class _SHQUERYRBINFO(ctypes.Structure):
 
 
 # SHEmptyRecycleBin flags: no confirmation dialog, no progress UI, no sound.
-# Vigil asks for confirmation itself, in its own language and styling.
+# Podbye asks for confirmation itself, in its own language and styling.
 SHERB_NOCONFIRMATION = 0x01
 SHERB_NOPROGRESSUI = 0x02
 SHERB_NOSOUND = 0x04
@@ -55,7 +55,7 @@ def recycle_bin_status(drive: str | None = None) -> tuple[int, int]:
 def empty_recycle_bin(drive: str | None = None) -> tuple[bool, str]:
     """Empty the bin. Returns ``(ok, message)``.
 
-    This is the one genuinely irreversible thing Vigil can do, so it is never
+    This is the one genuinely irreversible thing Podbye can do, so it is never
     called without the user having said yes to a dialog that says so.
     """
     from app.i18n import tr

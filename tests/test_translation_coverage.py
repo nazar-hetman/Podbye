@@ -74,7 +74,7 @@ def test_cleanup_rule_text_is_translated(code):
 def test_destructive_action_strings_are_translated(code):
     """A user must never be asked to confirm deleting files in a language they
     did not choose. These are the strings attached to irreversible actions."""
-    # "Permanently delete files" is deliberately absent: Vigil has no permanent
+    # "Permanently delete files" is deliberately absent: Podbye has no permanent
     # delete. The Settings radio that offered one was disabled under "Not
     # available yet", and has been removed rather than left as dead UI.
     critical = [
@@ -125,7 +125,7 @@ def test_no_new_untranslatable_ui_strings():
         r"^[\s\W\d_]*$|^[a-z_]+$|^\{[^}]*\}$"
         r"|font|color|border|background|padding|margin|px|rgba|#[0-9a-fA-F]{3,8}"
         r"|^https?:|\|/|\.json$|\.log$|\.db$|^%|^C:", re.IGNORECASE)
-    ALLOWED = {"VIGIL", "VIGIL · LOCAL SYSTEM ANALYSIS"}
+    ALLOWED = {"PODBYE", "PODBYE · LOCAL SYSTEM ANALYSIS"}
 
     offenders = []
     for path in APP.rglob("*.py"):
@@ -172,7 +172,9 @@ def _dynamic_tables() -> dict[str, set[str]]:
     from app.screens.history import CLEANUP_TARGET_LABELS
     from app.screens.findings_dashboard import INSPECTOR_FIELD_LABELS
     from app.services.entity_detector import detector_reason_templates
+    from app.models.file_grouping import OTHER_KIND, _KIND_BY_EXT
     import app.services.quick_cleanup_detector as qc_detector
+    from app.models.entity_grouping import _CONTAINER_LABELS
 
     tables = {
         "quick cleanup explanations":
@@ -188,6 +190,12 @@ def _dynamic_tables() -> dict[str, set[str]]:
         # The evidence line under every finding.
         "detector reasons": detector_reason_templates(),
         "quick cleanup categories": set(qc_detector.CATEGORY_LABELS),
+        # The bucket names on the inspector's per-file list, reached as
+        # tr(group.kind).
+        "file kinds": set(_KIND_BY_EXT.values()) | {OTHER_KIND},
+        # Where an app keeps its data, on a group header and on any row
+        # under AppData. Reached as tr(location_label(path)).
+        "app data locations": {label for _marker, label in _CONTAINER_LABELS},
     }
     subs = getattr(st, "_SECTION_SUBS", None)
     if isinstance(subs, dict):
