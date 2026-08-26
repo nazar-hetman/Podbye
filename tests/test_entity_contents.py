@@ -207,7 +207,7 @@ def test_cloud_sync_is_always_worth_saying():
 def test_partial_coverage_is_not_a_sentence_here():
     """It is a PARTIAL marker on the section header instead.
 
-    "The scan stopped measuring before it reached the end" is Vigil talking
+    "The scan stopped measuring before it reached the end" is Podbye talking
     about its own internals, and it made the size beside it read as unreliable.
     """
     contents = Contents(mode=MODE_CONTENTS, total_files=4, truncated=True,

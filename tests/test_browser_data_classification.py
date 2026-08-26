@@ -188,7 +188,7 @@ def test_a_cacheddata_folder_without_build_hashes_is_left_alone():
 # ── the real thing still works ────────────────────────────────────
 
 def test_a_real_chrome_profile_is_still_browser_data():
-    """The fix must not stop Vigil seeing an actual browser profile."""
+    """The fix must not stop Podbye seeing an actual browser profile."""
     base = "C:/Users/u/AppData/Local/Google/Chrome"
     ud = f"{base}/User Data/Default"
     findings = [

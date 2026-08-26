@@ -254,7 +254,7 @@ class HomeScreen(QWidget):
         self._btn_header_new.hide()
 
         # All-time impact banner sits above every state so the user always
-        # sees the cumulative space Vigil has reclaimed for them.
+        # sees the cumulative space Podbye has reclaimed for them.
         self._build_lifetime_banner()
 
         if self._scan_state and self._scan_state.is_running:

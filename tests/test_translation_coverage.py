@@ -74,7 +74,7 @@ def test_cleanup_rule_text_is_translated(code):
 def test_destructive_action_strings_are_translated(code):
     """A user must never be asked to confirm deleting files in a language they
     did not choose. These are the strings attached to irreversible actions."""
-    # "Permanently delete files" is deliberately absent: Vigil has no permanent
+    # "Permanently delete files" is deliberately absent: Podbye has no permanent
     # delete. The Settings radio that offered one was disabled under "Not
     # available yet", and has been removed rather than left as dead UI.
     critical = [
@@ -125,7 +125,7 @@ def test_no_new_untranslatable_ui_strings():
         r"^[\s\W\d_]*$|^[a-z_]+$|^\{[^}]*\}$"
         r"|font|color|border|background|padding|margin|px|rgba|#[0-9a-fA-F]{3,8}"
         r"|^https?:|\|/|\.json$|\.log$|\.db$|^%|^C:", re.IGNORECASE)
-    ALLOWED = {"VIGIL", "VIGIL · LOCAL SYSTEM ANALYSIS"}
+    ALLOWED = {"PODBYE", "PODBYE · LOCAL SYSTEM ANALYSIS"}
 
     offenders = []
     for path in APP.rglob("*.py"):

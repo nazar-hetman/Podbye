@@ -58,7 +58,7 @@ def _is_protected_for_delete(path: str) -> bool:
     for part in norm.split("/"):
         if part in _PROTECTED_SEGMENTS:
             return True
-    # Vigil's own install and data folders. The detector already marks these
+    # Podbye's own install and data folders. The detector already marks these
     # protected; this is the backstop, so a stale entity from an older session
     # can never delete the app or the session store out from under a live run.
     from app.services.self_paths import is_self_path
@@ -74,7 +74,7 @@ class CleanupResult:
     failed: list = field(default_factory=list)             # paths that hit unexpected errors
     skipped_protected: list = field(default_factory=list)  # paths skipped (protected)
     # Paths skipped because the user marked them Keep. Kept apart from
-    # skipped_protected on purpose: one is Vigil's judgement about the system,
+    # skipped_protected on purpose: one is Podbye's judgement about the system,
     # the other is the user's standing instruction about their own files, and
     # a result that blurs them cannot explain itself.
     skipped_kept: list = field(default_factory=list)

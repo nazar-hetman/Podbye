@@ -1,4 +1,4 @@
-"""Persistent settings store — %APPDATA%\\Vigil\\config.json.
+"""Persistent settings store — %APPDATA%\\Podbye\\config.json.
 
 Simple JSON-based config with defaults. Loads at startup, saves on change.
 No cloud, no telemetry.
@@ -12,12 +12,12 @@ from typing import Any
 
 
 def _config_dir() -> Path:
-    """Return the Vigil config directory path."""
+    """Return the Podbye config directory path."""
     appdata = os.environ.get("APPDATA", "")
     if appdata:
-        return Path(appdata) / "Vigil"
+        return Path(appdata) / "Podbye"
     # Fallback for non-Windows
-    return Path.home() / ".config" / "vigil"
+    return Path.home() / ".config" / "podbye"
 
 
 def _config_path() -> Path:

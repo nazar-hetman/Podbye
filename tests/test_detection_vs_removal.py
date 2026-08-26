@@ -1,4 +1,4 @@
-"""What Vigil thinks it is, and how Vigil says to remove it, are two things.
+"""What Podbye thinks it is, and how Podbye says to remove it, are two things.
 
 They used to be one "Recommendation: …" sentence, which quietly turned a
 classification guess into a confident removal instruction. An application
@@ -66,7 +66,7 @@ def test_a_mixed_folder_is_reviewed_rather_than_removed():
     assert "Review" in _removal_method_text(_entity(actionability="review_only"))
 
 
-def test_vigil_says_plainly_when_it_will_not_remove_something():
+def test_podbye_says_plainly_when_it_will_not_remove_something():
     assert "not remove" in _removal_method_text(
         _entity(actionability="protected", risk="Protected"))
 

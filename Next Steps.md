@@ -1,4 +1,4 @@
-# Vigil — Next Steps & Current State
+# Podbye — Next Steps & Current State
 
 Last updated: 2026-05-16
 
@@ -39,7 +39,7 @@ Last updated: 2026-05-16
 - Protected items auto-disabled (never explained)
 - Concurrent workers (default 3, configurable 1-8)
 - Emergency timeout (180s default)
-- Disk cache: `%LOCALAPPDATA%\Vigil\cache\ai\`
+- Disk cache: `%LOCALAPPDATA%\Podbye\cache\ai\`
 - Cache key: path + size + mtime + model + tone + language + length
 - Entity-specific prompts (grouped context, file samples)
 - Language support: English, Ukrainian
@@ -53,7 +53,7 @@ Last updated: 2026-05-16
 - Auto-save every 8s during scan (`_AUTOSAVE_MS = 8000`)
 - Save on app close (closeEvent)
 - Save on scan complete / AI complete
-- `last_run.json` in `%LOCALAPPDATA%\Vigil\sessions\`
+- `last_run.json` in `%LOCALAPPDATA%\Podbye\sessions\`
 - Restore: findings, entities, target, mode, session_id
 - Resume: skip known paths, continue scanning new items
 - Home screen shows resume panel for unfinished sessions
@@ -117,7 +117,7 @@ Last updated: 2026-05-16
   - Live progress + result summary with close button
 - `ScanState.remove_entities_by_path(paths)` removes cleaned entities and emits `ui_refresh`
 - Toast message in selection bar post-cleanup: "✓ N items moved · X freed"
-- Cleanup record written to `%APPDATA%/Vigil/sessions/cleanup_{timestamp}.json`
+- Cleanup record written to `%APPDATA%/Podbye/sessions/cleanup_{timestamp}.json`
 - Protected entity system: Protected risk level, badge, filter chip, never sent to AI, never deleted
 
 ### ✅ Stop/Resume
@@ -142,7 +142,7 @@ Last updated: 2026-05-16
 - Deduplication by `source|name` key, sorted Risk → Review → Protected → Safe, enabled first
 - `StartupEntry` model: name, command, path, publisher, source, source_label, enabled, risk, risk_reason, impact, AI fields
 - Unresolved .lnk targets noted in risk_reason; .lnk path shown as fallback command
-- Vigil does **not** modify startup entries — recommendation only
+- Podbye does **not** modify startup entries — recommendation only
 
 ### ✅ Quick Cleanup (2026-05-16)
 - `QuickCleanupDetector(QThread)` in `app/services/quick_cleanup_detector.py` — five scanners in background thread

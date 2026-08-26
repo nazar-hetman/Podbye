@@ -9,7 +9,7 @@ Three things it is deliberately not:
 
 * **Not a directory tree.** "Steam → steamapps → common → …" is the filesystem
   restating itself. What a user needs is "Installed games — 148 GB".
-* **Not exhaustive.** Vigil is a cleanup tool, not a file browser. The section
+* **Not exhaustive.** Podbye is a cleanup tool, not a file browser. The section
   names what dominates and rolls the tail into one row.
 * **Not free.** Measured on the reporting machine, a full walk of Steam's
   40,349 files takes ~390 ms warm and `E:/My Projects` does not finish inside
@@ -405,7 +405,7 @@ def removal_consequence(entity: dict, contents: Contents) -> str:
     * that the deletion leaves the folder itself in place;
     * that it will propagate to a cloud account and other devices;
     * (partial coverage is a marker on the section header, not a sentence
-      here — "the scan stopped measuring" is Vigil talking about itself);
+      here — "the scan stopped measuring" is Podbye talking about itself);
     * or, when there is no contents section at all, how much is in there.
     """
     from app.i18n import tr

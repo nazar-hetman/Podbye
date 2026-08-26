@@ -26,7 +26,7 @@ def test_the_build_stays_one_folder():
     the DLLs inside the .exe where nobody can reach them, so the spec must
     keep producing a folder — COLLECT present, binaries excluded from EXE.
     """
-    spec = _read("vigil.spec")
+    spec = _read("podbye.spec")
     assert "COLLECT(" in spec, "one-file build would break LGPL v3 s4(d)"
     assert "exclude_binaries=True" in spec, (
         "binaries must live beside the exe, not inside it")
@@ -35,7 +35,7 @@ def test_the_build_stays_one_folder():
 def test_the_build_ships_the_licence_texts():
     """The LGPL and the OFL both require their text to accompany every
     distribution, so the spec has to bundle them."""
-    spec = _read("vigil.spec")
+    spec = _read("podbye.spec")
     assert '("LICENSE", ".")' in spec
     assert '("THIRD-PARTY-NOTICES.md", ".")' in spec
     assert '_bundle_dir("licenses"' in spec
@@ -68,7 +68,7 @@ def test_the_installer_version_matches_the_app():
     app_version = re.search(r'__version__\s*=\s*"([^"]+)"',
                             _read("app/version.py")).group(1)
     iss_version = re.search(r'#define\s+AppVersion\s+"([^"]+)"',
-                            _read("installer/Vigil.iss")).group(1)
+                            _read("installer/Podbye.iss")).group(1)
     assert iss_version == app_version, (
         f"installer says {iss_version}, app says {app_version}")
 
@@ -77,16 +77,16 @@ def test_the_installer_version_matches_the_app():
 
 
 def test_the_installer_deploys_the_whole_folder():
-    iss = _read("installer/Vigil.iss")
+    iss = _read("installer/Podbye.iss")
     assert "recursesubdirs" in iss, (
         "the installer must deploy _internal\\ — including the replaceable Qt DLLs")
-    assert "..\\dist\\Vigil" in iss.replace("/", "\\")
+    assert "..\\dist\\Podbye" in iss.replace("/", "\\")
 
 
 def test_the_installer_does_not_silently_delete_user_data():
-    """Scan history lives in %APPDATA%\\Vigil. Removing it without asking would
+    """Scan history lives in %APPDATA%\\Podbye. Removing it without asking would
     lose a reinstalling user's records."""
-    iss = _read("installer/Vigil.iss")
+    iss = _read("installer/Podbye.iss")
     assert "userappdata" in iss
     assert "MsgBox" in iss, "user data must be removed only after asking"
 

@@ -117,7 +117,7 @@ def _fallback_expected_rule() -> dict:
     # above "This is normal and does not mean cleanup failed."
     return {
         "intro": "Some files are still being used by Windows or another app.",
-        "context": ("A file that is open cannot be moved, so Vigil left those "
+        "context": ("A file that is open cannot be moved, so Podbye left those "
                     "where they are rather than forcing them."),
         "actions": [
             "close the app using the files, if known",
@@ -220,7 +220,7 @@ def assess_cleanup_counts(
             explanation_text=(
                 tr("Windows returned an unexpected cleanup error for part of "
                    "this category.") + "\n\n"
-                + tr("This is different from a normal locked-file case, so Vigil "
+                + tr("This is different from a normal locked-file case, so Podbye "
                      "left those items alone instead of forcing the cleanup.")
                 + "\n\n" + tr("You can:") + "\n"
                 + "• " + tr("restart Windows") + "\n"

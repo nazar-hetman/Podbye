@@ -168,7 +168,7 @@ def _startup_recommendation(entry: StartupEntry) -> tuple[str, str, str, str]:
         return (
             tr("NEEDS REVIEW"),
             tr("Recommendation: review the executable path and publisher before keeping this enabled at startup."),
-            tr("Vigil could not verify the publisher for this entry."),
+            tr("Podbye could not verify the publisher for this entry."),
             accent_review,
         )
     if high_impact:
@@ -195,7 +195,7 @@ def _startup_recommendation(entry: StartupEntry) -> tuple[str, str, str, str]:
     return (
         tr("NEEDS REVIEW"),
         tr("Recommendation: inspect the path and purpose before changing this startup entry."),
-        entry.risk_reason or tr("Vigil does not have enough confidence to mark this as safe."),
+        entry.risk_reason or tr("Podbye does not have enough confidence to mark this as safe."),
         accent_review,
     )
 
@@ -219,7 +219,7 @@ def _clear_layout(layout):
 
 
 _STARTUP_PROMPT = """\
-You are analyzing a Windows startup entry for Vigil, a system analysis tool.
+You are analyzing a Windows startup entry for Podbye, a system analysis tool.
 
 Entry:
   Name: {name}
@@ -645,7 +645,7 @@ class StartupInspectorPanel(QFrame):
         rec_hdr.addStretch()
         rec_layout.addLayout(rec_hdr)
 
-        self._rec_text_lbl = QLabel(tr("Select a startup entry to see Vigil's recommendation."))
+        self._rec_text_lbl = QLabel(tr("Select a startup entry to see Podbye's recommendation."))
         self._rec_text_lbl.setWordWrap(True)
         self._rec_text_lbl.setStyleSheet("font-size: 12px; font-weight: 600;")
         rec_layout.addWidget(self._rec_text_lbl)
@@ -740,7 +740,7 @@ class StartupInspectorPanel(QFrame):
         btn_row.addStretch()
         action_layout.addLayout(btn_row)
 
-        note = QLabel(tr("Vigil explains startup impact, but changes stay manual."))
+        note = QLabel(tr("Podbye explains startup impact, but changes stay manual."))
         note.setObjectName("Muted")
         note.setWordWrap(True)
         note.setStyleSheet("font-size: 9px;")
@@ -893,7 +893,7 @@ class StartupInspectorPanel(QFrame):
             self._ai_status_lbl.setText("")
             self._explanation_lbl.setText(tr("Startup explanation will appear here once you select an entry."))
             self._rec_status_lbl.setText(tr("WAITING"))
-            self._rec_text_lbl.setText(tr("Select a startup entry to see Vigil's recommendation."))
+            self._rec_text_lbl.setText(tr("Select a startup entry to see Podbye's recommendation."))
             self._rec_evidence_lbl.setText("")
             self._apply_recommendation_style(get_palette().get("text_dim", "#8a9b8f"))
             self._source_lbl.setText("—")
@@ -1113,7 +1113,7 @@ class StartupsScreen(QWidget):
         title = QLabel(tr("STARTUPS"))
         apply_tactical_label(title, font_size=16, letter_spacing=4)
         title_col.addWidget(title)
-        sub = QLabel(tr("Startup controls update Vigil state · Windows changes stay manual"))
+        sub = QLabel(tr("Startup controls update Podbye state · Windows changes stay manual"))
         sub.setObjectName("Dim")
         sub.setStyleSheet("font-size: 12px;")
         title_col.addWidget(sub)

@@ -1,4 +1,4 @@
-# Vigil — Decision Log
+# Podbye — Decision Log
 
 Product and architecture decisions that require written rationale. Each entry states the context, the options considered, the chosen path, and the migration plan.
 
@@ -19,7 +19,7 @@ Product and architecture decisions that require written rationale. Each entry st
 - Four actions per session: Open findings, Re-run with same target, Export NDJSON, Delete from history
 - Timeline is hidden when fewer than 5 sessions exist (replaced with compact summary)
 
-The underlying data is `history.json` (lightweight index) + per-session `session_{id}.json` files, all in `%LOCALAPPDATA%\Vigil\sessions\`. Cleanup operations write `cleanup_{timestamp}.json` in the same directory but are never displayed.
+The underlying data is `history.json` (lightweight index) + per-session `session_{id}.json` files, all in `%LOCALAPPDATA%\Podbye\sessions\`. Cleanup operations write `cleanup_{timestamp}.json` in the same directory but are never displayed.
 
 ---
 
@@ -54,7 +54,7 @@ User used the cleanup flow and moved items to the Recycle Bin. Now they want to 
 - **Reframe**: Cleanup history becomes the primary view. Records show timestamp, mode, items freed, category breakdown, and per-path details. This is a genuine trust and accountability feature.
 - **Absorb into Home**: Cleanup history wouldn't naturally belong on Home. It would require a separate surfacing mechanism anyway.
 
-*Verdict on this scenario: This is the strongest argument for a dedicated History screen. It's unique value that no other screen provides, and it differentiates Vigil from opaque cleaners by giving users a clear audit trail.*
+*Verdict on this scenario: This is the strongest argument for a dedicated History screen. It's unique value that no other screen provides, and it differentiates Podbye from opaque cleaners by giving users a clear audit trail.*
 
 ---
 
@@ -64,7 +64,7 @@ User used the cleanup flow and moved items to the Recycle Bin. Now they want to 
 
 **Rationale:**
 
-1. **Cleanup history is unique value.** No other screen in Vigil shows what was removed and when. Surfacing `cleanup_{timestamp}.json` records turns the History screen from a log-viewer into a trust and accountability feature — a meaningful product differentiator.
+1. **Cleanup history is unique value.** No other screen in Podbye shows what was removed and when. Surfacing `cleanup_{timestamp}.json` records turns the History screen from a log-viewer into a trust and accountability feature — a meaningful product differentiator.
 
 2. **Scan session list is mostly redundant.** The Home screen already shows the most recent session with Open Findings, Resume, and Start New. The cases where a user wants to open session N-2 or N-3 are real but infrequent. Condensing sessions to a secondary list is a net improvement in information density.
 

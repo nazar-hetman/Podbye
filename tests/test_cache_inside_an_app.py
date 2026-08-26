@@ -5,7 +5,7 @@ Adobe keeps a great deal of cache, but the extension keeps its **login** in the
 same app folder — "is it possible to clear only cache that really affects
 nothing, so the login can be saved?"
 
-Vigil's model already answers that when it *recognises* the cache: the cache
+Podbye's model already answers that when it *recognises* the cache: the cache
 subfolder becomes its own Safe, recyclable entity and the folder holding the
 sign-in stays Review with no whole-folder delete. It failed for Adobe on the
 name alone. Pass 4's test was ``name == "cache"`` or ``name.endswith("cache")``,
@@ -16,7 +16,7 @@ so ``Media Cache Files`` matched nothing, no earlier pass claimed it, and
 Deliberately NOT done here: detecting the credentials. A filename probe for
 login/token/licence names over 280,000 files of real AppData returned 14,481
 hits, nearly all of them DLLs and source files (``Microsoft.IdentityModel.
-Tokens.dll``). Vigil offers what it positively recognises as regenerable and
+Tokens.dll``). Podbye offers what it positively recognises as regenerable and
 leaves everything else alone; it never claims to have spotted your sign-in.
 """
 from app.services.entity_detector import (

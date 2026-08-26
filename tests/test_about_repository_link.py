@@ -1,7 +1,7 @@
 """About links to the repository — and that is all it does.
 
 The link was asked for as "check for updates". The button is there, but what it
-does is hand a URL to the system browser. Vigil making the request itself would
+does is hand a URL to the system browser. Podbye making the request itself would
 contradict the sentence this very panel closes with ("No cloud processing. No
 background telemetry") and would announce the user's IP, version and launch
 time to a server on every start — for a tool whose whole argument is that it is
@@ -19,7 +19,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 def test_the_urls_point_at_this_project():
     assert REPO_URL.startswith("https://github.com/")
-    assert REPO_URL.rstrip("/").endswith("/Vigil")
+    assert REPO_URL.rstrip("/").endswith("/Podbye")
     assert RELEASES_URL == REPO_URL + "/releases"
 
 

@@ -1,4 +1,4 @@
-# Woodpecker CI — pipeline definition for Vigil.
+# Woodpecker CI — pipeline definition for Podbye.
 #
 # Woodpecker looks for this file (".woodpecker.yaml") in the repo root on every
 # triggered pipeline. If you outgrow one file, replace it with a ".woodpecker/"
@@ -60,7 +60,7 @@ steps:
     image: powershell
     commands:
       - python -m pip install -r requirements.txt pyinstaller
-      - python -m PyInstaller --noconfirm vigil.spec
+      - python -m PyInstaller --noconfirm podbye.spec
     when:
       - evaluate: "false"
         platform: windows/amd64

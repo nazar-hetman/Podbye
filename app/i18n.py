@@ -1,4 +1,4 @@
-"""Vigil i18n — translation module.
+"""Podbye i18n — translation module.
 
 Usage:
     from app.i18n import tr
@@ -69,7 +69,7 @@ def explanation_languages() -> list[str]:
     """Languages the AI can be asked to answer in.
 
     Deliberately not available_languages(): what the model writes has nothing to
-    do with whether Vigil ships a locale file. Gating this on a UI translation
+    do with whether Podbye ships a locale file. Gating this on a UI translation
     meant a user running a multilingual model could not ask for German simply
     because de.json did not exist yet.
     """

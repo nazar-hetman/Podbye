@@ -16,7 +16,7 @@ def screen(tmp_path, monkeypatch):
 
     _config_path is a MODULE-level function, not a method — patching it on the
     class silently does nothing and the test then writes to the user's real
-    %APPDATA%\\Vigil\\config.json. Patch the module attribute.
+    %APPDATA%\\Podbye\\config.json. Patch the module attribute.
     """
     from app.screens.settings import SettingsScreen
     import app.config.settings_store as ss

@@ -12,7 +12,7 @@ No product story reaches either with a drive root â€” a file list holds files â€
 so this is defence in depth rather than a live bug. It is also the one input
 where being wrong cannot be undone.
 
-Program Files and the user profile are deliberately NOT blocked: Vigil legitimately
+Program Files and the user profile are deliberately NOT blocked: Podbye legitimately
 cleans inside both, and protection there is per-entity risk.
 """
 import pytest
@@ -66,5 +66,5 @@ def test_real_files_are_still_deletable():
     r"C:\Users\Nazar\Downloads\old.zip",
     r"C:\Users\Nazar\AppData\Local\Temp\x.tmp",
 ])
-def test_places_vigil_is_meant_to_clean_are_not_blocked(path):
+def test_places_podbye_is_meant_to_clean_are_not_blocked(path):
     assert _is_protected_for_delete(path) is False

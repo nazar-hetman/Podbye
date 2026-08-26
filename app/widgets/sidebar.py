@@ -1,4 +1,4 @@
-"""Sidebar navigation widget for Vigil — matches mockup design."""
+"""Sidebar navigation widget for Podbye — matches mockup design."""
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
@@ -114,7 +114,7 @@ class Sidebar(QFrame):
         brand_layout.setContentsMargins(14, 6, 14, 16)
         brand_layout.setSpacing(10)
 
-        # Brand mark — the Vigil cube, recoloured to the active theme accent.
+        # Brand mark — the Podbye cube, recoloured to the active theme accent.
         self._logo_lbl = QLabel()
         self._logo_lbl.setStyleSheet("background: transparent; border: none;")
         self._logo_lbl.setFixedSize(26, 26)
@@ -125,7 +125,7 @@ class Sidebar(QFrame):
 
         brand_text = QVBoxLayout()
         brand_text.setSpacing(4)
-        wordmark = QLabel("VIGIL")
+        wordmark = QLabel("PODBYE")
         wordmark.setObjectName("Wordmark")
         brand_text.addWidget(wordmark)
 
@@ -138,7 +138,18 @@ class Sidebar(QFrame):
         brand_layout.addStretch()
 
         layout.addWidget(brand_frame)
-        layout.addSpacing(8)
+
+        # What the name means, for everyone who does not read Ukrainian:
+        # "Podbye" is подбай — take care of it. A wordmark that has to be
+        # explained is a wordmark with a line under it. Full sidebar width
+        # rather than beside the mark, because 196px minus the logo leaves
+        # nowhere for a sentence to go.
+        self._slogan = QLabel(tr("Take care of your system"))
+        self._slogan.setObjectName("Slogan")
+        self._slogan.setWordWrap(True)
+        self._slogan.setContentsMargins(14, 0, 14, 0)
+        layout.addWidget(self._slogan)
+        layout.addSpacing(12)
 
         # Navigation sections
         for index, (section, items) in enumerate(self.NAV_ITEMS.items()):

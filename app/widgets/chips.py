@@ -1,4 +1,4 @@
-"""Chip/filter bar widget for Vigil."""
+"""Chip/filter bar widget for Podbye."""
 from __future__ import annotations
 
 from PySide6.QtWidgets import QFrame, QHBoxLayout

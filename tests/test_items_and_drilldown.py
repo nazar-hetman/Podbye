@@ -3,7 +3,7 @@
 Two different questions wear the same word. "What is inside Adobe's cache?"
 means *parts of one thing* — media, previews, logs — and deleting the cache
 deletes all of them together. "What is inside E:\\Work\\Projects?" means
-*other things* — Focus, Vigil, Forge — each of which is a separate decision a
+*other things* — Focus, Podbye, Forge — each of which is a separate decision a
 person might make on a separate day. The first is CONTENTS. The second is
 ITEMS, and these tests hold the line between them.
 """

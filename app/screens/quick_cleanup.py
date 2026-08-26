@@ -802,11 +802,11 @@ class QuickCleanupScreen(QWidget):
         if not (size_bytes or items):
             self.refresh_recycle_bin()
             return
-        # The one irreversible thing Vigil can do, so it says so plainly.
+        # The one irreversible thing Podbye can do, so it says so plainly.
         reply = QMessageBox.question(
             self, tr("Empty Recycle Bin"),
             tr("Permanently delete {n:,} items and free {size}?\n\n"
-               "This cannot be undone — everything Vigil cleaned is in here, "
+               "This cannot be undone — everything Podbye cleaned is in here, "
                "and emptying is the step that actually frees the space.",
                n=items, size=_format_size(size_bytes)),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,

@@ -1,8 +1,8 @@
-# VIGIL Roadmap
+# PODBYE Roadmap
 
 ## Vision
 
-Vigil is a local-first system awareness console — not an aggressive cleaner.
+Podbye is a local-first system awareness console — not an aggressive cleaner.
 
 The goal is helping users understand:
 - what exists on their machine
@@ -11,7 +11,7 @@ The goal is helping users understand:
 - what impacts performance or storage
 - what should be reviewed manually
 
-Vigil focuses on:
+Podbye focuses on:
 - transparency
 - readability
 - local AI assistance
@@ -213,7 +213,7 @@ Built a complete desktop UI prototype using Python + PySide6.
 - `ScanState.remove_entities_by_path(paths)` — removes entities, purges matching findings, emits `ui_refresh`
 - Findings table rebuilds automatically via existing `ui_refresh` signal
 - Toast message in selection bar: "✓ N items moved to Recycle Bin · X freed"
-- Cleanup record written to `%APPDATA%/Vigil/sessions/cleanup_{timestamp}.json`
+- Cleanup record written to `%APPDATA%/Podbye/sessions/cleanup_{timestamp}.json`
 
 ## ✅ Cleanup Preview Panel (infrastructure)
 - Selected items risk breakdown (Protected / Risk / Review / Safe)
@@ -252,7 +252,7 @@ Built a complete desktop UI prototype using Python + PySide6.
 - Publisher lookup via `VS_VERSIONINFO` exe resource
 - Deduplicated + sorted by risk (Risk → Review → Protected → Safe, enabled first)
 - AI explanation integration
-- Vigil does **not** modify startup entries — recommendation only
+- Podbye does **not** modify startup entries — recommendation only
 
 ## ⏳ Smart Recommendations
 - Pattern-based contextual suggestions
@@ -260,7 +260,7 @@ Built a complete desktop UI prototype using Python + PySide6.
 
 ## ⏳ Scheduled Scanning
 - Background analysis (idle-only, AC-only, weekly)
-- Important: Vigil never auto-deletes without confirmation
+- Important: Podbye never auto-deletes without confirmation
 
 ## ✅ Partial Results Streaming
 - Already implemented — findings stream to UI during scan
@@ -317,7 +317,7 @@ Storage heatmaps, category trends, cleanup impact graphs.
 
 # Design Principles
 
-Vigil is intentionally designed to avoid:
+Podbye is intentionally designed to avoid:
 - aggressive "one-click optimization"
 - hidden cleanup behavior
 - fake hacker aesthetics

@@ -1,7 +1,9 @@
-"""Top bar widget for Vigil — global app bar with centered identity and AI model."""
+"""Top bar widget for Podbye — global app bar with centered identity and AI model."""
 
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel
 from PySide6.QtCore import Qt
+
+from app.i18n import tr
 
 
 class Topbar(QFrame):
@@ -18,7 +20,9 @@ class Topbar(QFrame):
 
         layout.addStretch()
 
-        self._center = QLabel("VIGIL · LOCAL SYSTEM ANALYSIS")
+        # The name and its tagline live in the sidebar, an inch to the left.
+        # Repeating them here gave the window two competing descriptors.
+        self._center = QLabel(tr("LOCAL SYSTEM ANALYSIS"))
         self._center.setObjectName("Dim")
         self._center.setStyleSheet(
             "font-family: 'Silkscreen', 'JetBrains Mono'; font-size: 10px; letter-spacing: 3px;"

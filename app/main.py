@@ -1,4 +1,4 @@
-"""Vigil — Main application entry point."""
+"""Podbye — Main application entry point."""
 
 import sys
 import os
@@ -10,10 +10,10 @@ import logging
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # ─── Logging ───
-# Quiet by default; set the VIGIL_DEBUG environment variable to 1 to surface
+# Quiet by default; set the PODBYE_DEBUG environment variable to 1 to surface
 # internal lifecycle/thread breadcrumbs on the console.
 logging.basicConfig(
-    level=logging.DEBUG if os.environ.get("VIGIL_DEBUG") else logging.WARNING,
+    level=logging.DEBUG if os.environ.get("PODBYE_DEBUG") else logging.WARNING,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 
@@ -32,7 +32,7 @@ from app.fonts import load_fonts, FONT_UI
 from app.widgets.sidebar import Sidebar
 from app.widgets.topbar import Topbar
 from app.widgets.logo import logo_icon
-from app.widgets.tray import VigilTray
+from app.widgets.tray import PodbyeTray
 from app.widgets.close_dialog import (
     CloseRunningDialog, OUTCOME_QUIT, OUTCOME_BACKGROUND,
 )
@@ -64,17 +64,17 @@ def _screen_subtitles() -> dict:
     }
 
 
-class VigilWindow(QMainWindow):
+class PodbyeWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("VIGIL")
+        self.setWindowTitle("PODBYE")
         self.setMinimumSize(1100, 700)
         self.resize(1440, 900)
         self._current_theme = "forest"
         self._current_screen_name = "Home"
         # Background / tray state.
-        self._tray: VigilTray | None = None
+        self._tray: PodbyeTray | None = None
         self._force_quit = False        # set by the tray "Quit" action
         self._in_background = False     # window hidden, work continuing in tray
         self._tray_intro_shown = False  # one-time "still running" balloon
@@ -99,7 +99,7 @@ class VigilWindow(QMainWindow):
     def _sweep_session_leftovers(self):
         """Reclaim crash leftovers in the sessions folder, once per launch.
 
-        Vigil protects its own data folder from cleanup, so nothing else will
+        Podbye protects its own data folder from cleanup, so nothing else will
         ever reclaim these. Unlinking is O(1) whatever the file size, and only
         files older than an hour are touched, so this is safe on the UI thread.
         """
@@ -339,7 +339,7 @@ class VigilWindow(QMainWindow):
         box.setIcon(QMessageBox.Icon.Information)
         box.setWindowTitle(tr("Language change pending"))
         box.setText(
-            tr("Vigil is busy: {reason}. The language will change "
+            tr("Podbye is busy: {reason}. The language will change "
                "automatically once that finishes or you stop it.",
                reason=reason or tr("an analysis is running"))
         )
@@ -433,8 +433,8 @@ class VigilWindow(QMainWindow):
         if not self._is_busy() and not self._bg_done_notified:
             self._bg_done_notified = True
             self._tray.notify(
-                tr("Vigil finished"),
-                tr("The task is done. Open Vigil to review, or quit from here."),
+                tr("Podbye finished"),
+                tr("The task is done. Open Podbye to review, or quit from here."),
             )
 
     def _on_resume_requested(self, session_data: dict):
@@ -540,14 +540,14 @@ class VigilWindow(QMainWindow):
             return tr("A scan")
         return tr("A task")
 
-    def _ensure_tray(self) -> "VigilTray | None":
+    def _ensure_tray(self) -> "PodbyeTray | None":
         """Create the tray icon on first use; return None if unavailable."""
         if self._tray is not None:
             return self._tray
-        if not VigilTray.is_available():
+        if not PodbyeTray.is_available():
             return None
         icon = logo_icon(get_palette(self._current_theme)["accent"])
-        self._tray = VigilTray(icon, parent=self)
+        self._tray = PodbyeTray(icon, parent=self)
         self._tray.show_requested.connect(self._restore_from_tray)
         self._tray.quit_requested.connect(self._quit_from_tray)
         return self._tray
@@ -568,7 +568,7 @@ class VigilWindow(QMainWindow):
         if not self._tray_intro_shown:
             self._tray_intro_shown = True
             tray.notify(
-                tr("Vigil is still running"),
+                tr("Podbye is still running"),
                 tr("Your task continues in the background. "
                    "Right-click the tray icon to quit."),
             )
@@ -711,6 +711,17 @@ class VigilWindow(QMainWindow):
 
 
 def main():
+    # Before anything reads a setting: an install that predates the rename
+    # keeps everything under %APPDATA%\Vigil, and starting against an empty
+    # Podbye directory would look exactly like losing every saved session and
+    # every Keep mark. Idempotent, and never fatal — see legacy_migration.
+    try:
+        from app.config.legacy_migration import migrate
+        migrate(log_fn=logging.getLogger("podbye.migrate").info)
+    except Exception:
+        logging.getLogger("podbye.migrate").exception(
+            "could not carry Vigil-era data over")
+
     # High-DPI attribute (Qt 5 compat, harmless on Qt 6)
     try:
         QApplication.setHighDpiScaleFactorRoundingPolicy(
@@ -725,7 +736,7 @@ def main():
         try:
             import ctypes
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                "Vigil.App"
+                "Podbye.App"
             )
         except Exception:
             pass
@@ -743,7 +754,7 @@ def main():
     font.setHintingPreference(QFont.PreferFullHinting)
     app.setFont(font)
 
-    window = VigilWindow()
+    window = PodbyeWindow()
     window.show()
 
     sys.exit(app.exec())

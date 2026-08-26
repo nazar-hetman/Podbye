@@ -657,7 +657,7 @@ class SettingsScreen(QWidget):
                 "close_behavior", self._close_behavior_combo.currentData()))
         win_lay.addLayout(_setting_row(
             tr("When closing while busy"),
-            tr("If a task is still running when you close the window, Vigil can "
+            tr("If a task is still running when you close the window, Podbye can "
                "ask, keep working in the system tray, or stop and quit."),
             self._close_behavior_combo,
         ))
@@ -703,7 +703,7 @@ class SettingsScreen(QWidget):
             tr("Connection mode"),
             tr("Local finds a model server already running on this machine — "
                "Ollama, LM Studio or llama.cpp — on its usual port. Server points "
-               "Vigil at another machine on your network (LAN addresses only)."),
+               "Podbye at another machine on your network (LAN addresses only)."),
             mode_w,
         ))
 
@@ -726,7 +726,7 @@ class SettingsScreen(QWidget):
         # leave the button invisible on a panel_alt panel.
         self._btn_test.clicked.connect(self._test_connection)
         ep_h.addWidget(self._btn_test)
-        srv_lay.addLayout(_setting_row(tr("Endpoint"), tr("Ollama-compatible HTTP server. Vigil never reaches the public network."), ep_w))
+        srv_lay.addLayout(_setting_row(tr("Endpoint"), tr("Ollama-compatible HTTP server. Podbye never reaches the public network."), ep_w))
 
         # Connection status: the state on one line, and what to do about it on
         # the next. A single line had to serve every outcome, so it ended up
@@ -782,7 +782,7 @@ class SettingsScreen(QWidget):
 
         # Local-only disclosure
         disc = QLabel(
-            tr("Vigil refuses to connect to non-loopback or non-LAN endpoints. "
+            tr("Podbye refuses to connect to non-loopback or non-LAN endpoints. "
                "There is no cloud fallback, no API key field, no analytics.")
         )
         disc.setObjectName("Dim")
@@ -1057,7 +1057,7 @@ class SettingsScreen(QWidget):
         method_lbl.setMaximumWidth(360)
         fh_lay.addLayout(_setting_row(
             tr("Cleanup method"),
-            tr("Vigil never deletes permanently. Emptying the Recycle Bin is "
+            tr("Podbye never deletes permanently. Emptying the Recycle Bin is "
                "always your own, separate decision."),
             method_lbl,
         ))
@@ -1145,7 +1145,7 @@ class SettingsScreen(QWidget):
         b_lay.addWidget(_divider())
 
         # Source and releases. Both are links handed to the system browser —
-        # Vigil itself never requests either. That is the whole reason there is
+        # Podbye itself never requests either. That is the whole reason there is
         # no automatic update check: a program that promises it does not talk to
         # the internet cannot quietly announce its version, IP and launch time
         # on every start. The button says what it does so nobody assumes
@@ -1166,7 +1166,7 @@ class SettingsScreen(QWidget):
         links_row.addStretch()
         b_lay.addLayout(_setting_row(
             tr("Repository"),
-            tr("Opens in your browser. Vigil never contacts the internet "
+            tr("Opens in your browser. Podbye never contacts the internet "
                "itself, so there is nothing to check from in here."),
             links))
 
@@ -1180,7 +1180,7 @@ class SettingsScreen(QWidget):
         # is not much better than no path at all.
         store_panel = Panel(alt=True)
         p_lay = store_panel.with_layout(vertical=True, margins=(14, 12, 14, 12), spacing=10)
-        p_lay.addLayout(_panel_title(tr("Storage"), tr("where Vigil keeps its data")))
+        p_lay.addLayout(_panel_title(tr("Storage"), tr("where Podbye keeps its data")))
         self._register_styled_panel(store_panel)
 
         from app.state.session_store import sessions_dir
@@ -1196,7 +1196,7 @@ class SettingsScreen(QWidget):
 
         p_lay.addLayout(self._storage_row(
             "config", tr("Settings"),
-            tr("Your preferences. Deleting it resets Vigil to defaults."),
+            tr("Your preferences. Deleting it resets Podbye to defaults."),
         ))
         p_lay.addWidget(_divider())
         p_lay.addLayout(self._storage_row(
@@ -1225,7 +1225,7 @@ class SettingsScreen(QWidget):
         br_lay.setContentsMargins(0, 0, 0, 0)
         br_lay.setSpacing(8)
 
-        # "Open logs folder" used to live here. Vigil configures logging to the
+        # "Open logs folder" used to live here. Podbye configures logging to the
         # console only, so the button created an empty directory and opened it —
         # a support action that could never produce anything to send.
         btn_reset = QPushButton(tr("Reset all settings"))
@@ -1313,7 +1313,7 @@ class SettingsScreen(QWidget):
     def _open_external(self, url: str):
         """Hand *url* to the system browser.
 
-        QDesktopServices, not urllib: this must not become a request Vigil
+        QDesktopServices, not urllib: this must not become a request Podbye
         makes. Nothing here opens a socket, which is also why
         test_offline_guarantee still passes with these buttons on screen.
         """
@@ -1452,12 +1452,12 @@ class SettingsScreen(QWidget):
                     "review", hint)
         if status == oc.STATUS_NOT_RUNNING:
             return (tr("Ollama is installed but not running"), "review",
-                    tr("Start it and Vigil will connect on its own — "
+                    tr("Start it and Podbye will connect on its own — "
                        "nothing here needs to be filled in."))
         if status == oc.STATUS_NOT_INSTALLED:
             return (tr("no local AI runtime on this machine"), "risk",
                     tr("Install Ollama or LM Studio, then press Test. "
-                       "Vigil only ever talks to your own machine or LAN."))
+                       "Podbye only ever talks to your own machine or LAN."))
         if status == oc.STATUS_UNREACHABLE:
             return (tr("no answer from that address"), "risk",
                     tr("Check the machine is on, the runtime is running, and "
@@ -1465,7 +1465,7 @@ class SettingsScreen(QWidget):
                        "its own loopback."))
         if status == oc.STATUS_REFUSED:
             return (tr("refused · not a local address"), "risk",
-                    tr("Vigil only connects to this machine or your LAN, "
+                    tr("Podbye only connects to this machine or your LAN, "
                        "never to a cloud API."))
         return (tr("unknown state"), "risk", "")
 
@@ -1546,7 +1546,7 @@ class SettingsScreen(QWidget):
         self._btn_start_ollama.setEnabled(False)
         self._conn_status_lbl.setText(tr("starting Ollama…"))
         try:
-            # "ollama serve" is the daemon; detached so closing Vigil does not
+            # "ollama serve" is the daemon; detached so closing Podbye does not
             # take the model server down with it.
             subprocess.Popen(
                 [exe, "serve"],
@@ -1656,7 +1656,7 @@ class SettingsScreen(QWidget):
     def _show_no_models(self):
         """Empty the model list, keeping only a model the user really chose.
 
-        Vigil used to fill this with a placeholder catalogue — "llama3.2:3b",
+        Podbye used to fill this with a placeholder catalogue — "llama3.2:3b",
         "qwen2.5:7b", "mistral", "gemma2:2b" — whenever the server was offline.
         They looked exactly like real entries, so picking one was the obvious
         move, and every explanation then failed because that model had never

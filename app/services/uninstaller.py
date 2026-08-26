@@ -87,7 +87,7 @@ def uninstaller_is_runnable(command: str) -> bool:
 
     A registry entry outlives the program it describes: uninstall commands for
     three Steam games pointed at a steam.exe that had moved drives. Offering
-    Deep Uninstall for those promises something Vigil cannot deliver.
+    Deep Uninstall for those promises something Podbye cannot deliver.
     """
     executable, _args = split_uninstall_command(command)
     if not executable:

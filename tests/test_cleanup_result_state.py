@@ -90,7 +90,7 @@ def test_failures_are_named_paths_not_a_count(dlg, qapp):
 
 
 def test_the_issue_list_is_ordered_worst_first(dlg, qapp):
-    """A protected skip is Vigil working correctly and can be scrolled past;
+    """A protected skip is Podbye working correctly and can be scrolled past;
     an unexplained failure cannot."""
     _finish(dlg, qapp, succeeded=["C:/tmp/f0"], not_recycled=["C:/tmp/f0"],
             in_use=["C:/tmp/f1"], failed=["C:/tmp/f2"],

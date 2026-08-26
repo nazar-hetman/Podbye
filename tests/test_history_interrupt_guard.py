@@ -6,7 +6,7 @@ overwritten by whatever the worker emits next. Neither outcome is one the user
 asked for, and nothing said a word about it. "Re-run with same target" reaches
 past the running work the same way.
 
-Driven through a stub rather than a real VigilWindow — building the whole
+Driven through a stub rather than a real PodbyeWindow — building the whole
 window starts every screen's timers and background work, which hangs a test
 run. The three methods under test are borrowed onto a plain object, the same
 way test_file_group_affordance does it.
@@ -14,7 +14,7 @@ way test_file_group_affordance does it.
 import pytest
 from PySide6.QtWidgets import QMessageBox
 
-from app.main import VigilWindow
+from app.main import PodbyeWindow
 
 
 class _State:
@@ -41,9 +41,9 @@ def _window(busy: bool):
 
     class _Win:
         _confirm_interrupting_running_work = \
-            VigilWindow._confirm_interrupting_running_work
-        _on_open_findings_requested = VigilWindow._on_open_findings_requested
-        _on_rerun_from_history = VigilWindow._on_rerun_from_history
+            PodbyeWindow._confirm_interrupting_running_work
+        _on_open_findings_requested = PodbyeWindow._on_open_findings_requested
+        _on_rerun_from_history = PodbyeWindow._on_rerun_from_history
 
         def __init__(self):
             self.log = log
@@ -140,5 +140,5 @@ def test_both_history_actions_are_guarded():
     """A new entry point that skips the check would be the whole bug again."""
     import inspect
     for name in ("_on_open_findings_requested", "_on_rerun_from_history"):
-        src = inspect.getsource(getattr(VigilWindow, name))
+        src = inspect.getsource(getattr(PodbyeWindow, name))
         assert "_confirm_interrupting_running_work" in src, f"{name} is unguarded"

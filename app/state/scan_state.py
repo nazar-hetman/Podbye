@@ -23,8 +23,8 @@ from app.models.smart_entity import SmartEntity
 _human_size = _format_size
 
 # Internal lifecycle/thread breadcrumbs go here (DEBUG level) instead of the
-# UI log panel — set VIGIL_DEBUG=1 (see main.py) to surface them on the console.
-_log = logging.getLogger("vigil.scanstate")
+# UI log panel — set PODBYE_DEBUG=1 (see main.py) to surface them on the console.
+_log = logging.getLogger("podbye.scanstate")
 
 # How often the UI refresh signal fires during a scan (ms)
 _THROTTLE_MS = 800
@@ -1253,7 +1253,7 @@ class ScanState(QObject):
                     # weakened it: no uninstall command or publisher on app
                     # rows, Downloads/Desktop entities falling back to their
                     # type category, loose-file groups losing the files they
-                    # actually stand for, and Vigil's own data losing the
+                    # actually stand for, and Podbye's own data losing the
                     # is_self flag that protects it from cleanup.
                     removable_file_paths=ed.get("removable_file_paths", []),
                     install_date=ed.get("install_date", ""),

@@ -1,6 +1,6 @@
 """Shut background threads down before the widgets that own them go away.
 
-Every long job in Vigil is a QThread parented to the screen that started it —
+Every long job in Podbye is a QThread parented to the screen that started it —
 ``CleanupWorker(parent=self)``, ``QuickCleanupDetector(parent=self)``,
 ``StartupAIWorker(parent=self)``. That parenting is what makes changing the
 language mid-work fatal: switching language rebuilds the whole shell and

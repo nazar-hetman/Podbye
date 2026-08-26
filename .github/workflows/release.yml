@@ -1,4 +1,4 @@
-# Build Vigil on GitHub's runners and attach the result to a release.
+# Build Podbye on GitHub's runners and attach the result to a release.
 #
 # The point is not convenience — it is evidence. A binary built here is
 # provably the product of the public source in this repository, and the log is
@@ -40,7 +40,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
 
       - name: Build
-        run: pyinstaller --noconfirm vigil.spec
+        run: pyinstaller --noconfirm podbye.spec
 
       # Guard the LGPL obligation mechanically rather than trusting the spec
       # to stay correct. Qt must arrive as replaceable files next to the exe,
@@ -48,17 +48,17 @@ jobs:
       - name: Verify licence compliance of the build
         shell: pwsh
         run: |
-          $qt = Get-ChildItem dist\Vigil\_internal\PySide6\Qt6*.dll -ErrorAction SilentlyContinue
+          $qt = Get-ChildItem dist\Podbye\_internal\PySide6\Qt6*.dll -ErrorAction SilentlyContinue
           if ($qt.Count -lt 1) {
             throw "Qt DLLs are not present as separate files — the build must stay one-folder (LGPL v3 s4(d))."
           }
           foreach ($f in @(
-              "dist\Vigil\_internal\LICENSE",
-              "dist\Vigil\_internal\THIRD-PARTY-NOTICES.md",
-              "dist\Vigil\_internal\licenses\LGPL-3.0.txt",
-              "dist\Vigil\_internal\licenses\GPL-3.0.txt",
-              "dist\Vigil\_internal\licenses\SIL-Open-Font-License-1.1.txt",
-              "dist\Vigil\_internal\licenses\psutil-BSD-3-Clause.txt")) {
+              "dist\Podbye\_internal\LICENSE",
+              "dist\Podbye\_internal\THIRD-PARTY-NOTICES.md",
+              "dist\Podbye\_internal\licenses\LGPL-3.0.txt",
+              "dist\Podbye\_internal\licenses\GPL-3.0.txt",
+              "dist\Podbye\_internal\licenses\SIL-Open-Font-License-1.1.txt",
+              "dist\Podbye\_internal\licenses\psutil-BSD-3-Clause.txt")) {
             if (-not (Test-Path $f)) { throw "missing from the build: $f" }
           }
           Write-Host "OK — $($qt.Count) replaceable Qt DLLs and all licence texts present."
@@ -66,9 +66,9 @@ jobs:
       - name: Smoke-test the built exe
         shell: pwsh
         run: |
-          $p = Start-Process dist\Vigil\Vigil.exe -PassThru
+          $p = Start-Process dist\Podbye\Podbye.exe -PassThru
           Start-Sleep -Seconds 20
-          if ($p.HasExited) { throw "Vigil exited on startup with code $($p.ExitCode)" }
+          if ($p.HasExited) { throw "Podbye exited on startup with code $($p.ExitCode)" }
           Stop-Process -Id $p.Id -Force
           Write-Host "OK — started and stayed running."
 
@@ -81,7 +81,7 @@ jobs:
             $v = "dev-" + $env:GITHUB_SHA.Substring(0,7)
           }
           echo "VERSION=$v" >> $env:GITHUB_ENV
-          Compress-Archive -Path dist\Vigil\* -DestinationPath "Vigil-$v-windows-x64.zip"
+          Compress-Archive -Path dist\Podbye\* -DestinationPath "Podbye-$v-windows-x64.zip"
 
       - name: Build installer
         shell: pwsh
@@ -97,14 +97,14 @@ jobs:
           }
           if (-not $iscc) { throw "Inno Setup (ISCC.exe) not found on this runner." }
           Write-Host "Using $iscc"
-          & $iscc installer\Vigil.iss
+          & $iscc installer\Podbye.iss
           if ($LASTEXITCODE -ne 0) { throw "installer compile failed ($LASTEXITCODE)" }
           Get-ChildItem installer\Output
 
       - name: Checksums
         shell: pwsh
         run: |
-          $files = @(Get-ChildItem "Vigil-*.zip") + @(Get-ChildItem installer\Output\*.exe)
+          $files = @(Get-ChildItem "Podbye-*.zip") + @(Get-ChildItem installer\Output\*.exe)
           $files | ForEach-Object {
             $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
             "$h  $($_.Name)"
@@ -113,9 +113,9 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Vigil-${{ env.VERSION }}
+          name: Podbye-${{ env.VERSION }}
           path: |
-            Vigil-*.zip
+            Podbye-*.zip
             installer/Output/*.exe
             SHA256SUMS.txt
 
@@ -126,19 +126,19 @@ jobs:
           draft: true          # you review it before anyone sees it
           generate_release_notes: true
           files: |
-            Vigil-*.zip
+            Podbye-*.zip
             installer/Output/*.exe
             SHA256SUMS.txt
           body: |
-            Vigil ${{ github.ref_name }} — Windows x64
+            Podbye ${{ github.ref_name }} — Windows x64
 
             **Two ways to install**
-            - `VigilSetup-*.exe` — installer, adds a Start Menu entry and an uninstaller.
-            - `Vigil-*-windows-x64.zip` — unzip anywhere and run `Vigil.exe`.
+            - `PodbyeSetup-*.exe` — installer, adds a Start Menu entry and an uninstaller.
+            - `Podbye-*-windows-x64.zip` — unzip anywhere and run `Podbye.exe`.
 
             Windows will warn on first run: the build is not code-signed.
             Choose **More info -> Run anyway**. Verify against `SHA256SUMS.txt`
             if you prefer — these files were built by GitHub Actions from the
             source in this repository, and the log is on the Actions tab.
 
-            Vigil runs entirely offline. It collects nothing and sends nothing.
+            Podbye runs entirely offline. It collects nothing and sends nothing.

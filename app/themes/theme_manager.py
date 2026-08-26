@@ -1,4 +1,4 @@
-"""Theme manager for Vigil — loads QSS files and exposes palette constants.
+"""Theme manager for Podbye — loads QSS files and exposes palette constants.
 
 Typography:
   body_font   = Inter          — UI text, labels, buttons
@@ -272,7 +272,7 @@ def build_qss(theme_key: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────
-#  Master QSS template — matched to Vigil design system
+#  Master QSS template — matched to Podbye design system
 #
 #  Typography hierarchy (design):
 #    64px  mono 300   — hero big number
@@ -293,7 +293,7 @@ def build_qss(theme_key: str) -> str:
 # ─────────────────────────────────────────────────────────
 
 _BASE_QSS = """
-/* ─── Vigil — Generated QSS — Design System v2 ─── */
+/* ─── Podbye — Generated QSS — Design System v2 ─── */
 
 * {{
     margin: 0;
@@ -443,6 +443,12 @@ QLabel#Wordmark {{
     font-size: 14px;
     color: {text};
     letter-spacing: 5px;
+}}
+QLabel#Slogan {{
+    font-family: "JetBrains Mono";
+    font-size: 9px;
+    color: {text_faint};
+    letter-spacing: 1px;
 }}
 
 /* ─── Buttons ─── */

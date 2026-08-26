@@ -62,5 +62,5 @@ def test_the_suite_cannot_write_to_the_real_session_store():
     from app.state import session_store
     resolved = os.path.normcase(str(session_store._sessions_dir()))
     assert REAL_APPDATA, "no APPDATA to compare against"
-    real = os.path.normcase(os.path.join(REAL_APPDATA, "Vigil", "sessions"))
+    real = os.path.normcase(os.path.join(REAL_APPDATA, "Podbye", "sessions"))
     assert resolved != real, "the suite is pointed at the user's live store"

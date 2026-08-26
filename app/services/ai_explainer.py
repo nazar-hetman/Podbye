@@ -63,8 +63,8 @@ def _sort_key(item) -> tuple:
 def _cache_dir() -> Path:
     appdata = os.environ.get("LOCALAPPDATA", "")
     if appdata:
-        return Path(appdata) / "Vigil" / "cache" / "ai"
-    return Path.home() / ".cache" / "vigil" / "ai"
+        return Path(appdata) / "Podbye" / "cache" / "ai"
+    return Path.home() / ".cache" / "podbye" / "ai"
 
 
 def cache_dir() -> Path:

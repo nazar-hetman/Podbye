@@ -1,4 +1,4 @@
-# Vigil — Development Prompts
+# Podbye — Development Prompts
 
 Ordered by priority. Each prompt is self-contained and can be pasted into a fresh coding session. Every prompt explicitly lists which project documents must be updated when the work is complete.
 
@@ -14,7 +14,7 @@ Ordered by priority. Each prompt is self-contained and can be pasted into a fres
 
 ### Context
 
-Vigil's current entity detector produces incorrect groupings for monolithic applications and large distributions. Concrete reproducers found in the wild:
+Podbye's current entity detector produces incorrect groupings for monolithic applications and large distributions. Concrete reproducers found in the wild:
 
 - `C:/Program Files/QGIS 3.40.11/apps/Qt5/qml/QtCharts/designer/images` is detected as a standalone `photo_collection`, but it is a subfolder of the QGIS installation.
 - `C:/texlive/2025/texmf-dist/doc/context/documents` is detected as a `document_folder`, but it is part of the TeX Live distribution.
@@ -81,7 +81,7 @@ if any(file_path.startswith(root_path) for root_path in entity_roots):
 
 ### Context
 
-Vigil currently shows a cleanup preview panel with risk breakdown, file count, and reclaimable size — but the "Move to Recycle Bin" button is permanently disabled. The product cannot deliver on its core promise (helping users actually reclaim space). Phase 3 in the roadmap is the only major capability still completely missing.
+Podbye currently shows a cleanup preview panel with risk breakdown, file count, and reclaimable size — but the "Move to Recycle Bin" button is permanently disabled. The product cannot deliver on its core promise (helping users actually reclaim space). Phase 3 in the roadmap is the only major capability still completely missing.
 
 ### Goal
 
@@ -206,7 +206,7 @@ Migrate the findings table to a proper Model/View architecture: `QAbstractTableM
 
 ### Context
 
-Users can have OneDrive, Dropbox, Google Drive, or iCloud folders inside their normal scan targets. These often appear as local files (cloud "placeholder" files via reparse points) but deletion propagates to the cloud and to all other synced devices. Vigil currently has no awareness of this — a user cleaning up "old photos" could accidentally delete files visible to their team.
+Users can have OneDrive, Dropbox, Google Drive, or iCloud folders inside their normal scan targets. These often appear as local files (cloud "placeholder" files via reparse points) but deletion propagates to the cloud and to all other synced devices. Podbye currently has no awareness of this — a user cleaning up "old photos" could accidentally delete files visible to their team.
 
 ### Goal
 

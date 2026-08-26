@@ -1,4 +1,4 @@
-# Vigil — Qt Component Spec
+# Podbye — Qt Component Spec
 
 Maps the HTML/CSS design tokens to PySide6/QSS implementations.
 

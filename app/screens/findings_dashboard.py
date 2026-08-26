@@ -823,7 +823,7 @@ def _container_explanation(entity: dict) -> str:
         )
     label = (category or "personal").lower()
     return (
-        f"{name} is a personal {label} location with {scale}. Vigil keeps personal "
+        f"{name} is a personal {label} location with {scale}. Podbye keeps personal "
         f"data intact, so it won't bulk-delete this folder. Open it to review, or "
         f"target only reclaimable items inside — duplicates or files untouched for years."
     )
@@ -869,7 +869,7 @@ def _has_uninstaller(entity: dict) -> bool:
 
     Not merely "the registry mentions one": 19 of 475 uninstall commands on a
     real machine pointed at an executable that no longer existed, so the
-    button promised something Vigil could never deliver.
+    button promised something Podbye could never deliver.
     """
     from app.services.uninstaller import uninstaller_is_runnable
     return uninstaller_is_runnable(entity.get("uninstall_string") or "")
@@ -880,19 +880,19 @@ def _finding_rgba(hex_color: str, alpha: int) -> str:
     return f"rgba({color.red()}, {color.green()}, {color.blue()}, {alpha})"
 
 
-# What Vigil recommends *doing*, per actionability. Deliberately free of any
+# What Podbye recommends *doing*, per actionability. Deliberately free of any
 # hedging: the uncertainty belongs to the detection, and is shown there.
 _REMOVAL_METHODS = {
     "uninstall": "Use the application's own uninstaller",
     "recycle": "Move to the Recycle Bin",
     "review_only": "Review the contents before removing anything",
-    "protected": "Vigil will not remove this",
+    "protected": "Podbye will not remove this",
     "kept": "You are keeping this",
 }
 
 
 def _detected_as_text(entity: dict) -> str:
-    """What Vigil believes this is — the type, in the user's language.
+    """What Podbye believes this is — the type, in the user's language.
 
     A single loose file says what kind of file it is rather than which bucket
     it came out of: a promoted .docx is a document, not a "Documents Folder".
@@ -917,13 +917,13 @@ def _detection_confidence_text(entity: dict) -> str:
 
 
 def _removal_method_text(entity: dict) -> str:
-    """How Vigil recommends removing it.
+    """How Podbye recommends removing it.
 
     Actionability decides the method, with one exception: when the detection
     behind it is graded Uncertain, an instruction like "move to the Recycle
     Bin" asserts a confidence the classifier does not have. The button stays
     — the user may know perfectly well what the folder is — but the sentence
-    stops pretending Vigil does.
+    stops pretending Podbye does.
     """
     action = _entity_actionability(entity)
     if (action in ("recycle", "uninstall")
@@ -951,11 +951,11 @@ def _finding_recommendation(entity: dict) -> tuple[str, str, str, str]:
             tr("THAT'S ME"),
             # No trailing smiley: U+1F642 has no glyph in the bundled fonts or
             # in Segoe UI Symbol, so it drew as a .notdef box mid-sentence.
-            tr("Recommendation: this is Vigil — the app doing the cleaning. You can "
+            tr("Recommendation: this is Podbye — the app doing the cleaning. You can "
                "remove it whenever you like, but it would be good to let it finish "
                "the job first."),
-            tr("Vigil's own files: the app, your settings, and the scan history "
-               "this screen is showing. Vigil will not clean itself up."),
+            tr("Podbye's own files: the app, your settings, and the scan history "
+               "this screen is showing. Podbye will not clean itself up."),
             accent_info,
         )
     if risk == "Protected":
@@ -975,7 +975,7 @@ def _finding_recommendation(entity: dict) -> tuple[str, str, str, str]:
     if not is_duplicate and not is_app and _is_content_container(entity):
         return (
             tr("REVIEW INSIDE"),
-            tr("Recommendation: Vigil won't delete this whole folder — it holds personal or mixed content. Open it to review, or reclaim space from specific items inside (duplicates, very old large files)."),
+            tr("Recommendation: Podbye won't delete this whole folder — it holds personal or mixed content. Open it to review, or reclaim space from specific items inside (duplicates, very old large files)."),
             translate_reason(entity) or tr("Personal or mixed content — deleting everything here is rarely what you want."),
             accent_review,
         )
@@ -1010,7 +1010,7 @@ def _finding_recommendation(entity: dict) -> tuple[str, str, str, str]:
     return (
         tr("NEEDS REVIEW"),
         tr("Recommendation: inspect the path, owner, and AI reasoning before cleanup."),
-        translate_reason(entity) or tr("Vigil does not have enough confidence to mark this as safe."),
+        translate_reason(entity) or tr("Podbye does not have enough confidence to mark this as safe."),
         accent_review,
     )
 
@@ -1506,7 +1506,7 @@ class StorageOverviewWidget(QFrame):
         self._btn_by_folder.setStyleSheet("font-size: 11px; padding: 6px 12px;")
         self._btn_by_folder.setCursor(Qt.PointingHandCursor)
         self._btn_by_folder.setToolTip(
-            tr("See everything by where it lives on disk, not by what Vigil "
+            tr("See everything by where it lives on disk, not by what Podbye "
                "thinks it is."))
         self._btn_by_folder.clicked.connect(
             lambda: self.browse_by_folder.emit())
@@ -2071,8 +2071,8 @@ class _PreallocDetailPanel(QWidget):
 
         rec_hdr = QHBoxLayout()
         rec_hdr.setSpacing(8)
-        # Two dimensions, never one sentence. What Vigil thinks the entity IS
-        # carries a confidence; how Vigil thinks it should be REMOVED does
+        # Two dimensions, never one sentence. What Podbye thinks the entity IS
+        # carries a confidence; how Podbye thinks it should be REMOVED does
         # not, and fusing them turned "we found an executable marker" into a
         # confident removal instruction. The uncertainty has to survive to
         # the screen.
@@ -2106,7 +2106,7 @@ class _PreallocDetailPanel(QWidget):
         rec_layout.addWidget(self._rec_evidence_lbl)
 
         # ── Contents ─────────────────────────────────────
-        # What will actually go. Named components where Vigil has a rule for
+        # What will actually go. Named components where Podbye has a rule for
         # them ("Installed games"), the biggest folders where it does not, and
         # one "Other" row for the tail — never the raw directory tree, and
         # never at all for something with no inside worth describing.
@@ -2571,7 +2571,7 @@ class _PreallocDetailPanel(QWidget):
             meta.insert(0, tr("{n} items", n=len(contents.rows)))
         if contents.truncated:
             # A marker, not a paragraph. "The scan stopped measuring before it
-            # reached the end" is Vigil describing its own internals, and it
+            # reached the end" is Podbye describing its own internals, and it
             # made the size next to it look unreliable. The reason lives in
             # the tooltip for anyone who wants it.
             meta.append(tr("PARTIAL"))
@@ -3095,7 +3095,7 @@ class _PreallocDetailPanel(QWidget):
         self._btn_open.setEnabled(has_path)
         self._btn_copy.setEnabled(has_path)
 
-        # Protected is Vigil's refusal, Keep is the user's; neither can be
+        # Protected is Podbye's refusal, Keep is the user's; neither can be
         # armed. The checked state itself comes from the model, through
         # set_armed().
         armable = has_path and actionability not in ("protected", "kept")
@@ -3103,7 +3103,7 @@ class _PreallocDetailPanel(QWidget):
         self._check_btn.setVisible(armable)
 
         # Keep: offered on anything with a real path that is not already
-        # protected by Vigil, and never on a group, whose path names one of
+        # protected by Podbye, and never on a group, whose path names one of
         # several folders. On something already kept the button is the way
         # back out, so it says so.
         kept_now = actionability == "kept"
@@ -3113,7 +3113,7 @@ class _PreallocDetailPanel(QWidget):
         self._btn_keep.setVisible(can_offer)
         self._btn_keep.setText(tr("Stop keeping") if kept_now else tr("Keep"))
         self._btn_keep.setToolTip(
-            tr("Vigil will offer this for cleanup again")
+            tr("Podbye will offer this for cleanup again")
             if kept_now else
             tr("Never select or delete this, in this or any later scan"))
         # When no whole-folder delete is offered, make Open the prominent action.
@@ -4197,7 +4197,7 @@ class CategoryDetailView(QFrame):
     def _eligible_rows(self) -> set:
         """Every filtered row a bulk action may arm.
 
-        Protected is Vigil's own refusal; Keep is the user's. Neither is ever
+        Protected is Podbye's own refusal; Keep is the user's. Neither is ever
         swept up by a bulk action, and Keep is checked live because the mark
         can be made after the scan that produced these rows.
         """
@@ -4327,7 +4327,7 @@ class CategoryDetailView(QFrame):
         """Inspect an item that lives inside whatever is on screen now.
 
         Only ever an entity: the ITEMS list is built from findings, so there
-        is no path here that is not already something Vigil has a verdict
+        is no path here that is not already something Podbye has a verdict
         about. That is what keeps this from turning into a file browser.
         """
         for entity in self._all_entities():
@@ -5082,7 +5082,7 @@ class EmptyStateWidget(QFrame):
         # Description
         desc = QLabel(
             tr("Run an analysis to see a visual breakdown of your storage.\n"
-               "Vigil will categorize files into meaningful groups.")
+               "Podbye will categorize files into meaningful groups.")
         )
         desc.setStyleSheet(
             f"font-size: 13px; color: {p.get('text_faint', '#57685e')}; line-height: 1.5;"

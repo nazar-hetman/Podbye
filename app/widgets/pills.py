@@ -1,4 +1,4 @@
-"""Badge/pill/chip widgets for Vigil."""
+"""Badge/pill/chip widgets for Podbye."""
 
 from PySide6.QtWidgets import QLabel, QPushButton
 from PySide6.QtCore import QSize, Qt, Signal

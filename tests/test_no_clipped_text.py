@@ -13,7 +13,7 @@ involved a fixed width:
     "ЕЛЕМЕНТИ" rendered as "ЛЕМЕНТ".
 
 So this file measures three things on a real, populated widget tree, in every
-shipped language, at both the largest and the smallest window Vigil allows:
+shipped language, at both the largest and the smallest window Podbye allows:
 
   CLIP-H    a container whose committed height is under what its layout needs
   CLIP-W    a squeezed label/button whose text is wider than the widget
@@ -41,7 +41,7 @@ from app.widgets.controls import ElidedLabel
 
 _QWIDGETSIZE_MAX = 16777215
 
-# Content area beside the 196px sidebar, at Vigil's largest realistic window
+# Content area beside the 196px sidebar, at Podbye's largest realistic window
 # and at the 1100x700 minimum enforced in main.py.
 _SIZES = [(1724, 1000), (884, 620)]
 
@@ -70,7 +70,7 @@ def _entities() -> list[SmartEntity]:
          "Chrome cache", "browser_cache", "Safe", 2 * 1024 ** 3),
         ("C:/Users/n/Downloads", "Loose installers", "installer_group",
          "Optional", 9 * 1024 ** 3),
-        ("C:/dev/vigil/node_modules", "node_modules", "dev_artifact",
+        ("C:/dev/podbye/node_modules", "node_modules", "dev_artifact",
          "Optional", 3 * 1024 ** 3),
         ("C:/Windows/SoftwareDistribution/Download", "Windows update cache",
          "system_cache", "Protected", 6 * 1024 ** 3),

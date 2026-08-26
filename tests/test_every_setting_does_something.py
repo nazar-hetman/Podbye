@@ -1,7 +1,7 @@
 """A control in Settings must change something.
 
 "Cleanup hints" was a checkbox in the AI panel from the first commit. Ticking
-it wrote ``ai_cleanup_hints_enabled`` to config.json, and no line of Vigil ever
+it wrote ``ai_cleanup_hints_enabled`` to config.json, and no line of Podbye ever
 read that key back — the toggle had never been wired to anything. It sat beside
 two toggles that do work, which is what made it costly: it taught the user that
 the panel means what it says.

@@ -94,7 +94,7 @@ def test_a_program_directory_is_not_an_installer_collection(folder, names):
 
 
 def test_a_real_installer_folder_still_classifies_as_installers():
-    """The fix must not blind Vigil to genuine installer collections."""
+    """The fix must not blind Podbye to genuine installer collections."""
     got = ed._classify_by_content(_files("C:/Stash/Installers", _REAL_INSTALLERS))
     assert got == "installer_group"
 

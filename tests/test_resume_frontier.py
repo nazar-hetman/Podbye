@@ -14,7 +14,7 @@ from app.models.finding import Finding
 
 
 def _make_tree() -> str:
-    root = tempfile.mkdtemp(prefix="vigil_resume_test_")
+    root = tempfile.mkdtemp(prefix="podbye_resume_test_")
     for d in ("a/b", "c/d", "e"):
         os.makedirs(os.path.join(root, d))
         with open(os.path.join(root, d, "f.txt"), "wb") as fh:

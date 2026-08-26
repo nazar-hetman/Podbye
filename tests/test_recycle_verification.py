@@ -1,6 +1,6 @@
 """A recycled item must be proven to have reached the bin.
 
-Vigil's central promise is that cleanup is recoverable. The delete path asks
+Podbye's central promise is that cleanup is recoverable. The delete path asks
 the shell for that with FOF_ALLOWUNDO, but it also passes FOF_NOCONFIRMATION,
 which suppresses the prompt Windows shows when an item is too large for the
 volume's Recycle Bin quota. In that case the shell deletes the item outright —

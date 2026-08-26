@@ -1,24 +1,24 @@
-# Vigil
+# Podbye
 
 **Find out where your disk space actually went — without sending anything anywhere.**
 
-Vigil scans your drives, works out what each folder actually *is*, and tells you
+Podbye scans your drives, works out what each folder actually *is*, and tells you
 what is safe to remove and why. It runs entirely on your machine.
 
 > **Beta.** It works and it is careful, but it is early. Back up anything you
 > cannot lose, as you would with any tool that touches your files.
 
-![Vigil — the Findings screen, showing what each folder is and why](docs/screenshot.png)
+![Podbye — the Findings screen, showing what each folder is and why](docs/screenshot.png)
 
 ---
 
 ## Why another disk cleaner
 
-Most cleaners ask you to trust them. Vigil is built so you don't have to.
+Most cleaners ask you to trust them. Podbye is built so you don't have to.
 
 **It never deletes permanently.** Every cleanup is a move to the Recycle Bin.
-If Vigil gets something wrong, you get it back. Emptying the bin stays your
-own, separate decision — and Vigil shows you how much is sitting in there,
+If Podbye gets something wrong, you get it back. Emptying the bin stays your
+own, separate decision — and Podbye shows you how much is sitting in there,
 because moving files to the bin doesn't free space until you empty it.
 
 **It works entirely offline.** No telemetry, no analytics, no crash uploads,
@@ -35,7 +35,7 @@ browse by folder instead and decide for yourself.
 Protected and cannot be selected for cleanup, ever.
 
 **Optional local AI.** If you run [Ollama](https://ollama.com) or LM Studio,
-Vigil can ask it to explain a finding in plain language. It only ever talks to
+Podbye can ask it to explain a finding in plain language. It only ever talks to
 your own machine or your LAN — a public address is rejected outright. Leave it
 off and everything else still works. What you get out of it depends heavily on
 the model you point it at — see [About the AI explanations](#about-the-ai-explanations).
@@ -46,7 +46,7 @@ the model you point it at — see [About the AI explanations](#about-the-ai-expl
 
 ### The easy way
 
-Download the latest release, unzip it anywhere, run `Vigil.exe`.
+Download the latest release, unzip it anywhere, run `Podbye.exe`.
 
 **[Download the latest release](../../releases/latest)**
 
@@ -60,7 +60,7 @@ from the public source — the build log is on the Actions tab.
 
 ```bash
 git clone <this repo>
-cd Vigil
+cd Podbye
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 .venv\Scripts\python -m app.main
@@ -115,7 +115,7 @@ The honest answer, in order of how much it should reassure you:
 2. Protected paths cannot be selected. Not "are discouraged" — cannot.
 3. Cleanup targets are expanded to concrete files first, so a group row can
    never resolve to a drive root.
-4. Files in use simply fail to move and stay where they are; Vigil tells you
+4. Files in use simply fail to move and stay where they are; Podbye tells you
    which ones and why.
 5. The source is public, and there are 1000+ tests. Most of them exist because
    something went wrong once and shouldn't again.
@@ -126,15 +126,15 @@ It is still beta software that moves your files. Treat it accordingly.
 
 ## Privacy
 
-Vigil collects nothing, sends nothing and phones home never. There is no
+Podbye collects nothing, sends nothing and phones home never. There is no
 analytics SDK in the dependency list and no code path that could add one
 quietly — `tests/test_offline_guarantee.py` fails the build if a module
 outside the AI client imports networking, if a telemetry package appears in
 `requirements.txt`, or if the AI endpoint stops being restricted to your own
 machine and LAN.
 
-Scan results are stored locally in `%APPDATA%\Vigil` so you can reopen them.
-Delete that folder and Vigil forgets everything.
+Scan results are stored locally in `%APPDATA%\Podbye` so you can reopen them.
+Delete that folder and Podbye forgets everything.
 
 ---
 
@@ -151,12 +151,12 @@ the OSI sense, because that definition does not allow restricting commercial
 use. The source is public and you are free to do almost anything with it — but
 calling it open source would be inaccurate, so I don't.
 
-Vigil bundles Qt (via PySide6) under the LGPL v3, psutil under BSD-3-Clause,
+Podbye bundles Qt (via PySide6) under the LGPL v3, psutil under BSD-3-Clause,
 and three fonts under the SIL Open Font License. Those licenses grant you
-rights that Vigil's own license cannot restrict. See
+rights that Podbye's own license cannot restrict. See
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
-If Vigil saved you some disk space and you'd like to say thanks:
+If Podbye saved you some disk space and you'd like to say thanks:
 **[Ko-fi](https://ko-fi.com/nazarhetman)**. Entirely optional —
 nothing is gated behind it, and nothing ever will be.
 
@@ -183,11 +183,11 @@ start and we'll work it out.
 ## About the AI explanations
 
 The AI is optional and entirely local, which means its quality is your model's
-quality, not Vigil's. Worth knowing before you judge an answer:
+quality, not Podbye's. Worth knowing before you judge an answer:
 
 **The model only knows what it was trained on.** A model trained in 2023 has
 never heard of an application released in 2025, and will cheerfully guess.
-Vigil's own classification does not depend on the model at all — the category,
+Podbye's own classification does not depend on the model at all — the category,
 the risk tier and the reason come from rules that run with the AI switched off.
 The model is asked to *phrase* an explanation, not to decide anything. If the
 prose and the label disagree, trust the label.
@@ -197,7 +197,7 @@ a sentence. A 14B model gives you a paragraph that is usually right about what
 an unfamiliar folder is for. Neither is wrong to choose — pick for your
 hardware and patience.
 
-**Language ability comes from the model, not from Vigil.** You can ask for an
+**Language ability comes from the model, not from Podbye.** You can ask for an
 explanation in any of the offered languages regardless of which interface
 translations exist, because the constraint is what your model can write. A
 model with weak coverage of a language will answer in it poorly, or drift back
@@ -216,7 +216,7 @@ a timestamp — never file contents.
   Windows-specific.
 - Not code-signed, so SmartScreen will warn on first run.
 - A first full scan of a large drive takes a few minutes.
-- **It has been tested on very few machines.** This is the honest one. Vigil
+- **It has been tested on very few machines.** This is the honest one. Podbye
   has been built and run against a handful of Windows installs, and disk
   layouts vary enormously — different drive counts, different tools, different
   habits. Classification is rule-based, so a folder shape I have never seen can

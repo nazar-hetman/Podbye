@@ -1,4 +1,4 @@
-"""Reusable input controls for Vigil."""
+"""Reusable input controls for Podbye."""
 
 from __future__ import annotations
 

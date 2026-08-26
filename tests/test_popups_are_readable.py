@@ -22,7 +22,7 @@ from PySide6.QtGui import QColor
 
 from app.themes.theme_manager import THEME_KEYS, build_qss, get_palette
 
-# WCAG AA for normal text is 4.5:1. Vigil's dim tiers sit deliberately below
+# WCAG AA for normal text is 4.5:1. Podbye's dim tiers sit deliberately below
 # that on purpose (timestamps, faint metadata), so the floor here is the one
 # for "you can read it at all" rather than the one for body copy.
 _MIN_CONTRAST = 3.0

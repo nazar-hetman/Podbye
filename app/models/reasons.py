@@ -1,4 +1,4 @@
-"""Why Vigil classified something the way it did — in the reader's language.
+"""Why Podbye classified something the way it did — in the reader's language.
 
 The detector writes one explanation per finding ("Known directory: node_modules",
 "Installed application in Program Files — …"). It is the evidence line in the

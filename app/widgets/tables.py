@@ -1,4 +1,4 @@
-"""Reusable table helpers for Vigil."""
+"""Reusable table helpers for Podbye."""
 from __future__ import annotations
 
 from PySide6.QtWidgets import (

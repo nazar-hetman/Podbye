@@ -1,7 +1,7 @@
 """Settings must not show the user something that is not true.
 
 Reported: "I can't use ollama via app." Ollama was healthy — running, one model
-pulled, /api/generate answering. Vigil's own probe reported "online · Ollama ·
+pulled, /api/generate answering. Podbye's own probe reported "online · Ollama ·
 1 model available" in green. Every explanation still failed.
 
 The stored ai_model was "gemma2:2b", a model that had been removed from the
@@ -247,19 +247,19 @@ def test_loading_settings_does_not_write_them_back(tmp_path, monkeypatch):
                    in SettingsScreen(settings_store=store)._slider_timers)
 
 
-# ── Vigil protects all of its own data, not half of it ────────────
+# ── Podbye protects all of its own data, not half of it ────────────
 
 def test_both_appdata_roots_are_protected_from_cleanup(tmp_path, monkeypatch):
     """The AI cache lives under LOCALAPPDATA and used to be unprotected, so a
-    full C:/ scan could offer to delete Vigil's own data while it ran."""
+    full C:/ scan could offer to delete Podbye's own data while it ran."""
     monkeypatch.setenv("APPDATA", str(tmp_path / "roaming"))
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
     from app.services import self_paths
 
     assert self_paths.is_self_path(
-        os.path.join(str(tmp_path / "local"), "Vigil", "cache", "ai"))
+        os.path.join(str(tmp_path / "local"), "Podbye", "cache", "ai"))
     assert self_paths.is_self_path(
-        os.path.join(str(tmp_path / "roaming"), "Vigil", "sessions"))
+        os.path.join(str(tmp_path / "roaming"), "Podbye", "sessions"))
 
 
 # ── no control that can never be used ─────────────────────────────
@@ -272,7 +272,7 @@ def test_the_permanent_delete_radio_is_gone(screen):
 
 
 def test_ai_explanation_language_is_not_limited_to_shipped_locales():
-    """What the model writes has nothing to do with Vigil's own translations."""
+    """What the model writes has nothing to do with Podbye's own translations."""
     from app.i18n import available_languages, explanation_languages
 
     assert set(available_languages()) <= set(explanation_languages())

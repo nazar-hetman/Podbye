@@ -1,6 +1,6 @@
 """Local model stores must be recognised, and must never look disposable.
 
-Vigil is aimed at people running local LLMs, and the two runners its own README
+Podbye is aimed at people running local LLMs, and the two runners its own README
 names store weights in ways the extension-driven rules could not see:
 
   Ollama       ~/.ollama/models/blobs/sha256-<hash>          (no extension)

@@ -47,7 +47,7 @@ def _norm(path: str) -> str:
 
 # ── the authoritative signal ──────────────────────────────────────
 # Windows already knows where most programs live: every entry under
-# CurrentVersion\Uninstall carries a DisplayName and an InstallLocation. Vigil
+# CurrentVersion\Uninstall carries a DisplayName and an InstallLocation. Podbye
 # reads that table during detection but only used it defensively, to avoid
 # creating entities inside an installed app. Used as the *grouping* authority
 # it gives exact boundaries and the app's real name — "Visual Studio Code",

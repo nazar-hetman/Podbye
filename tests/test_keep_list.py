@@ -3,7 +3,7 @@
 Asked for: *"I need irizi focus — I'm adding it to protected state. If I click
 select all, it won't be selected."*
 
-Protected already existed, but it is Vigil's judgement about system locations
+Protected already existed, but it is Podbye's judgement about system locations
 and it is recomputed by every scan. Keep is the other thing, and the difference
 drives the design: it is stored in config rather than the session, it covers a
 subtree rather than a path, and it is enforced in the cleanup engine as well as
@@ -63,7 +63,7 @@ def test_marking_a_parent_supersedes_what_is_inside_it():
 
 
 def test_a_path_is_listed_back_the_way_it_was_given():
-    """Settings shows this list; a mangled path reads as Vigil's mistake."""
+    """Settings shows this list; a mangled path reads as Podbye's mistake."""
     keep_list.keep(r"E:\Irizi Focus")
     assert keep_list.kept_paths() == (r"E:\Irizi Focus",)
 
@@ -119,7 +119,7 @@ def test_recycling_skips_a_kept_path(tmp_path):
 
 
 def test_the_skip_is_reported_apart_from_protected(tmp_path):
-    """One is Vigil's refusal, the other is the user's."""
+    """One is Podbye's refusal, the other is the user's."""
     assert CleanupResult().skipped_kept == []
     assert CleanupResult().skipped_protected == []
 

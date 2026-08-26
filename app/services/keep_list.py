@@ -3,7 +3,7 @@
 Asked for directly: *"I need irizi focus — I'm adding it to protected state. If
 I click select all, it won't be selected."*
 
-Vigil already has a Protected tier, but that one is Vigil's own judgement about
+Podbye already has a Protected tier, but that one is Podbye's own judgement about
 system-critical locations, and it is recomputed from scratch by every scan. This
 is the other thing: a standing instruction from the user about their own files,
 which has to outlive the scan that was on screen when they gave it.
@@ -79,7 +79,7 @@ def _read() -> list[str]:
 
     Kept as typed rather than normalised: this list is shown back to them in
     Settings, and "E:/Irizi Focus" turning into "e:/irizi focus" reads as
-    Vigil having mangled something. Comparison normalises both sides instead.
+    Podbye having mangled something. Comparison normalises both sides instead.
     """
     raw = _ensure_store().get(_SETTING, []) or []
     if not isinstance(raw, list):
@@ -101,7 +101,7 @@ def can_keep(path: str) -> bool:
     """False for a path too broad to be one thing a person keeps.
 
     A whole drive, or a shared dump folder like Downloads: keeping either
-    would quietly take most of the disk out of Vigil's reach, and the user
+    would quietly take most of the disk out of Podbye's reach, and the user
     would have no way to tell why nothing is ever selectable.
     """
     norm = _norm(path)

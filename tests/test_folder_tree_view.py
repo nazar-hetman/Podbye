@@ -76,7 +76,7 @@ def test_expanding_materialises_the_children(view):
 
 
 def test_a_misfiled_folder_is_still_where_the_user_expects(view):
-    """The whole point: WSL is under Program Files no matter what Vigil
+    """The whole point: WSL is under Program Files no matter what Podbye
     decided it was."""
     view.set_entities(ENTITIES)
     found = {}

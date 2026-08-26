@@ -68,7 +68,7 @@ def _load_classification_rules() -> dict:
             return json.load(fh)
     except (OSError, ValueError) as exc:
         raise RuntimeError(
-            f"Vigil: cannot load classification rules from {_RULES_PATH}: {exc}"
+            f"Podbye: cannot load classification rules from {_RULES_PATH}: {exc}"
         ) from exc
 
 
@@ -332,7 +332,7 @@ def _has_cache_word(name: str) -> bool:
     Pass 4's test used to be ``name == "cache"`` or ``name.endswith("cache")``,
     which recognises ``GPUCache`` and misses ``Media Cache Files`` — 1.5 GB of
     Adobe's rebuildable media cache, therefore never offered as anything, on
-    the machine whose owner asked why Vigil would not clear Adobe's caches.
+    the machine whose owner asked why Podbye would not clear Adobe's caches.
     Also missed: ``Cache Storage``, ``Code Cache``, ``cache2``.
 
     Per token, not a substring: ``cachet`` and ``apache`` are not caches, while
@@ -880,7 +880,7 @@ def _descriptive_folder_name(folder_name: str, folder_path: str, children: list)
 
     When no kind reaches a share worth naming, why is worth saying. 77% of
     E:/Forge/investigations is .dat, .dmap, .result and .exif — extensions
-    Vigil has no rule for — and that, not "mostly code & config", is the
+    Podbye has no rule for — and that, not "mostly code & config", is the
     reason the row sits in Unknown.
     """
     base = "Unrecognized folder" if _looks_cryptic(folder_name) \
@@ -1262,7 +1262,7 @@ def _safety_correct_entity_type(path: str, entity_type: str) -> tuple[str, str]:
     if _nvidia_update_cache_root(norm_path):
         return "installer_cache", "NVIDIA update/cache staging — review only"
     # An install root's per-app folder is the installed program itself. Reading
-    # its executables as "installers" made Vigil offer to recycle the program
+    # its executables as "installers" made Podbye offer to recycle the program
     # directory of Microsoft OneDrive and Ollama.
     if entity_type in _NEVER_OUTRANKS_INSTALL_ROOT \
             and _is_install_root_child(norm_path):
@@ -2052,12 +2052,12 @@ def _phase1_discovery(ctx: "_DetectionContext", extra_pats: tuple):
 
 
 def _pass_self(ctx: "_DetectionContext"):
-    """Vigil's own folders, claimed first and marked protected.
+    """Podbye's own folders, claimed first and marked protected.
 
     Runs before every other pass so nothing else can classify them. Left to the
-    generic passes, %APPDATA%/Vigil/sessions reads as ordinary app data and
-    %LOCALAPPDATA%/Vigil/cache as a cache folder — Safe, recycle-able — which
-    let Vigil offer to delete the session store holding the results on screen.
+    generic passes, %APPDATA%/Podbye/sessions reads as ordinary app data and
+    %LOCALAPPDATA%/Podbye/cache as a cache folder — Safe, recycle-able — which
+    let Podbye offer to delete the session store holding the results on screen.
 
     The wording lives in the UI, not here: the entity carries is_self and the
     dashboard phrases it in the user's language.
@@ -2067,7 +2067,7 @@ def _pass_self(ctx: "_DetectionContext"):
     roots = self_roots()
     if not roots:
         return
-    ctx.log("[smart] pass 0a: protecting Vigil's own folders...")
+    ctx.log("[smart] pass 0a: protecting Podbye's own folders...")
     found = 0
     for f in ctx.all_dirs:
         norm = f.path.replace("\\", "/").lower().rstrip("/")
@@ -2077,17 +2077,17 @@ def _pass_self(ctx: "_DetectionContext"):
         is_data = norm in _norm_self_data_dirs()
         ent = _build_entity(
             ctx, f.path,
-            "Vigil (app data)" if is_data else "Vigil",
+            "Podbye (app data)" if is_data else "Podbye",
             "protected_system", children,
-            "Vigil's own data — settings, scan history and cached AI answers"
-            if is_data else "Vigil itself — the app doing the cleaning",
+            "Podbye's own data — settings, scan history and cached AI answers"
+            if is_data else "Podbye itself — the app doing the cleaning",
         )
         ent.is_self = True
         fc = ctx.claim(norm)
         ctx.emit_entity(ent, fc)
         found += 1
     if found:
-        ctx.log(f"[smart]   → protected {found} of Vigil's own folder(s)")
+        ctx.log(f"[smart]   → protected {found} of Podbye's own folder(s)")
 
 
 def _norm_self_data_dirs() -> tuple[str, ...]:
@@ -3314,7 +3314,7 @@ def _pass7_sweep(ctx: "_DetectionContext"):
 # files totalling 0.2 MB), while the files that genuinely deserve a decision
 # — a 412 MB archive, a 352 MB project export — stayed buried in a bucket.
 #
-# Future semantic rules (an installer, a dated export, anything Vigil can
+# Future semantic rules (an installer, a dated export, anything Podbye can
 # name) belong in deserves_own_finding, not in a second threshold.
 STANDALONE_LOOSE_FILE_BYTES = 1024 * 1024
 
@@ -4523,7 +4523,7 @@ def detect_entities(
         if _is_user_container_dir(norm_path) or _is_appdata_container_dir(norm_path):
             ctx.claimed_paths.add(norm_path)
 
-    # Vigil's own folders first — nothing else may classify them.
+    # Podbye's own folders first — nothing else may classify them.
     _pass_self(ctx)
     _pass0_update_caches(ctx)
     _pass_appdata_packages(ctx)

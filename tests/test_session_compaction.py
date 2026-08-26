@@ -1,7 +1,7 @@
 """Retained sessions must not keep bytes the loader refuses to return.
 
 Measured on the reporting machine (2026-08-12): 3.44 GB of sessions, of which
-3.42 GB sat in three files written before Vigil stopped persisting raw
+3.42 GB sat in three files written before Podbye stopped persisting raw
 findings. sweep_orphaned_files could not touch them — history.json still names
 all three, and deleting an indexed session is exactly what that sweep must
 never do. Meanwhile _load_session_file discards the findings array of any file
@@ -32,7 +32,7 @@ def sessions(tmp_path, monkeypatch):
     """
     monkeypatch.setenv("APPDATA", str(tmp_path))
     monkeypatch.setattr(ss, "_SKIP_FINDINGS_ABOVE_BYTES", 4096)
-    d = tmp_path / "Vigil" / "sessions"
+    d = tmp_path / "Podbye" / "sessions"
     d.mkdir(parents=True)
     return d
 

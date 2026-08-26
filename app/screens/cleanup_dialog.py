@@ -504,7 +504,7 @@ class CleanupConfirmDialog(QDialog):
         # "42 unexpected issue(s) need attention" is not something a user can
         # act on. Which 42, and why, is. The paths live behind a chevron so a
         # clean run stays a two-line dialog, and Copy list exists because the
-        # next step for a locked file usually happens outside Vigil.
+        # next step for a locked file usually happens outside Podbye.
         self._issues_frame = QFrame()
         self._issues_frame.setVisible(False)
         iss_layout = QVBoxLayout(self._issues_frame)
@@ -652,7 +652,7 @@ class CleanupConfirmDialog(QDialog):
         self._issues = []
         self._issue_colors = {}
         # Ordered worst-first: an irreversible deletion is the one line here a
-        # user must not scroll past, and a protected skip — which is Vigil
+        # user must not scroll past, and a protected skip — which is Podbye
         # working correctly — is the one they can ignore.
         for path in getattr(result, "not_recycled", []) or []:
             reason = tr("Deleted permanently")

@@ -1,8 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for Vigil — single-file windowed Windows build.
+"""PyInstaller spec for Podbye — single-file windowed Windows build.
 
-Build:  .venv\\Scripts\\python.exe -m PyInstaller --noconfirm vigil.spec
-Output: dist\\Vigil.exe
+Build:  .venv\\Scripts\\python.exe -m PyInstaller --noconfirm podbye.spec
+Output: dist\\Podbye.exe
 """
 import os
 
@@ -38,7 +38,7 @@ _bundle_dir("app/themes", ".qss")     # themes (forest, amber, mono, paper, …)
 _bundle_dir("app/fonts", ".ttf")      # shipped fonts
 _bundle_dir("licenses", ".txt")       # LGPL/GPL/OFL/BSD texts
 
-_icon = "app/assets/vigil.ico" if os.path.exists("app/assets/vigil.ico") else None
+_icon = "app/assets/podbye.ico" if os.path.exists("app/assets/podbye.ico") else None
 
 a = Analysis(
     ["app/main.py"],
@@ -67,7 +67,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,      # binaries live beside the exe, see COLLECT
-    name="Vigil",
+    name="Podbye",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -91,5 +91,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="Vigil",
+    name="Podbye",
 )

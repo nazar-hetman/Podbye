@@ -1,4 +1,4 @@
-"""Progress bar and stage indicator widgets for Vigil."""
+"""Progress bar and stage indicator widgets for Podbye."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QThread

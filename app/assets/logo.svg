@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="34 30 188 188" fill="currentColor">
-  <!-- Vigil mark — the Lift: a container with one cube drawn out.
+  <!-- Podbye mark — the Lift: a container with one cube drawn out.
        Monochrome currentColor; the host recolours it per theme. -->
   <path d="M128 84 L184 116 L128 148 L72 116 Z"  opacity="0.82"/>
   <path d="M72 116 L128 148 L128 204 L72 172 Z"  opacity="0.46"/>
