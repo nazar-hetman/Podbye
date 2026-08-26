@@ -657,8 +657,10 @@ class SettingsScreen(QWidget):
                 "close_behavior", self._close_behavior_combo.currentData()))
         win_lay.addLayout(_setting_row(
             tr("When closing while busy"),
-            tr("If a task is still running when you close the window, Podbye can "
-               "ask, keep working in the system tray, or stop and quit."),
+            # The label above already states the condition, so the description
+            # only has to list the choices. Restating it cost this row eight
+            # wrapped lines in a 208px column beside a single 42px dropdown.
+            tr("Podbye can ask, keep working in the system tray, or stop and quit."),
             self._close_behavior_combo,
         ))
 

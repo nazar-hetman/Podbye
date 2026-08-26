@@ -399,7 +399,6 @@
   "INTERRUPTED": "ПЕРЕРВАНО",
   "ITEMS": "ОБ'ЄКТИ",
   "ITEMS ({count})": "ЕЛЕМЕНТИ ({count})",
-  "If a task is still running when you close the window, Podbye can ask, keep working in the system tray, or stop and quit.": "Якщо під час закриття вікна ще виконується завдання, Podbye може запитати, продовжити роботу в системному треї або зупинитися й вийти.",
   "Ignore patterns": "Шаблони ігнорування",
   "Images": "Зображення",
   "Images / Photos": "Зображення / фото",
@@ -1201,5 +1200,6 @@
   "NOT RUN": "НЕ ВИКОНАНО",
   "Cleanup finished": "Завершено з проблемами",
   "Attention": "Увага",
-  "Partial": "Частково"
+  "Partial": "Частково",
+  "Podbye can ask, keep working in the system tray, or stop and quit.": "Podbye може запитати, продовжити роботу в треї або зупинитися та вийти."
 }

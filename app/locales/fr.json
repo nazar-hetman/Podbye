@@ -397,7 +397,6 @@
   "INTERRUPTED": "INTERROMPU",
   "ITEMS": "ÉLÉMENTS",
   "ITEMS ({count})": "ÉLÉMENTS ({count})",
-  "If a task is still running when you close the window, Podbye can ask, keep working in the system tray, or stop and quit.": "Si une tâche est en cours à la fermeture, Podbye peut demander, continuer dans la zone de notification, ou arrêter et quitter.",
   "Ignore patterns": "Motifs à ignorer",
   "Images": "Images",
   "Images / Photos": "Images / photos",
@@ -1200,5 +1199,6 @@
   "NOT RUN": "NON EFFECTUÉ",
   "Cleanup finished": "Terminé avec problèmes",
   "Attention": "Attention",
-  "Partial": "Partiel"
+  "Partial": "Partiel",
+  "Podbye can ask, keep working in the system tray, or stop and quit.": "Podbye peut demander, continuer dans la zone de notification, ou s’arrêter et quitter."
 }
