@@ -1,5 +1,7 @@
 # Podbye
 
+[![Tests](https://github.com/nazar-hetman/Podbye/actions/workflows/tests.yml/badge.svg)](https://github.com/nazar-hetman/Podbye/actions/workflows/tests.yml)
+
 **Find out where your disk space actually went — without sending anything anywhere.**
 
 Podbye scans your drives, works out what each folder actually *is*, and tells you
@@ -59,7 +61,7 @@ from the public source — the build log is on the Actions tab.
 ### From source
 
 ```bash
-git clone <this repo>
+git clone https://github.com/nazar-hetman/Podbye.git
 cd Podbye
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
@@ -117,7 +119,7 @@ The honest answer, in order of how much it should reassure you:
    never resolve to a drive root.
 4. Files in use simply fail to move and stay where they are; Podbye tells you
    which ones and why.
-5. The source is public, and there are 1000+ tests. Most of them exist because
+5. The source is public, and there are 1500+ tests. Most of them exist because
    something went wrong once and shouldn't again.
 
 It is still beta software that moves your files. Treat it accordingly.
@@ -171,7 +173,7 @@ nothing is gated behind it, and nothing ever will be.
 - [DECISIONS.md](DECISIONS.md) — why things are the way they are
 
 ```bash
-.venv\Scripts\python -m pytest -q      # 1000+ tests, ~2 minutes
+.venv\Scripts\python -m pytest -q      # 1509 tests, ~9 minutes
 ```
 
 Contributions are welcome. Note that contributed code is licensed under the
