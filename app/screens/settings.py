@@ -98,6 +98,8 @@ _ACTION_COL_WIDTH = 88
 # Scan's value blocks are prose rather than fields, so they get their own,
 # wider column — one width for both, so the page has a single value edge.
 _SCAN_VALUE_WIDTH = 360
+# Wide enough for a real %APPDATA% path on one line; see _storage_row.
+_PATH_VALUE_WIDTH = 560
 # A floor, not a guarantee: a Qt style sheet's min-height beats setFixedHeight,
 # so the theme has the last word on the rendered height. What this buys is that
 # both buttons reach it the same way, instead of one carrying an inline
@@ -386,8 +388,15 @@ class SettingsScreen(QWidget):
             self._styled_radios.append(radio)
 
     def _helper_style(self) -> str:
+        """Subdued guidance: smaller than a description, not fainter than one.
+
+        This used text_faint, which is the colour a disabled control wears, and
+        measured 3.3-3.9 against panel_alt on every theme where 4.5 is the bar
+        for text this size. Guidance that is styled like something switched off
+        is guidance nobody reads. Size still marks it as secondary.
+        """
         p = get_palette()
-        return f"font-size: 10px; color: {p.get('text_faint', '#57685e')};"
+        return f"font-size: 10px; color: {p.get('text_dim', '#8a9b8f')};"
 
     def _on_endpoint_mode_changed(self, _checked: bool = False):
         """Switch between the built-in local endpoint and a custom server one.
@@ -1296,7 +1305,11 @@ class SettingsScreen(QWidget):
         # Diagnostics
         diag_panel = Panel(alt=True)
         dg_lay = diag_panel.with_layout(vertical=True, margins=(14, 12, 14, 12), spacing=10)
-        dg_lay.addLayout(_panel_title(tr("Diagnostics"), tr("support")))
+        # Not diagnostics: there is nothing here that reports on a fault. The
+        # panel holds one maintenance action and the product metadata under it,
+        # so it says so. "Open logs folder" was the only diagnostic it ever had
+        # and it was removed when it turned out Podbye logs to the console.
+        dg_lay.addLayout(_panel_title(tr("Maintenance"), tr("reset & product info")))
         self._register_styled_panel(diag_panel)
 
         btn_row = QWidget()
@@ -1307,11 +1320,16 @@ class SettingsScreen(QWidget):
         # "Open logs folder" used to live here. Podbye configures logging to the
         # console only, so the button created an empty directory and opened it —
         # a support action that could never produce anything to send.
-        btn_reset = QPushButton(tr("Reset all settings"))
-        btn_reset.setObjectName("Danger")
-        btn_reset.setCursor(Qt.PointingHandCursor)
-        btn_reset.clicked.connect(self._reset_all_settings)
-        br_lay.addWidget(btn_reset)
+        # Quiet at rest, dangerous on contact. #Danger paints a filled red
+        # button, which made the loudest thing on this page an action nobody
+        # comes here to perform — and Analyze's Stop button shares that name,
+        # so the weight belongs there rather than being taken away from it.
+        self._btn_reset = QPushButton(tr("Reset all settings"))
+        self._btn_reset.setObjectName("DangerQuiet")
+        self._btn_reset.setCursor(Qt.PointingHandCursor)
+        self._restyle_reset_button()
+        self._btn_reset.clicked.connect(self._reset_all_settings)
+        br_lay.addWidget(self._btn_reset)
 
         br_lay.addStretch()
         dg_lay.addWidget(btn_row)
@@ -1354,7 +1372,17 @@ class SettingsScreen(QWidget):
             self._config_path_lbl = path_lbl
         path_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
         path_lbl.setWordWrap(True)
-        path_lbl.setMaximumWidth(380)
+        # 380px broke "C:\Users\<name>\AppData\Roaming\Podbye\sessions"
+        # across two lines, splitting one value at whatever character happened
+        # to land on the boundary. A real path needs ~552px, so the cap is set
+        # above that: one line wherever the window allows, wrapping only when
+        # the window is genuinely too narrow to hold it.
+        # A minimum, not a maximum. A word-wrapping QLabel reports a narrow
+        # size hint and the container sizes to it, so a cap alone left the
+        # label at 484px and the path still broke over two lines. The app's
+        # window minimum is 1100px, which leaves ~609px for this column, so
+        # 560 fits at every size the window can actually be.
+        path_lbl.setMinimumWidth(_PATH_VALUE_WIDTH)
         path_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
         col.addWidget(path_lbl)
 
@@ -1665,6 +1693,27 @@ class SettingsScreen(QWidget):
         t.start()
 
     def _reset_all_settings(self):
+        """Every preference at once, with no undo — so it asks first.
+
+        It did not. One click cleared the endpoint, the model, the theme, the
+        language and the safeguard toggles, with nothing between the pointer
+        and the loss. Same shape as the other irreversible prompt in the app
+        (main.py's close-while-busy question): Yes/No, defaulting to No.
+        """
+        from PySide6.QtWidgets import QMessageBox
+
+        answer = QMessageBox.question(
+            self,
+            tr("Reset all settings?"),
+            tr("Every preference goes back to its default — endpoint, model, "
+               "theme, language and the cleanup safeguards.\n\n"
+               "Your scan history and kept paths are not touched."),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
         if self._store:
             self._store.reset()
             self._load_from_store()
@@ -1683,6 +1732,31 @@ class SettingsScreen(QWidget):
     def _register_styled_panel(self, panel: QFrame):
         panel.setStyleSheet(self._settings_panel_qss())
         self._styled_panels.append(panel)
+
+    def _restyle_reset_button(self):
+        """Reset reads as an ordinary secondary button at rest, and turns red
+        on hover and on keyboard focus.
+
+        The danger is real, so it is shown at the moment the user is about to
+        act rather than for the whole time the page is open. Focus is included
+        deliberately: someone tabbing to this button gets the same warning a
+        pointer does.
+        """
+        if not hasattr(self, "_btn_reset"):
+            return
+        p = get_palette()
+        risk = p.get("risk", "#c67a69")
+        risk_soft = p.get("risk_soft", "#2a1d1a")
+        rest_border = p.get("border_alt", "#2b3d33")
+        rest_text = p.get("text_dim", "#8a9b8f")
+        danger = f"border-color: {risk}; color: {risk};"
+        self._btn_reset.setStyleSheet(
+            f"QPushButton#DangerQuiet {{ background: transparent; "
+            f"border: 1px solid {rest_border}; color: {rest_text}; "
+            f"padding: 7px 14px; border-radius: 2px; font-size: 11px; }}"
+            f"QPushButton#DangerQuiet:hover {{ background: {risk_soft}; {danger} }}"
+            f"QPushButton#DangerQuiet:focus {{ {danger} }}"
+        )
 
     def _restyle_apply_button(self):
         """Re-apply the language Apply button style with the current palette.
@@ -1728,6 +1802,7 @@ class SettingsScreen(QWidget):
         )
         if active:
             self._switch_section(active)
+        self._restyle_reset_button()
         # Re-apply the Apply button style with the current palette too.
         if hasattr(self, "_btn_apply_lang"):
             self._restyle_apply_button()

@@ -1200,5 +1200,9 @@
   "Partial": "Частково",
   "Podbye can ask, keep working in the system tray, or stop and quit.": "Podbye може запитати, продовжити роботу в треї або зупинитися та вийти.",
   "Nothing kept yet. Use Keep on any finding — kept paths are never selected by a bulk action, and cleanup refuses them outright.": "Нічого ще не збережено. Натисніть «Зберегти» на будь-якій знахідці — збережені шляхи ніколи не обираються масовою дією, а очищення їх відхиляє.",
-  "Podbye never deletes permanently — items stay recoverable until you empty the Bin yourself.": "Podbye ніколи не видаляє остаточно — файли можна відновити, доки ви самі не очистите Кошик."
+  "Podbye never deletes permanently — items stay recoverable until you empty the Bin yourself.": "Podbye ніколи не видаляє остаточно — файли можна відновити, доки ви самі не очистите Кошик.",
+  "Maintenance": "Обслуговування",
+  "reset & product info": "скидання та інфо про продукт",
+  "Reset all settings?": "Скинути всі налаштування?",
+  "Every preference goes back to its default — endpoint, model, theme, language and the cleanup safeguards.\n\nYour scan history and kept paths are not touched.": "Усі налаштування повернуться до типових — адреса, модель, тема, мова та запобіжники очищення.\n\nІсторія сканувань і збережені шляхи не змінюються."
 }
