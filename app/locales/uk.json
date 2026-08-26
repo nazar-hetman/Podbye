@@ -1196,5 +1196,7 @@
   "Holds several separate projects rather than being one": "Містить кілька окремих проєктів, а не є одним із них",
   "Folder holding several projects": "Папка з кількома проєктами",
   "Take care of your system": "Подбай про свою систему",
-  "LOCAL SYSTEM ANALYSIS": "ЛОКАЛЬНИЙ АНАЛІЗ СИСТЕМИ"
+  "LOCAL SYSTEM ANALYSIS": "ЛОКАЛЬНИЙ АНАЛІЗ СИСТЕМИ",
+  "not analyzed": "не проаналізовано",
+  "NOT RUN": "НЕ ВИКОНАНО"
 }
