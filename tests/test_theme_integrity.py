@@ -135,3 +135,30 @@ def test_caution_tints_do_not_collide_with_the_selection_tint():
         for tier in ("review_soft", "risk_soft", "optional_soft"):
             assert p[tier] != p["accent_soft"], (
                 f"theme '{name}': '{tier}' is the selection tint {p['accent_soft']}")
+
+
+def test_a_selected_row_is_visible_against_an_unselected_one():
+    """The selection tint is painted over panel_alt, the table row colour.
+
+    This broke silently once: raising Black's panel_alt to lift its cards off
+    the page left accent_soft below the new row colour, so a selected row went
+    from faintly lighter to faintly darker and read as no selection at all.
+    Amber lost more than half its separation the same way. The two values have
+    to move together, so the relationship is pinned rather than the numbers.
+    """
+    for name, p in PALETTES.items():
+        ratio = _contrast(p["accent_soft"], p["panel_alt"])
+        assert ratio >= 1.08, (
+            f"theme '{name}': selection tint {p['accent_soft']} is only "
+            f"{ratio:.3f} against the row colour {p['panel_alt']} — "
+            f"a selected row is indistinguishable")
+
+
+def test_selection_moves_the_right_way_for_the_theme():
+    """Dark themes lift the selected row toward the light; the light theme
+    presses it down. A dark theme that darkens the selection reads as a hole."""
+    for name, p in PALETTES.items():
+        row_is_dark = _relative_luminance(p["panel_alt"]) < 0.5
+        sel_is_lighter = _relative_luminance(p["accent_soft"]) > _relative_luminance(p["panel_alt"])
+        assert sel_is_lighter == row_is_dark, (
+            f"theme '{name}': selection goes the wrong direction against its row")

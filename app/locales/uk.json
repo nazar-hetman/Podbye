@@ -1199,5 +1199,8 @@
   "LOCAL SYSTEM ANALYSIS": "ЛОКАЛЬНИЙ АНАЛІЗ СИСТЕМИ",
   "not analyzed": "не проаналізовано",
   "NOT RUN": "НЕ ВИКОНАНО",
-  "Cleanup finished": "Завершено з проблемами"
+  "Cleanup finished": "Завершено з проблемами",
+  "Attention": "Увага",
+  "Partial": "Частково",
+  "RESULT": "РЕЗУЛЬТАТ"
 }

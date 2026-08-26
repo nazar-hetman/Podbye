@@ -91,7 +91,16 @@ from app.themes.theme_manager import get_palette
 from app.models.finding import _format_size
 from app.models.risk import normalized_risk_totals
 from app.i18n import tr
-from app.services.cleanup_result_classifier import assess_cleanup_counts
+from app.services.cleanup_result_classifier import (
+    STATE_ALREADY_CLEAN,
+    STATE_FAILED,
+    STATE_IN_USE,
+    STATE_PARTIAL,
+    STATE_SKIPPED,
+    STATE_SUCCESS,
+    assess_cleanup_counts,
+)
+from app.screens.analyze import _rgba
 from app.widgets.panels import apply_tactical_label
 from app.widgets.controls import ElidedLabel
 
@@ -239,25 +248,14 @@ def _freed_for_session(session_id: str) -> tuple[int, int]:
     return freed, items
 
 
-def _impact_label(size_bytes: int, *, attention_count: int = 0, found_count: int = 0) -> str:
-    """Canonical impact key. Call ``tr()`` on it before showing it — it stayed
-    English next to translated eyebrows in every non-English build."""
-    if size_bytes >= 10 * 1024 ** 3 or attention_count >= 100:
-        return "High"
-    if size_bytes >= 1024 ** 3 or attention_count >= 10 or found_count >= 100:
-        return "Medium"
-    if size_bytes > 0 or attention_count > 0 or found_count > 0:
-        return "Low"
-    return "None"
-
-
-def _impact_color(impact: str, p: dict) -> str:
+def _status_color(status: str, p: dict) -> str:
+    """Colour for a scan session's outcome. A stopped run is not a failure —
+    it is a partial result, which is the review tier, not the risk tier."""
     return {
-        "High": p.get("review", "#c7a66c"),
-        "Medium": p.get("safe", "#7aa88a"),
-        "Low": p.get("text_dim", "#8a9b8f"),
-        "None": p.get("text_faint", "#57685e"),
-    }.get(impact, p.get("text_dim", "#8a9b8f"))
+        "completed": p.get("safe", "#7aa88a"),
+        "stopped":   p.get("review", "#c7a66c"),
+        "running":   p.get("review", "#c7a66c"),
+    }.get(status, p.get("text_dim", "#8a9b8f"))
 
 
 def _scan_mode_label(mode: str) -> str:
@@ -414,26 +412,60 @@ class _DistBar(QFrame):
             lay.addWidget(seg, stretch=max(int(pct), 1))
 
 
-class _ModeBadge(QLabel):
-    """Inline badge for cleanup mode — theme-aware."""
+def _cleanup_status(record: dict) -> tuple[str, str]:
+    """(label, palette key) for how a cleanup run turned out.
 
-    def __init__(self, mode: str, parent=None):
+    Replaces the MODE column, which showed "Recycle Bin" on essentially every
+    row: permanent deletion is off by default and has to be turned on
+    deliberately, so the column cost a sixth of the table's width to repeat one
+    constant. How the run *ended* varies row to row and is the reason someone
+    opens this screen at all.
+
+    Vocabulary is shared with the detail panel below and with the cleanup
+    dialog, so one run is not described three different ways.
+    """
+    # The verdict reached when the run happened is stored on the record. Prefer
+    # it: re-judging an old run by today's rules would let a classifier change
+    # silently rewrite history. Older records predate the field, so those are
+    # recomputed from the counts they do carry.
+    state = record.get("result_state")
+    if not state:
+        state = assess_cleanup_counts(
+            succeeded_count=record.get("succeeded_count", 0),
+            in_use_count=record.get("in_use_count", 0),
+            failed_count=record.get("failed_count", 0),
+            skipped_count=record.get("skipped_protected_count", 0),
+            category_label="Cleanup run",
+            retry_label="the cleanup",
+        ).state
+    return {
+        STATE_SUCCESS:       (tr("Complete"),  "safe"),
+        STATE_ALREADY_CLEAN: (tr("Complete"),  "safe"),
+        STATE_IN_USE:        (tr("Partial"),   "review"),
+        STATE_PARTIAL:       (tr("Partial"),   "review"),
+        STATE_FAILED:        (tr("Attention"), "risk"),
+        STATE_SKIPPED:       (tr("Skipped"),   "text_dim"),
+    }.get(state, (tr("Complete"), "safe"))
+
+
+class _StatusBadge(QLabel):
+    """Inline badge for how a cleanup run ended — theme-aware."""
+
+    def __init__(self, record: dict, parent=None):
         super().__init__(parent)
         p = get_palette()
-        styles = {
-            "recycle_bin": (tr("Recycle Bin"), p.get("safe", "#7aa88a")),
-            "permanent":   (tr("Permanent"),   p.get("risk", "#c67a69")),
-        }
-        label, color = styles.get(
-            mode, (mode.replace("_", " ").title(), p.get("text_dim", "#8a9b8f"))
-        )
+        label, key = _cleanup_status(record)
+        color = p.get(key, p.get("text_dim", "#8a9b8f"))
         self.setText(label)
         self.setFixedHeight(20)
         self.setAlignment(Qt.AlignCenter)
+        # rgba(), not a hex alpha suffix: "#7aa88a" + "66" is an eight-digit
+        # hex and Qt reads those as #AARRGGBB, so the channels rotate and the
+        # border came out a colour from no palette in the app.
         self.setStyleSheet(
             "font-family: 'Silkscreen', 'JetBrains Mono'; font-size: 7px; "
             f"letter-spacing: 1px; color: {color}; "
-            f"border: 1px solid {color}66; padding: 0px 6px;"
+            f"border: 1px solid {_rgba(color, 0.40)}; padding: 0px 6px;"
         )
 
 
@@ -461,7 +493,7 @@ class CleanupRecordDetail(QFrame):
         skipped = record.get("skipped_protected_count", 0)
         freed = int(record.get("total_bytes_freed", 0) or 0)
         total_exceptions = in_use + failed + skipped
-        impact = _impact_label(freed, attention_count=total_exceptions)
+        status_label, status_key = _cleanup_status(record)
         assessment = assess_cleanup_counts(
             succeeded_count=succeeded,
             in_use_count=in_use,
@@ -477,9 +509,14 @@ class CleanupRecordDetail(QFrame):
         # one design — and so the values stop crowding each other.
         stats = QHBoxLayout()
         stats.setSpacing(18)
-        _bold_keys = (tr("IMPACT"), tr("CLEANED"))
+        _bold_keys = (tr("RESULT"), tr("CLEANED"))
         for lbl, val, col in [
-            (tr("IMPACT"), tr(impact), _impact_color(impact, p)),
+            # Was IMPACT / "High" — a bucket computed from the freed size and
+            # the exception count, both of which are printed in this very row.
+            # It restated its neighbours in a word that named no unit: high
+            # what? RESULT says what actually happened, in the same vocabulary
+            # as the STATUS column above and the cleanup dialog.
+            (tr("RESULT"), status_label, p.get(status_key, "")),
             (tr("CLEANED"), _format_size(freed), p.get("safe", "#7aa88a")),
             (tr("ITEMS"), f"{succeeded:,}", ""),
             (tr("ATTENTION"), f"{total_exceptions:,}" if total_exceptions else tr("None"),
@@ -554,17 +591,14 @@ class SessionDetail(QFrame):
         }.get(status, status.title())
         if record.get("scan_mode") == "smart":
             items_val = f"{record.get('display_count', 0):,}"
-            found_count = int(record.get("display_count", 0) or 0)
         else:
             items_val = f"{record.get('scanned_count', 0):,}"
-            found_count = int(record.get("scanned_count", 0) or 0)
         risk_totals = normalized_risk_totals(record.get("risk_totals", {}) or {})
         attention = _attention_count(risk_totals)
         reclaimable = _estimated_reclaimable(record)
         has_reclaimable = (
             "reclaimable_bytes" in record or "total_reclaimable_bytes" in record
         )
-        impact = _impact_label(reclaimable, attention_count=attention, found_count=found_count)
 
         # ── Target ────────────────────────────────────────────────
         layout.addLayout(_kv(tr("TARGET"), record.get("target", "—") or "—",
@@ -578,7 +612,11 @@ class SessionDetail(QFrame):
         # back by session_id). Only shown once something has been cleaned.
         freed_bytes, freed_items = _freed_for_session(record.get("session_id", ""))
         rows = [
-            (tr("IMPACT"), tr(impact), _impact_color(impact, p)),
+            # Same reasoning as the cleanup panel: IMPACT was derived from the
+            # reclaimable size, the review count and the found count, all three
+            # of which sit in this row already. RESULT states how the run
+            # ended, which nothing else in the row says.
+            (tr("RESULT"), status_label, _status_color(status, p)),
             (tr("RECLAIMABLE"), reclaimable_text,
              p.get("safe", "#7aa88a") if reclaimable else ""),
         ]
@@ -593,12 +631,14 @@ class SessionDetail(QFrame):
             (tr("DURATION"), _format_duration(duration), ""),
         ]
         for k, v, col in rows:
-            metrics.addLayout(_kv(k, v, p, val_size=11, bold=k in (tr("IMPACT"), tr("RECLAIMABLE")), val_color=col))
+            metrics.addLayout(_kv(k, v, p, val_size=11, bold=k in (tr("RESULT"), tr("RECLAIMABLE")), val_color=col))
         metrics.addStretch()
         layout.addLayout(metrics)
 
+        # status_label moved up into the metrics row; repeating it here would
+        # say the same word twice, six lines apart.
         layout.addWidget(_muted_line(
-            f"{status_label} · {mode_label} · "
+            f"{mode_label} · "
             f"{tr('scanned')} {_format_size(record.get('total_size', 0))}", p))
 
         # ── What was found ────────────────────────────────────────
@@ -639,7 +679,6 @@ class SessionDetail(QFrame):
         for text, cb in [
             (tr("Open findings"),           on_open),
             (tr("Re-run with same target"), on_rerun),
-            (tr("Delete from history"),     on_delete),
         ]:
             btn = QPushButton(text)
             btn.setObjectName("Subtle")
@@ -647,7 +686,28 @@ class SessionDetail(QFrame):
             btn.setCursor(Qt.PointingHandCursor)
             btn.clicked.connect(cb)
             btn_row.addWidget(btn)
+
+        # Delete carried the same weight as the two actions people actually
+        # come here for, while being the only one that cannot be undone. It
+        # keeps its place and its size — losing a destructive control is worse
+        # than over-showing it — but drops the border and fill so the eye
+        # reaches the other two first, and warms to the risk colour on hover so
+        # it says what it is at the moment of pressing it.
         btn_row.addStretch()
+        p_del = get_palette()
+        faint = p_del.get("text_faint", "#57685e")
+        risk = p_del.get("risk", "#c67a69")
+        btn_del = QPushButton(tr("Delete from history"))
+        btn_del.setObjectName("Ghost")
+        btn_del.setStyleSheet(
+            f"QPushButton#Ghost {{ font-size: 10px; padding: 4px 10px; "
+            f"background: transparent; border: none; color: {faint}; }} "
+            f"QPushButton#Ghost:hover {{ color: {risk}; "
+            f"background: {_rgba(risk, 0.10)}; }}"
+        )
+        btn_del.setCursor(Qt.PointingHandCursor)
+        btn_del.clicked.connect(on_delete)
+        btn_row.addWidget(btn_del)
         layout.addLayout(btn_row)
 
 
@@ -968,9 +1028,9 @@ class HistoryScreen(QWidget):
             ))
             return frame
 
-        # Table — WHEN / MODE / FREED / ITEMS
+        # Table — WHEN / STATUS / FREED / ITEMS
         table = self._new_table(
-            [tr("WHEN"), tr("MODE"), tr("FREED"), tr("ITEMS")],
+            [tr("WHEN"), tr("STATUS"), tr("FREED"), tr("ITEMS")],
             [Qt.AlignLeft, Qt.AlignHCenter, Qt.AlignRight, Qt.AlignRight])
         hdr = table.horizontalHeader()
         for col, w in ((1, 116), (2, 100), (3, 78)):
@@ -986,7 +1046,7 @@ class HistoryScreen(QWidget):
             when_item.setFlags(when_item.flags() & ~Qt.ItemIsEditable)
             table.setItem(i, 0, when_item)
 
-            table.setCellWidget(i, 1, self._badge_cell(_ModeBadge(rec.get("mode", "recycle_bin"))))
+            table.setCellWidget(i, 1, self._badge_cell(_StatusBadge(rec)))
 
             freed_item = QTableWidgetItem(_format_size(rec.get("total_bytes_freed", 0)))
             freed_item.setFlags(freed_item.flags() & ~Qt.ItemIsEditable)
@@ -1008,12 +1068,17 @@ class HistoryScreen(QWidget):
         self._cleanup_table = table
         self._cap_table_height(table)
         v.addWidget(table)
-        note = self._limited_history_note(len(records), "cleanup records")
-        if note:
-            v.addWidget(note)
         self._cleanup_detail_area = self._detail_slot()
         self._cleanup_detail_widget = None
         v.addWidget(self._cleanup_detail_area)
+        # Below the detail panel, not above it. Sitting between the table and
+        # the panel, this note wedged an unrelated sentence between the row you
+        # clicked and the details it opened, so the two stopped reading as
+        # connected. It is a footnote about the table's length; it belongs at
+        # the end of the section.
+        note = self._limited_history_note(len(records), "cleanup records")
+        if note:
+            v.addWidget(note)
         v.addStretch(1)
         return frame
 
@@ -1087,12 +1152,17 @@ class HistoryScreen(QWidget):
         self._sess_table = table
         self._cap_table_height(table)
         v.addWidget(table)
-        note = self._limited_history_note(len(sessions), "scan sessions")
-        if note:
-            v.addWidget(note)
         self._sess_detail_area = self._detail_slot()
         self._sess_detail_widget = None
         v.addWidget(self._sess_detail_area)
+        # Below the detail panel, not above it. Sitting between the table and
+        # the panel, this note wedged an unrelated sentence between the row you
+        # clicked and the details it opened, so the two stopped reading as
+        # connected. It is a footnote about the table's length; it belongs at
+        # the end of the section.
+        note = self._limited_history_note(len(sessions), "scan sessions")
+        if note:
+            v.addWidget(note)
         v.addStretch(1)
         return frame
 
@@ -1106,9 +1176,14 @@ class HistoryScreen(QWidget):
         # the panel needs 195-310px depending on the record. The screen is
         # inside a QScrollArea, so growing is free.
         host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        # The table and this panel both sat on panel_alt, so the details had
+        # exactly the weight of the data they annotate. tint_bg sits below the
+        # workspace surface rather than above it, which reads as an inset well
+        # — subordinate to the table, still clearly its own region. The border
+        # softens to match; it no longer has to do the separating on its own.
         host.setStyleSheet(
-            f"QFrame#PanelAlt {{ background: {p.get('panel_alt', '#18241e')}; "
-            f"border: 1px solid {p.get('border', '#213028')}; }}"
+            f"QFrame#PanelAlt {{ background: {p.get('tint_bg', '#101a15')}; "
+            f"border: 1px solid {_rgba(p.get('border', '#213028'), 0.75)}; }}"
         )
         lay = QVBoxLayout(host)
         lay.setContentsMargins(0, 0, 0, 0)
