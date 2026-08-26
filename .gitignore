@@ -43,12 +43,16 @@ Thumbs.db
 desktop.ini
 .DS_Store
 
-# Design mockups live outside the repo (../Podbye-design-archive) — 34 MB of
-# PNGs that no build or test reads.
+# Design mockups live outside the repo (../Vigil-design-archive) — 34 MB of
+# PNGs that no build or test reads. That sibling folder keeps its old name:
+# it is the user's own directory, not something the rename reaches.
 Design/
 podbye/
+vigil/
 Podbye_design.html
+Vigil_design.html
 podbye_design.tar
+vigil_design.tar
 
 # Scratch output
 crash.log
