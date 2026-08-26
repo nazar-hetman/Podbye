@@ -95,6 +95,9 @@ def _panel_title(title: str, subtitle: str = "") -> QHBoxLayout:
 # place in every row of a panel rather than wherever the text happened to end.
 _VALUE_COL_WIDTH = 280      # matches the endpoint input; a minimum, not a cap
 _ACTION_COL_WIDTH = 88
+# Scan's value blocks are prose rather than fields, so they get their own,
+# wider column — one width for both, so the page has a single value edge.
+_SCAN_VALUE_WIDTH = 360
 # A floor, not a guarantee: a Qt style sheet's min-height beats setFixedHeight,
 # so the theme has the last word on the rendered height. What this buys is that
 # both buttons reach it the same way, instead of one carrying an inline
@@ -1058,16 +1061,40 @@ class SettingsScreen(QWidget):
         self._register_styled_panel(self._keep_panel)
 
         self._keep_list_box = QWidget()
-        self._keep_list_box.setMinimumWidth(340)
+        self._keep_list_box.setMinimumWidth(_SCAN_VALUE_WIDTH)
         self._keep_list_layout = QVBoxLayout(self._keep_list_box)
         self._keep_list_layout.setContentsMargins(0, 0, 0, 0)
         self._keep_list_layout.setSpacing(4)
-        keep_lay.addLayout(_setting_row(
+
+        # The row and the empty state are alternatives, not a row that happens
+        # to be empty. Held in a container so one can replace the other: the
+        # "nothing yet" line used to sit in the value column, dim, beside an
+        # equally dim description — two columns of muted text that read as a
+        # form with a blank field rather than as a section with nothing in it.
+        self._keep_row_host = QWidget()
+        keep_row_lay = QVBoxLayout(self._keep_row_host)
+        keep_row_lay.setContentsMargins(0, 0, 0, 0)
+        keep_row_lay.setSpacing(0)
+        keep_row_lay.addLayout(_setting_row(
             tr("Kept paths"),
             tr("Marked with Keep in Findings. Nothing inside these is ever "
                "selected by a bulk action, and cleanup refuses them outright."),
             self._keep_list_box,
         ))
+        keep_lay.addWidget(self._keep_row_host)
+
+        # Spans the panel rather than sitting in a column, and carries the
+        # safety rule itself: hiding the row would otherwise hide the sentence
+        # explaining what a Keep mark actually does.
+        self._keep_empty_lbl = QLabel(
+            tr("Nothing kept yet. Use Keep on any finding — kept paths are never "
+               "selected by a bulk action, and cleanup refuses them outright.")
+        )
+        self._keep_empty_lbl.setObjectName("Dim")
+        self._keep_empty_lbl.setStyleSheet("font-size: 11px;")
+        self._keep_empty_lbl.setWordWrap(True)
+        keep_lay.addWidget(self._keep_empty_lbl)
+
         lay.addWidget(self._keep_panel)
         self._refresh_kept_paths()
 
@@ -1082,15 +1109,37 @@ class SettingsScreen(QWidget):
         # disabled under "Not available yet" — a control that could never be
         # used, on the one screen where the user is deciding how much to trust
         # cleanup.
-        method_lbl = QLabel(tr("Files are moved to the Recycle Bin and can be restored."))
-        method_lbl.setWordWrap(True)
-        method_lbl.setMaximumWidth(360)
-        fh_lay.addLayout(_setting_row(
-            tr("Cleanup method"),
-            tr("Podbye never deletes permanently. Emptying the Recycle Bin is "
-               "always your own, separate decision."),
-            method_lbl,
-        ))
+        # The method is a fact, so it reads as a value with its explanation
+        # under it. It used to be stated twice, once per column: the
+        # description said "Podbye never deletes permanently. Emptying the
+        # Recycle Bin is always your own, separate decision" while the value
+        # beside it said "Files are moved to the Recycle Bin and can be
+        # restored" — the same three facts, in two places, in muted type.
+        method_w = QWidget()
+        method_v = QVBoxLayout(method_w)
+        method_v.setContentsMargins(0, 0, 0, 0)
+        method_v.setSpacing(4)
+
+        self._method_value_lbl = QLabel(tr("Recycle Bin"))
+        self._method_value_lbl.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 11px;")
+        method_v.addWidget(self._method_value_lbl)
+
+        # One sentence, all three guarantees: never permanent, recoverable,
+        # and emptying the Bin stays the user's own action.
+        method_note = QLabel(tr("Podbye never deletes permanently — items stay "
+                                "recoverable until you empty the Bin yourself."))
+        method_note.setObjectName("Dim")
+        method_note.setStyleSheet("font-size: 11px;")
+        method_note.setWordWrap(True)
+        # Fixed, not a maximum. A word-wrapping QLabel reports a narrow size
+        # hint, and the container sizes to it — the note wrapped at 165px and
+        # stood eight lines tall instead of three. Wrapping never clips, so
+        # pinning the width is safe here.
+        method_note.setFixedWidth(_SCAN_VALUE_WIDTH)
+        method_v.addWidget(method_note)
+
+        fh_lay.addLayout(_setting_row(tr("Cleanup method"), "", method_w))
 
         lay.addWidget(fh_panel)
         lay.addStretch()
@@ -1111,11 +1160,11 @@ class SettingsScreen(QWidget):
                 widget.deleteLater()
 
         paths = keep_list.kept_paths()
+        # Swap the whole row for the section-state line, rather than leaving a
+        # labelled row with an empty value column.
+        self._keep_row_host.setVisible(bool(paths))
+        self._keep_empty_lbl.setVisible(not paths)
         if not paths:
-            empty = QLabel(tr("Nothing yet — use Keep on any finding."))
-            empty.setObjectName("Dim")
-            empty.setStyleSheet("font-size: 11px;")
-            layout.addWidget(empty)
             return
 
         for path in paths:

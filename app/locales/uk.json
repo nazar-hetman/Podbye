@@ -341,7 +341,6 @@
   "Files": "Файли",
   "Files ({n} of {total})": "Файли ({n} з {total})",
   "Files ({n})": "Файли ({n})",
-  "Files are moved to the Recycle Bin and can be restored.": "Файли переміщуються до Кошика і можуть бути відновлені.",
   "Files scanned: {count:,} | Size analyzed: {size}": "Відскановано: {count:,} файлів | Розмір: {size}",
   "Files scanned: {count:,} | Size: {size}": "Відскановано: {count:,} файлів | Розмір: {size}",
   "Finalising… ({n:,} processed)": "Завершення… (оброблено: {n:,})",
@@ -535,7 +534,6 @@
   "Nothing to clean": "Нічого чистити",
   "Nothing to remove.": "Нічого видаляти.",
   "Nothing was removed from {label}.": "З розділу «{label}» нічого не видалено.",
-  "Nothing yet — use Keep on any finding.": "Поки нічого — скористайтеся «Зберегти» на будь-якій знахідці.",
   "OPERATOR FEED": "СТРІЧКА ОПЕРАТОРА",
   "OPTIONAL": "ОПЦІЙНО",
   "Off by default to avoid loops and cross-volume drift.": "Вимкнено за замовчуванням для уникнення циклів та відхилення між томами.",
@@ -922,7 +920,6 @@
   "Podbye is still running": "Podbye продовжує працювати",
   "Podbye is still working": "Podbye ще працює",
   "Podbye keeps running in the system tray — near the clock, usually under the ▲ \"hidden icons\" arrow. Your work finishes there in the background.\n\nTo fully close Podbye later, right-click the tray icon and choose Quit.": "Podbye продовжує працювати в системному треї — біля годинника, зазвичай під стрілкою ▲ «приховані значки». Ваша робота завершується там у фоні.\n\nЩоб повністю закрити Podbye пізніше, клацніть значок у треї правою кнопкою та виберіть «Вийти».",
-  "Podbye never deletes permanently. Emptying the Recycle Bin is always your own, separate decision.": "Podbye ніколи не видаляє остаточно. Очищення Кошика — завжди ваше окреме рішення.",
   "Podbye never touches these": "Podbye ніколи не торкається цих шляхів",
   "Podbye only connects to this machine or your LAN, never to a cloud API.": "Podbye під'єднується лише до цього комп'ютера або вашої локальної мережі, ніколи до хмарного API.",
   "Podbye refuses to connect to non-loopback or non-LAN endpoints. There is no cloud fallback, no API key field, no analytics.": "Podbye відмовляється підключатися до зовнішніх адрес. Немає хмарного резервування, немає поля API-ключа, немає аналітики.",
@@ -1201,5 +1198,7 @@
   "Cleanup finished": "Завершено з проблемами",
   "Attention": "Увага",
   "Partial": "Частково",
-  "Podbye can ask, keep working in the system tray, or stop and quit.": "Podbye може запитати, продовжити роботу в треї або зупинитися та вийти."
+  "Podbye can ask, keep working in the system tray, or stop and quit.": "Podbye може запитати, продовжити роботу в треї або зупинитися та вийти.",
+  "Nothing kept yet. Use Keep on any finding — kept paths are never selected by a bulk action, and cleanup refuses them outright.": "Нічого ще не збережено. Натисніть «Зберегти» на будь-якій знахідці — збережені шляхи ніколи не обираються масовою дією, а очищення їх відхиляє.",
+  "Podbye never deletes permanently — items stay recoverable until you empty the Bin yourself.": "Podbye ніколи не видаляє остаточно — файли можна відновити, доки ви самі не очистите Кошик."
 }

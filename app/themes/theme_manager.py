@@ -128,7 +128,7 @@ PALETTES = {
         "border_alt":   "#9f907d",
         "border_hover": "#817360",
         "text":         "#232621",
-        "text_dim":     "#636558",
+        "text_dim":     "#5c5e52",
         "text_faint":   "#7b776b",
         "accent":       "#6a7562",
         "accent_hover": "#525b4d",
