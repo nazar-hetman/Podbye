@@ -15,9 +15,11 @@ from app.models.finding import _format_size, split_size
 from app.widgets.controls import TacticalCheckBox
 from app.services.cleanup_engine import CleanupWorker
 from app.services.cleanup_result_classifier import (
+    STATE_ALREADY_CLEAN,
     STATE_FAILED,
     STATE_IN_USE,
     STATE_PARTIAL,
+    STATE_SUCCESS,
     CleanupAssessment,
     assess_cleanup_counts,
 )
@@ -352,14 +354,19 @@ class QuickCleanupScreen(QWidget):
         actions = QHBoxLayout()
         actions.setSpacing(8)
 
-        self._sel_badge = Badge(tr("0 selected"), "info")
-        # Minimum, not fixed: 136px was measured against "5 of 5 selected",
-        # and "5 SUR 5 SÉLECTIONNÉS" needs 160. The minimum still keeps the
-        # header from jittering as the count changes.
-        self._sel_badge.setMinimumWidth(136)
+        self._sel_badge = Badge(tr("0 selected"), "status")
+        # No minimum width. It used to be held at 136px, a hair wider than the
+        # Clean button beside it, so a status label sat in the action row at
+        # button width and button spacing and read as a third button — one
+        # that did nothing when clicked. Badge.minimumSizeHint already
+        # guarantees the text fits in every language, so the badge can size to
+        # its own content, which is what tells the eye it is not a control.
         self._sel_badge.setAlignment(Qt.AlignCenter)
         self._sel_badge.setVisible(False)
         actions.addWidget(self._sel_badge)
+        # Breathing room between the status and the controls it describes, so
+        # the two buttons group together rather than reading as three peers.
+        actions.addSpacing(8)
 
         self._btn_rescan = QPushButton(tr("↻ Scan"))
         self._btn_rescan.setCursor(Qt.PointingHandCursor)
@@ -466,6 +473,13 @@ class QuickCleanupScreen(QWidget):
         # integrated details section. Hidden until a category is selected,
         # so the panel ends right after the last row.
         left_lay.addWidget(self._exp_panel)
+        # Absorb the column's spare height here rather than letting the rows
+        # take it. _CategoryRow sets only a minimum height, so with nothing at
+        # the bottom to soak up the surplus the rows stretched to fill the
+        # panel — and then gave the space straight back the moment the
+        # explanation claimed it, shrinking every row from 72px to 52px as a
+        # side effect of opening a details panel below them.
+        left_lay.addStretch()
         self._reset_explanation()
 
         left_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
@@ -884,10 +898,39 @@ class QuickCleanupScreen(QWidget):
         """Collapse the explanation so Safe Categories ends after the last row."""
         self._exp_panel.hide()
 
-    def _on_row_clicked(self, idx: int):
-        if self._state in (_CLEANING,):
-            return
+    def _populate_explanation(self, idx: int):
+        """Fill the details panel for row *idx* from that row's current state.
 
+        Split out of _on_row_clicked because the same panel has to be rebuilt
+        when the cleanup finishes: a panel opened while files were still moving
+        shows the category explanation, and once there is a result to report it
+        must become that result rather than sit there stale.
+        """
+        cat = self._rows[idx].category
+        self._exp_name_lbl.setText(f"· {tr(cat.label)}")
+        assessment = self._rows[idx].assessment
+        if self._state == _DONE and assessment is not None:
+            self._exp_hdr_lbl.setText(tr("WHAT HAPPENED & HOW TO FINISH"))
+            self._exp_text_lbl.setText(assessment.explanation_text)
+            # Result explanations carry why + step-by-step actions, so give
+            # them room to show without hiding the steps below the fold. Fixed,
+            # not content-sized: a long error must scroll inside the panel and
+            # never push the panel taller, which would move the rows above it.
+            self._exp_scroll.setFixedHeight(150)
+            self._exp_panel.setFixedHeight(204)
+        else:
+            self._exp_hdr_lbl.setText(tr("EXPLANATION"))
+            self._exp_text_lbl.setText(tr(_EXPLANATIONS.get(cat.key, _EXPLANATION_FALLBACK)))
+            self._exp_scroll.setFixedHeight(72)
+            self._exp_panel.setFixedHeight(126)
+        self._exp_text_lbl.setStyleSheet("font-size: 12px; line-height: 1.5;")
+        self._exp_panel.show()
+
+    def _on_row_clicked(self, idx: int):
+        # Reading is not writing. Cleanup used to refuse to open an
+        # explanation while it ran, which is exactly when someone wants to
+        # know what is being moved — and the selection it was protecting is
+        # already locked by the checkboxes being disabled.
         if self._expanded_index == idx:
             # Deselect — explanation section reverts to its inactive state.
             self._rows[idx].set_expanded(False)
@@ -899,23 +942,7 @@ class QuickCleanupScreen(QWidget):
         if self._expanded_index >= 0:
             self._rows[self._expanded_index].set_expanded(False)
         self._rows[idx].set_expanded(True)
-        cat = self._rows[idx].category
-        self._exp_name_lbl.setText(f"· {tr(cat.label)}")
-        assessment = self._rows[idx].assessment
-        if self._state == _DONE and assessment is not None:
-            self._exp_hdr_lbl.setText(tr("WHAT HAPPENED & HOW TO FINISH"))
-            self._exp_text_lbl.setText(assessment.explanation_text)
-            # Result explanations carry why + step-by-step actions, so give
-            # them room to show without hiding the steps below the fold.
-            self._exp_scroll.setFixedHeight(150)
-            self._exp_panel.setFixedHeight(204)
-        else:
-            self._exp_hdr_lbl.setText(tr("EXPLANATION"))
-            self._exp_text_lbl.setText(tr(_EXPLANATIONS.get(cat.key, _EXPLANATION_FALLBACK)))
-            self._exp_scroll.setFixedHeight(72)
-            self._exp_panel.setFixedHeight(126)
-        self._exp_text_lbl.setStyleSheet("font-size: 12px; line-height: 1.5;")
-        self._exp_panel.show()
+        self._populate_explanation(idx)
         self._expanded_index = idx
 
     # ── Scan done ─────────────────────────────────────────────────
@@ -971,7 +998,7 @@ class QuickCleanupScreen(QWidget):
         n_sel, n_total = len(selected), len(self._rows)
 
         self._sel_badge.set_badge(
-            tr("{n} of {total} selected", n=n_sel, total=n_total), "info")
+            tr("{n} of {total} selected", n=n_sel, total=n_total), "status")
         self._sel_badge.setVisible(n_total > 0)
         size_str = _format_size(total_bytes) if selected else "0 MB"
         self._cat_summary_lbl.setText(tr("// {n} selected · {size} ready",
@@ -1018,11 +1045,9 @@ class QuickCleanupScreen(QWidget):
         self._cleaning_rows = selected
         self._cleanup_start_time = time.monotonic()
 
-        # Collapse any open explanation
-        if self._expanded_index >= 0:
-            self._rows[self._expanded_index].set_expanded(False)
-            self._expanded_index = -1
-        self._reset_explanation()
+        # An open explanation stays open. Closing it here was the other half
+        # of the same refusal: press Clean and the thing you were reading
+        # vanished, with no way to bring it back until the run ended.
 
         self._btn_clean.setEnabled(False)
         self._btn_clean.setText(tr("Cleaning…"))
@@ -1180,7 +1205,13 @@ class QuickCleanupScreen(QWidget):
         self._breakdown_container.setVisible(True)
         self._recovery_lbl.setVisible(True)
 
-        self._btn_clean.setText(tr("Cleanup complete"))
+        # A panel opened during the run is showing the category explanation.
+        # Now that the row carries a result, rebuild it in place rather than
+        # leaving the user reading what was true before the cleanup started.
+        if self._expanded_index >= 0:
+            self._populate_explanation(self._expanded_index)
+
+        self._btn_clean.setText(self._completion_label(overall.state))
         self._btn_clean.setEnabled(False)
         self._btn_rescan.setEnabled(True)
 
@@ -1214,6 +1245,22 @@ class QuickCleanupScreen(QWidget):
             self._on_row_clicked(attention_idx)
 
         self._write_history(result)
+
+    @staticmethod
+    def _completion_label(state: str) -> str:
+        """What to call the outcome on the button.
+
+        "Complete" is reserved for a run that left nothing to deal with.
+        Anything in use, failed or skipped is finished, not complete — the
+        screen prints steps still to carry out directly below this button, and
+        calling that state complete makes the user resolve the contradiction.
+
+        "Already clean" belongs with success: there was nothing to do and
+        nothing was left undone.
+        """
+        if state in (STATE_SUCCESS, STATE_ALREADY_CLEAN):
+            return tr("Cleanup complete")
+        return tr("Cleanup finished")
 
     def _write_history(self, result):
         if not (result.succeeded or result.in_use or result.failed):
