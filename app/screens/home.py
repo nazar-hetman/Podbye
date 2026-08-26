@@ -342,7 +342,11 @@ class HomeScreen(QWidget):
 
         accent = get_palette().get("safe", "#7cc596")
 
-        panel = Panel()
+        # PanelAlt rather than Panel: this banner sits above every other state
+        # on the screen, and on the darker themes a plain panel was close enough
+        # to the background that the running totals looked like loose text on
+        # the page instead of a card of their own.
+        panel = Panel(alt=True)
         lay = panel.with_layout(vertical=True, margins=(16, 12, 16, 14), spacing=8)
         hdr = QLabel(tr("ALL-TIME IMPACT"))
         hdr.setObjectName("SectionHeader")
