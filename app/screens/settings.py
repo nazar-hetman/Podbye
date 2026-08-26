@@ -90,6 +90,18 @@ def _panel_title(title: str, subtitle: str = "") -> QHBoxLayout:
     return row
 
 
+# The AI page's form grid. The label column lives in _setting_row; these are
+# the two columns to its right, so a value and its action land in the same
+# place in every row of a panel rather than wherever the text happened to end.
+_VALUE_COL_WIDTH = 280      # matches the endpoint input; a minimum, not a cap
+_ACTION_COL_WIDTH = 88
+# A floor, not a guarantee: a Qt style sheet's min-height beats setFixedHeight,
+# so the theme has the last word on the rendered height. What this buys is that
+# both buttons reach it the same way, instead of one carrying an inline
+# min-height that overrode #Ghost's padding while the other did not.
+_ACTION_HEIGHT = 32
+
+
 def _divider() -> QFrame:
     """Dashed-style divider between setting rows."""
     f = QFrame()
@@ -724,8 +736,12 @@ class SettingsScreen(QWidget):
         self._btn_test = QPushButton(tr("Test"))
         self._btn_test.setObjectName("Ghost")
         self._btn_test.setCursor(Qt.PointingHandCursor)
-        # No inline stylesheet — it would suppress the #Ghost fill/border and
-        # leave the button invisible on a panel_alt panel.
+        # Height set as a widget property, not a stylesheet: an inline
+        # stylesheet here would take precedence over #Ghost's fill and border
+        # and leave the button invisible on a panel_alt panel. Test rendered
+        # 12px tall beside a 32px Refresh — two Ghost buttons, one panel.
+        self._btn_test.setFixedWidth(_ACTION_COL_WIDTH)
+        self._btn_test.setFixedHeight(_ACTION_HEIGHT)
         self._btn_test.clicked.connect(self._test_connection)
         ep_h.addWidget(self._btn_test)
         srv_lay.addLayout(_setting_row(tr("Endpoint"), tr("Ollama-compatible HTTP server. Podbye never reaches the public network."), ep_w))
@@ -742,12 +758,19 @@ class SettingsScreen(QWidget):
         conn_top.setContentsMargins(0, 0, 0, 0)
         conn_top.setSpacing(8)
         self._conn_status_lbl = QLabel("")
+        # Minimum, never fixed. The status line runs to "offline · no Ollama,
+        # LM Studio or llama.cpp server found" — 672px of text. A fixed column
+        # would align the button by truncating the sentence that explains why
+        # the button is there. Short states still reserve the column, so the
+        # action lands on the same axis in every case that fits.
+        self._conn_status_lbl.setMinimumWidth(_VALUE_COL_WIDTH)
         self._conn_status_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
         conn_top.addWidget(self._conn_status_lbl)
 
         self._btn_start_ollama = QPushButton(tr("Start Ollama"))
         self._btn_start_ollama.setObjectName("Ghost")
         self._btn_start_ollama.setCursor(Qt.PointingHandCursor)
+        self._btn_start_ollama.setFixedHeight(_ACTION_HEIGHT)
         self._btn_start_ollama.setVisible(False)
         self._btn_start_ollama.clicked.connect(self._start_ollama)
         conn_top.addWidget(self._btn_start_ollama)
@@ -770,16 +793,17 @@ class SettingsScreen(QWidget):
         lib_h.setContentsMargins(0, 0, 0, 0)
         lib_h.setSpacing(8)
         self._library_count_lbl = QLabel(tr("0 models available"))
+        self._library_count_lbl.setMinimumWidth(_VALUE_COL_WIDTH)
         self._library_count_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
         lib_h.addWidget(self._library_count_lbl)
-        lib_h.addStretch()
         self._btn_refresh_models = QPushButton(tr("Refresh"))
         self._btn_refresh_models.setObjectName("Ghost")
         self._btn_refresh_models.setCursor(Qt.PointingHandCursor)
-        self._btn_refresh_models.setFixedWidth(88)
-        self._btn_refresh_models.setStyleSheet(self._utility_btn_qss())
+        self._btn_refresh_models.setFixedWidth(_ACTION_COL_WIDTH)
+        self._btn_refresh_models.setFixedHeight(_ACTION_HEIGHT)
         self._btn_refresh_models.clicked.connect(self._test_connection)
         lib_h.addWidget(self._btn_refresh_models)
+        lib_h.addStretch()
         srv_lay.addLayout(_setting_row(tr("Library"), tr("Local model catalog read from the server."), lib_w))
 
         # Local-only disclosure
@@ -854,7 +878,11 @@ class SettingsScreen(QWidget):
         self._length_combo.currentTextChanged.connect(lambda text: self._save_value("ai_length", text))
         expl_lay.addLayout(_setting_row(tr("Explanation length"), tr("Controls how much the model writes per finding."), self._length_combo))
 
-        expl_lay.addWidget(_divider())
+        # No separator here. Style, length and language are one group — all
+        # three describe how the explanation is written — so a rule between
+        # length and language split a subgroup rather than marking one, and
+        # left the scope toggles below attached to language instead. The panel
+        # already separates its rows with a consistent 10px rhythm.
 
         # AI explanation language
         ai_lang_w = QWidget()
