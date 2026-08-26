@@ -1,0 +1,49 @@
+# Run the suite on every push and pull request.
+#
+# release.yml also runs pytest, but only when a v* tag is pushed — by which
+# point a regression is already in main and the tag has to be deleted and
+# recut. This runs the same suite at the moment the code arrives, so a red
+# branch is visible before anyone builds a release out of it.
+#
+# Windows, because that is the only platform the app supports: the scanner,
+# the Recycle Bin integration and the startup detector are all Win32.
+name: Tests
+
+on:
+  # Branches only. A tag push never matches a branch filter, so release.yml
+  # keeps sole ownership of tags and the suite is not run twice for one commit.
+  push:
+    branches: ["**"]
+  # Fork PRs never appear as a push to this repo, so they need their own
+  # trigger. A PR from a branch in this repo does run twice; that is the cost
+  # of testing both, and the run is cancelled by the concurrency group anyway.
+  pull_request:
+
+# A new push to the same branch makes the previous run pointless.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # No display on a runner. Qt needs to be told, or every widget test
+      # dies on "could not connect to display" rather than on its assertion.
+      - name: Run tests
+        run: pytest -q
+        env:
+          QT_QPA_PLATFORM: offscreen
