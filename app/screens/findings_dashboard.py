@@ -1416,9 +1416,16 @@ class CategoryCardWidget(QFrame):
         hover = p.get("panel_hover", "#1d2c25")
         panel = p.get("panel", "#141d18")
         if self._is_selected:
+            # The selected card is tinted and outlined in its own category
+            # colour — the same value the donut segment is filled with, which
+            # is what ties the two together. It was written as an eight-digit
+            # hex ("#086798" + "18"), and Qt reads those as #AARRGGBB, so both
+            # the tint and the outline came out as rotated channels: a colour
+            # belonging to no category, on the one card meant to match a slice.
             self.setStyleSheet(
-                f"QFrame#CategoryCard {{ background: {self._color}18; "
-                f"border: 1px solid {self._color}88; border-radius: 2px; }}"
+                f"QFrame#CategoryCard {{ background: {_finding_rgba(self._color, 24)}; "
+                f"border: 1px solid {_finding_rgba(self._color, 136)}; "
+                "border-radius: 2px; }"
             )
         elif self._is_hovered:
             self.setStyleSheet(
@@ -2297,11 +2304,14 @@ class _PreallocDetailPanel(QWidget):
         self._btn_recycle.clicked.connect(self._on_recycle)
         action_stack.addWidget(self._btn_recycle)
 
+        # Built here, placed at the end of the footer row below. It is the
+        # alternative route for one kind of entity, not the headline action,
+        # and at full width directly under Move to Recycle Bin it read as a
+        # second primary button competing with the first.
         self._btn_uninstall = QPushButton(tr("Deep Uninstall"))
         self._btn_uninstall.setObjectName("Subtle")
         self._btn_uninstall.setCursor(Qt.PointingHandCursor)
         self._btn_uninstall.clicked.connect(self._on_uninstall)
-        action_stack.addWidget(self._btn_uninstall)
 
         utility_row = QHBoxLayout()
         utility_row.setSpacing(6)
@@ -2327,7 +2337,10 @@ class _PreallocDetailPanel(QWidget):
         self._btn_keep.clicked.connect(self._on_keep)
         utility_row.addWidget(self._btn_keep)
 
+        # Stretch first, so Deep Uninstall sits at the right end of the footer
+        # while the three utility actions stay grouped on the left.
         utility_row.addStretch()
+        utility_row.addWidget(self._btn_uninstall)
         action_stack.addLayout(utility_row)
         # Stretch BEFORE the action buttons so they always sit at the bottom of
         # the inspection panel regardless of how much (or little) detail the
@@ -2738,11 +2751,17 @@ class _PreallocDetailPanel(QWidget):
             f"background: {p.get('accent', '#7cc596')}; "
             f"border: 1px solid {p.get('accent', '#7cc596')}; border-radius: 2px;"
         )
+        # _finding_rgba, not a hex alpha suffix: "#d8b46a" + "88" is an
+        # eight-digit hex and Qt reads those as #AARRGGBB, so the border was
+        # drawn in a rotated colour rather than a faded review gold. 136 is the
+        # 0x88 it meant. Third site of this bug, after Analyze's stage chips
+        # and History's badges — and this file already had the helper.
         self._btn_uninstall.setStyleSheet(
-            f"font-size: 11px; padding: 6px 10px; "
+            f"font-size: 11px; padding: 5px 10px; "
             f"color: {p.get('review', '#d8b46a')}; "
             f"background: transparent; "
-            f"border: 1px solid {p.get('review', '#d8b46a')}88; border-radius: 2px;"
+            f"border: 1px solid {_finding_rgba(p.get('review', '#d8b46a'), 136)}; "
+            "border-radius: 2px;"
         )
         utility_style = (
             "QPushButton#SecondaryAction { "
@@ -2761,6 +2780,11 @@ class _PreallocDetailPanel(QWidget):
         )
         self._btn_open.setStyleSheet(utility_style)
         self._btn_copy.setStyleSheet(utility_style)
+        # Keep was left out, so it alone kept the base #SecondaryAction rule:
+        # a larger font and 7px/14px padding against the other two at 11px and
+        # 5px/10px. Same object name, same row, different button — which is
+        # what made it read as a label sitting between two controls.
+        self._btn_keep.setStyleSheet(utility_style)
         self._apply_recommendation_card_style(self._current_recommendation_accent)
 
     def _apply_recommendation_card_style(self, accent: str):
