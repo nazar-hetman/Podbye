@@ -6,7 +6,7 @@ for a new release.
 """
 from __future__ import annotations
 
-__version__ = "1.0.0-beta.3"
+__version__ = "1.0.0-beta.4"
 BUILD = "2026.08"
 
 # Where the source and the releases live. Held here beside the version because

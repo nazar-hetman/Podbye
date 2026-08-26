@@ -13,7 +13,7 @@
 ; "improve" this by compressing them into the installer executable itself.
 
 #define AppName        "Podbye"
-#define AppVersion     "1.0.0-beta.3"
+#define AppVersion     "1.0.0-beta.4"
 #define AppPublisher   "Nazar Hetman"
 #define AppExeName     "Podbye.exe"
 #define SourceDir      "..\dist\Podbye"
