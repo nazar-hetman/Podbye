@@ -11,7 +11,7 @@ import pytest
 from PySide6.QtWidgets import QLabel, QPushButton
 
 import app.screens.history as H
-from app.screens.history import _cleanup_status, _status_color
+from app.screens.history import _cleanup_status
 from app.state import session_store as ss
 from app.themes import theme_manager as tm
 
@@ -136,21 +136,47 @@ def _label_texts(widget):
     return [l.text() for l in widget.findChildren(QLabel)]
 
 
-def test_the_cleanup_panel_states_a_result_instead_of_an_impact(screen, qapp):
+def _metric_keys(widget):
+    """The eyebrow labels of the metrics row, in order.
+
+    Values are excluded by requiring letters only: "954 MB" and the target
+    "C:/" are both .isupper(), which is exactly what made earlier versions of
+    this helper read a value as a key.
+    """
+    return [t for t in _label_texts(widget)
+            if t.isupper() and 2 < len(t) < 16
+            and all(ch.isalpha() or ch == " " for ch in t)]
+
+
+def test_the_cleanup_panel_opens_on_what_was_cleaned(screen, qapp):
+    """The leading slot held IMPACT, then RESULT. Both restated the row above:
+    the STATUS column carries the outcome and the panel opens directly beneath
+    that row, so the widest slot was spent on a word already read."""
     screen._toggle_cleanup_detail(2)
     qapp.processEvents()
-    texts = _label_texts(screen._cleanup_detail_widget)
-    assert "IMPACT" not in texts
-    assert "RESULT" in texts
-    assert texts[texts.index("RESULT") + 1] == "Attention"
+    keys = _metric_keys(screen._cleanup_detail_widget)
+    assert keys[:3] == ["CLEANED", "ITEMS", "ATTENTION"]
+    assert "IMPACT" not in keys and "RESULT" not in keys
 
 
-def test_the_session_panel_states_a_result_instead_of_an_impact(screen, qapp):
+def test_the_session_panel_opens_on_what_can_be_reclaimed(screen, qapp):
     screen._toggle_sess_detail(0)
     qapp.processEvents()
-    texts = _label_texts(screen._sess_detail_widget)
-    assert "IMPACT" not in texts
-    assert "RESULT" in texts
+    keys = [k for k in _metric_keys(screen._sess_detail_widget) if k != "TARGET"]
+    # FREED only appears once something from this session has been cleaned.
+    assert [k for k in keys[:5] if k != "FREED"][:4] == [
+        "RECLAIMABLE", "FOUND", "REVIEW", "DURATION"]
+    assert "IMPACT" not in keys and "RESULT" not in keys
+
+
+def test_the_session_panel_still_says_how_the_run_ended(screen, qapp):
+    """The sessions table has no STATUS column — a completed run is not marked
+    in the row at all — so dropping the metric slot must not lose the status."""
+    screen._toggle_sess_detail(0)
+    qapp.processEvents()
+    lines = [t for t in _label_texts(screen._sess_detail_widget) if "scanned" in t]
+    assert lines, "the summary line is missing"
+    assert "Completed" in lines[0] or "Stopped" in lines[0]
 
 
 def test_no_impact_bucket_survives_anywhere():
@@ -160,13 +186,6 @@ def test_no_impact_bucket_survives_anywhere():
     src = inspect.getsource(H)
     assert "_impact_label" not in src
     assert "_impact_color" not in src
-
-
-def test_a_stopped_scan_is_review_not_risk():
-    """A partial result is not a failure."""
-    p = tm.PALETTES["forest"]
-    assert _status_color("stopped", p) == p["review"]
-    assert _status_color("completed", p) == p["safe"]
 
 
 # ── weight ────────────────────────────────────────────────────────

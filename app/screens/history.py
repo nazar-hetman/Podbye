@@ -248,16 +248,6 @@ def _freed_for_session(session_id: str) -> tuple[int, int]:
     return freed, items
 
 
-def _status_color(status: str, p: dict) -> str:
-    """Colour for a scan session's outcome. A stopped run is not a failure —
-    it is a partial result, which is the review tier, not the risk tier."""
-    return {
-        "completed": p.get("safe", "#7aa88a"),
-        "stopped":   p.get("review", "#c7a66c"),
-        "running":   p.get("review", "#c7a66c"),
-    }.get(status, p.get("text_dim", "#8a9b8f"))
-
-
 def _scan_mode_label(mode: str) -> str:
     return tr("Adaptive scan") if mode == "smart" else tr("All files scan")
 
@@ -493,7 +483,6 @@ class CleanupRecordDetail(QFrame):
         skipped = record.get("skipped_protected_count", 0)
         freed = int(record.get("total_bytes_freed", 0) or 0)
         total_exceptions = in_use + failed + skipped
-        status_label, status_key = _cleanup_status(record)
         assessment = assess_cleanup_counts(
             succeeded_count=succeeded,
             in_use_count=in_use,
@@ -509,14 +498,14 @@ class CleanupRecordDetail(QFrame):
         # one design — and so the values stop crowding each other.
         stats = QHBoxLayout()
         stats.setSpacing(18)
-        _bold_keys = (tr("RESULT"), tr("CLEANED"))
+        # Starts at the headline figure. The slot that used to lead this row
+        # held IMPACT ("High" — high what?), then RESULT; both said something
+        # the row above already says. The STATUS column carries the outcome,
+        # and the panel opens directly beneath the row it belongs to, so
+        # repeating it here just spent the widest slot on a word the eye had
+        # already read.
+        _bold_keys = (tr("CLEANED"),)
         for lbl, val, col in [
-            # Was IMPACT / "High" — a bucket computed from the freed size and
-            # the exception count, both of which are printed in this very row.
-            # It restated its neighbours in a word that named no unit: high
-            # what? RESULT says what actually happened, in the same vocabulary
-            # as the STATUS column above and the cleanup dialog.
-            (tr("RESULT"), status_label, p.get(status_key, "")),
             (tr("CLEANED"), _format_size(freed), p.get("safe", "#7aa88a")),
             (tr("ITEMS"), f"{succeeded:,}", ""),
             (tr("ATTENTION"), f"{total_exceptions:,}" if total_exceptions else tr("None"),
@@ -612,11 +601,8 @@ class SessionDetail(QFrame):
         # back by session_id). Only shown once something has been cleaned.
         freed_bytes, freed_items = _freed_for_session(record.get("session_id", ""))
         rows = [
-            # Same reasoning as the cleanup panel: IMPACT was derived from the
-            # reclaimable size, the review count and the found count, all three
-            # of which sit in this row already. RESULT states how the run
-            # ended, which nothing else in the row says.
-            (tr("RESULT"), status_label, _status_color(status, p)),
+            # Same reasoning as the cleanup panel — this row opens on its
+            # headline figure rather than on a restatement of the run's state.
             (tr("RECLAIMABLE"), reclaimable_text,
              p.get("safe", "#7aa88a") if reclaimable else ""),
         ]
@@ -631,14 +617,12 @@ class SessionDetail(QFrame):
             (tr("DURATION"), _format_duration(duration), ""),
         ]
         for k, v, col in rows:
-            metrics.addLayout(_kv(k, v, p, val_size=11, bold=k in (tr("RESULT"), tr("RECLAIMABLE")), val_color=col))
+            metrics.addLayout(_kv(k, v, p, val_size=11, bold=k == tr("RECLAIMABLE"), val_color=col))
         metrics.addStretch()
         layout.addLayout(metrics)
 
-        # status_label moved up into the metrics row; repeating it here would
-        # say the same word twice, six lines apart.
         layout.addWidget(_muted_line(
-            f"{mode_label} · "
+            f"{status_label} · {mode_label} · "
             f"{tr('scanned')} {_format_size(record.get('total_size', 0))}", p))
 
         # ── What was found ────────────────────────────────────────
