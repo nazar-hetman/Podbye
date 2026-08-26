@@ -14,7 +14,7 @@
 
 #define AppName        "Podbye"
 #define AppVersion     "1.0.0-beta.3"
-#define AppPublisher   "Nazar Getman"
+#define AppPublisher   "Nazar Hetman"
 #define AppExeName     "Podbye.exe"
 #define SourceDir      "..\dist\Podbye"
 
