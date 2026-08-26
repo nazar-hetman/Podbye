@@ -319,7 +319,11 @@ class ScanWorker(QThread):
         if self._skipped_known > 0:
             parts.append(f"{self._skipped_known:,} already known (resume)")
         self.log.emit(" · ".join(parts))
-        self.progress.emit(self._scanned, "done")
+        # Empty, not "done": this argument is the path currently being scanned
+        # and the receiver prints it verbatim under the elapsed clock. A
+        # sentinel here rendered as the literal word "done" sitting where a
+        # path belongs. CleanupWorker already emits "" for the same final tick.
+        self.progress.emit(self._scanned, "")
         self.finished_scan.emit()
 
     def _record_skipped(self, path: str, reason: str):
