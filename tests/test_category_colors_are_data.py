@@ -18,6 +18,27 @@ from app.themes.theme_manager import _CATEGORY_COLORS, THEME_KEYS, get_category_
 _THEMES = ["forest", "amber", "mono", "paper"]
 
 
+def _delta_e(a, b):
+    """CIE76 distance, enough to say whether two swatches read as one colour."""
+    def lab(hexs):
+        h = hexs.lstrip("#")
+        rgb = [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+        lin = [(c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4)
+               for c in rgb]
+        r, g, bl = lin
+        x = r * 0.4124 + g * 0.3576 + bl * 0.1805
+        y = r * 0.2126 + g * 0.7152 + bl * 0.0722
+        z = r * 0.0193 + g * 0.1192 + bl * 0.9505
+
+        def f(t):
+            return t ** (1 / 3) if t > 0.008856 else 7.787 * t + 16 / 116
+
+        fx, fy, fz = f(x / 0.95047), f(y), f(z / 1.08883)
+        return (116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz))
+
+    return sum((u - v) ** 2 for u, v in zip(lab(a), lab(b))) ** 0.5
+
+
 def _is_grey(hex_color):
     h = hex_color.lstrip("#")
     return h[0:2].lower() == h[2:4].lower() == h[4:6].lower()
@@ -33,13 +54,32 @@ def test_no_theme_renders_the_category_palette_in_grey(theme):
     assert not greys, f"{theme}: {len(greys)} category colours are greyscale: {greys}"
 
 
-@pytest.mark.parametrize("theme", _THEMES)
-def test_categories_are_distinguishable_from_one_another(theme):
-    """Nine colours cannot label nineteen categories."""
-    palette = get_category_colors(theme)
-    distinct = len(set(palette.values()))
-    assert distinct >= len(palette) - 2, (
-        f"{theme}: only {distinct} distinct colours for {len(palette)} categories")
+def test_the_dark_palette_gives_every_category_its_own_colour():
+    """Nine colours cannot label nineteen categories, and neither can
+    seventeen. Protected / Restricted repeated Media and Unknown repeated
+    Documents, so a row could agree with its own donut segment and still be
+    indistinguishable from a different category's pair."""
+    palette = get_category_colors("forest")
+    duplicates = {v for v in palette.values()
+                  if list(palette.values()).count(v) > 1}
+    assert not duplicates, f"colours shared by several categories: {duplicates}"
+
+
+def test_the_separated_categories_are_far_enough_apart():
+    """Judged against the palette's own bar: its tightest shipping pair is
+    Applications / Media at dE 18."""
+    palette = get_category_colors("forest")
+    for a, b in (("Media", "Protected / Restricted"), ("Documents", "Unknown")):
+        assert _delta_e(palette[a], palette[b]) >= 18.0, f"{a} and {b} are too close"
+
+
+def test_paper_still_carries_the_same_two_collisions():
+    """Deliberately pinned, not tolerated. The separation was scoped to the
+    dark themes; Paper has the identical defect and this fails the moment it
+    is fixed, so the pin gets removed rather than forgotten."""
+    palette = get_category_colors("paper")
+    assert palette["Media"] == palette["Protected / Restricted"]
+    assert palette["Documents"] == palette["Unknown"]
 
 
 def test_black_no_longer_collapses_three_categories_into_one():

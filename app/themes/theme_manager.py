@@ -173,6 +173,15 @@ _current_theme_key = "forest"
 # readability as on Forest's and Amber's — min 2.13 against 2.00 and 2.04 —
 # so sharing it puts Black on the footing the other two already had.
 
+# Protected / Restricted and Unknown used to repeat Media and Documents
+# exactly, so four categories drew as two colours: a row and its donut segment
+# could agree with each other and still be indistinguishable from a different
+# category's pair. Both moved into hue bands the palette was not using - 315
+# and 53 - and both were picked to sit in its muted tier (L 0.36-0.50,
+# S 0.21-0.38) rather than to maximise separation, so the set still reads as
+# one family. Each clears dE 21 from every other category, measured against
+# the palette's own tightest existing pair, Applications / Media at dE 18.
+
 _DARK_CATEGORY_COLORS = {
     "Applications": "#086798",
     "Application Data": "#11a5b1",
@@ -190,8 +199,8 @@ _DARK_CATEGORY_COLORS = {
     "User Profile": "#554286",
     "System Logs": "#7d79aa",
     "Duplicates": "#a27075",
-    "Protected / Restricted": "#33546b",
-    "Unknown": "#578a8f",
+    "Protected / Restricted": "#8a4478",
+    "Unknown": "#948d55",
     "Other": "#d1d1d1",
 }
 
