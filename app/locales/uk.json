@@ -1208,5 +1208,8 @@
   "Emptying Recycle Bin…": "Очищення Кошика…",
   "The Recycle Bin is being emptied. Wait for that to finish, then try again.": "Кошик зараз очищається. Зачекайте, доки це завершиться, і спробуйте знову.",
   "the Recycle Bin is being emptied": "Кошик очищається",
-  "Ask the local AI what {name} is": "Запитати локальний ШІ, що таке {name}"
+  "Ask the local AI what {name} is": "Запитати локальний ШІ, що таке {name}",
+  "Kept": "Збережено",
+  "Remove from Keep": "Прибрати зі Збережених",
+  "You are keeping this — Podbye will never select or delete it": "Ви зберігаєте це — Podbye ніколи не обере та не видалить його"
 }

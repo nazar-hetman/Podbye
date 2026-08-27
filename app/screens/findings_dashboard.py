@@ -2969,6 +2969,12 @@ class _PreallocDetailPanel(QWidget):
             entity.get("app_version", ""),
             entity.get("app_publisher", ""),
             entity.get("install_date", ""),
+            # Keep is read live from the whitelist rather than baked into the
+            # dict, so marking a path changes nothing else in this tuple. Left
+            # out, the inspector short-circuits on an unchanged signature and
+            # goes on showing "Keep" over a path that is now kept — which is
+            # why the state only appeared after closing and reopening the item.
+            _entity_actionability(entity),
         )
         if path and signature == self._current_signature:
             return
@@ -3001,11 +3007,13 @@ class _PreallocDetailPanel(QWidget):
         # Header
         self._name_lbl.setText(_duplicate_title(entity) if is_duplicate else name)
 
-        # A kept item says KEEP here too. The row above the inspector already
-        # does, and two badges disagreeing about the same path is exactly the
-        # kind of thing that makes a screen untrustworthy.
+        # KEPT, not KEEP. The badge reports a state and the button beside it
+        # performs an action; sharing one word made the indicator read as a
+        # second button and the button read as a label. The row above the
+        # inspector says the same thing, because two badges disagreeing about
+        # one path is what makes a screen untrustworthy.
         if is_kept(path):
-            self._risk_badge.set_badge(tr("Keep").upper(), "locked")
+            self._risk_badge.set_badge(tr("Kept").upper(), "locked")
         else:
             self._risk_badge.set_badge(tr(risk).upper(), _status_variant(risk))
 
@@ -3241,7 +3249,9 @@ class _PreallocDetailPanel(QWidget):
                      and actionability != "protected"
                      and (kept_now or can_keep(path)))
         self._btn_keep.setVisible(can_offer)
-        self._btn_keep.setText(tr("Stop keeping") if kept_now else tr("Keep"))
+        # "Remove from Keep" names the list it acts on. "Stop keeping" read as
+        # an instruction to the user rather than a description of the button.
+        self._btn_keep.setText(tr("Remove from Keep") if kept_now else tr("Keep"))
         self._btn_keep.setToolTip(
             tr("Podbye will offer this for cleanup again")
             if kept_now else
@@ -3410,6 +3420,16 @@ class ThingRow(QFrame):
         self._name_lbl = ElidedLabel("")
         self._name_lbl.setStyleSheet("font-size: 13px; font-weight: 700;")
         title_row.addWidget(self._name_lbl, stretch=1)
+
+        # A padlock beside the name, where a state belongs. This used to be the
+        # words "1 kept" in the metrics slot on the right, which read as a
+        # count of something rather than a mark on the thing itself - and sat
+        # in the same place as "3 selected", so a user's standing instruction
+        # and a transient selection took turns in one label.
+        self._lock_lbl = QLabel()
+        self._lock_lbl.setVisible(False)
+        self._lock_lbl.setFixedWidth(14)
+        title_row.addWidget(self._lock_lbl, alignment=Qt.AlignVCenter)
         self._risk_badge = Badge(tr("Review"), "review")
         title_row.addWidget(self._risk_badge, alignment=Qt.AlignVCenter)
         center.addLayout(title_row)
@@ -3478,13 +3498,26 @@ class ThingRow(QFrame):
                                        n=armed, total=total))
             colour = p.get("accent", "#7cc596")
         elif kept:
-            self._armed_lbl.setText(tr("{n} kept", n=kept))
+            # The lock carries this now; repeating it as text would say the
+            # same thing twice in one row.
+            self._armed_lbl.setText("")
             colour = p.get("text_faint", "#57685e")
         else:
             self._armed_lbl.setText("")
             colour = p.get("text_faint", "#57685e")
         self._armed_lbl.setStyleSheet(
             f"font-family: 'JetBrains Mono'; font-size: 10px; color: {colour};")
+
+        # Drawn in the palette, at the row's own scale, so it reads as part of
+        # the interface rather than as a sticker on top of it.
+        if kept:
+            from app.widgets.logo import lock_pixmap
+            ratio = self.devicePixelRatioF() or 1.0
+            self._lock_lbl.setPixmap(
+                lock_pixmap(p.get("text_dim", "#8a9b8f"), 12, ratio))
+            self._lock_lbl.setToolTip(
+                tr("You are keeping this — Podbye will never select or delete it"))
+        self._lock_lbl.setVisible(bool(kept))
 
     # ── interaction / paint ───────────────────────────────────────
 
@@ -3609,8 +3642,9 @@ class PartRow(QFrame):
         action = _entity_actionability(entity)
         if action == "kept":
             # "locked", not a risk colour: Keep is the user's own decision,
-            # not a warning about the files.
-            self._risk_badge.set_badge(tr("Keep"), "locked")
+            # not a warning about the files. "Kept" because this reports what
+            # is true of the path, not what pressing something would do.
+            self._risk_badge.set_badge(tr("Kept"), "locked")
         else:
             risk = normalize_risk(entity.get("risk", "Review"))
             self._risk_badge.set_badge(tr(risk), _status_variant(risk))

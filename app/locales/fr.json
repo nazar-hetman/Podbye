@@ -1207,5 +1207,8 @@
   "Emptying Recycle Bin…": "Vidage de la Corbeille…",
   "The Recycle Bin is being emptied. Wait for that to finish, then try again.": "La Corbeille est en cours de vidage. Attendez la fin, puis réessayez.",
   "the Recycle Bin is being emptied": "la Corbeille est en cours de vidage",
-  "Ask the local AI what {name} is": "Demander à l’IA locale ce qu’est {name}"
+  "Ask the local AI what {name} is": "Demander à l’IA locale ce qu’est {name}",
+  "Kept": "Conservé",
+  "Remove from Keep": "Retirer des conservés",
+  "You are keeping this — Podbye will never select or delete it": "Vous conservez ceci — Podbye ne le sélectionnera ni ne le supprimera jamais"
 }
