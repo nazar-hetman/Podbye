@@ -1207,5 +1207,6 @@
   "Every preference goes back to its default — endpoint, model, theme, language and the cleanup safeguards.\n\nYour scan history and kept paths are not touched.": "Усі налаштування повернуться до типових — адреса, модель, тема, мова та запобіжники очищення.\n\nІсторія сканувань і збережені шляхи не змінюються.",
   "Emptying Recycle Bin…": "Очищення Кошика…",
   "The Recycle Bin is being emptied. Wait for that to finish, then try again.": "Кошик зараз очищається. Зачекайте, доки це завершиться, і спробуйте знову.",
-  "the Recycle Bin is being emptied": "Кошик очищається"
+  "the Recycle Bin is being emptied": "Кошик очищається",
+  "Ask the local AI what {name} is": "Запитати локальний ШІ, що таке {name}"
 }

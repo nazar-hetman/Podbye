@@ -1851,7 +1851,8 @@ class ContentRowWidget(QFrame):
     """
 
     toggled = Signal(str, bool)         # path, checked
-    clicked = Signal(str)               # path
+    clicked = Signal(str)               # path — drilling in, nothing else
+    ask_requested = Signal(str)         # path — the AI, and only on request
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1886,8 +1887,33 @@ class ContentRowWidget(QFrame):
         self._chevron.setVisible(False)
         row.addWidget(self._chevron, alignment=Qt.AlignVCenter)
 
+        # Clicking a row used to run the model, on a row drawn with an arrow
+        # cursor, no chevron and a tooltip that only named the path — the file
+        # already had the whole vocabulary for "this is clickable" and withheld
+        # every part of it in the one case where the click did something
+        # surprising. The action is a button now, and the row is inert.
+        #
+        # A button on every row at rest is what the previous design rejected,
+        # and rightly: it made the list loud. Revealed on hover and on keyboard
+        # focus, it is quiet at rest and present when reached for.
+        self._btn_ask = QPushButton(tr("Ask AI"))
+        self._btn_ask.setCursor(Qt.PointingHandCursor)
+        self._btn_ask.setVisible(False)
+        self._btn_ask.clicked.connect(self._on_ask_clicked)
+        # Keeps its space while hidden, so a row does not reflow under the
+        # pointer as it arrives.
+        policy = self._btn_ask.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)
+        self._btn_ask.setSizePolicy(policy)
+        row.addWidget(self._btn_ask, alignment=Qt.AlignVCenter)
+
+        # Reachable without a pointer: a hover-only affordance is a different
+        # kind of hidden.
+        self.setFocusPolicy(Qt.StrongFocus)
+
         self._path = ""
         self._drillable = False
+        self._askable = False
 
     def bind(self, content_row, *, selectable: bool, checked: bool = False,
              provisional: bool = False, drillable: bool = False):
@@ -1903,9 +1929,22 @@ class ContentRowWidget(QFrame):
         self._check.setChecked(bool(checked))
         self._check.blockSignals(False)
         self._drillable = bool(drillable)
+        # Exactly one of the two: a row either navigates or offers the model.
+        # Reusing the chevron for both would put two rows side by side that
+        # look identical and do entirely different things.
+        self._askable = bool(content_row.path) and not self._drillable
         self._chevron.setVisible(self._drillable)
         self.setCursor(Qt.PointingHandCursor if self._drillable
                        else Qt.ArrowCursor)
+        self._btn_ask.setVisible(False)
+        ask_policy = self._btn_ask.sizePolicy()
+        # Space is held open only where the button can appear, so a list of
+        # drillable items keeps its full width for names.
+        ask_policy.setRetainSizeWhenHidden(self._askable)
+        self._btn_ask.setSizePolicy(ask_policy)
+        if self._askable:
+            self._btn_ask.setToolTip(
+                tr("Ask the local AI what {name} is", name=label))
         if self._drillable:
             self._name.setToolTip(
                 tr("Inspect {name}", name=label) + "\n" + (content_row.path or ""))
@@ -1920,11 +1959,61 @@ class ContentRowWidget(QFrame):
         self._size.setStyleSheet(
             f"font-family: 'JetBrains Mono'; font-size: 11px; "
             f"color: {p.get('text_dim', '#8a9b8f')};")
+        # The same button the Entity inspector and Startups use, so the action
+        # is recognisable as the one action it is wherever it appears.
+        self._btn_ask.setStyleSheet(ask_ai_button_qss())
         self.setStyleSheet("QFrame#ContentRow { background: transparent; "
                            "border: none; }")
 
+    def _reveal_action(self, shown: bool):
+        self._btn_ask.setVisible(bool(shown) and self._askable)
+
+    def showEvent(self, event):
+        # Re-asserted here because setVisible(False) on a child does not
+        # survive the parent's show(): Qt shows the children with it, and the
+        # button would arrive already on screen on every row.
+        super().showEvent(event)
+        self._reveal_action(self.underMouse() or self.hasFocus())
+
+    def enterEvent(self, event):
+        self._reveal_action(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        # Keyboard focus outranks the pointer leaving: someone who tabbed here
+        # must not lose the control by brushing past it with the mouse.
+        self._reveal_action(self.hasFocus() or self._btn_ask.hasFocus())
+        super().leaveEvent(event)
+
+    def focusInEvent(self, event):
+        self._reveal_action(True)
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event):
+        self._reveal_action(self.underMouse() or self._btn_ask.hasFocus())
+        super().focusOutEvent(event)
+
+    def keyPressEvent(self, event):
+        # Enter does whatever the row offers, so the keyboard path matches
+        # what the pointer sees.
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+            if self._drillable and self._path:
+                self.clicked.emit(self._path)
+                return
+            if self._askable:
+                self._on_ask_clicked()
+                return
+        super().keyPressEvent(event)
+
+    def _on_ask_clicked(self):
+        # Guarded, not merely hidden: a drillable row never shows this button,
+        # and a row that navigates must not also be able to start a model run.
+        if self._path and self._askable:
+            self.ask_requested.emit(self._path)
+
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton and self._path:
+        # Only navigation. Running a model is the button's job now.
+        if event.button() == Qt.LeftButton and self._path and self._drillable:
             self.clicked.emit(self._path)
         super().mousePressEvent(event)
 
@@ -2609,6 +2698,7 @@ class _PreallocDetailPanel(QWidget):
                 widget = ContentRowWidget()
                 widget.toggled.connect(self._on_content_toggled)
                 widget.clicked.connect(self._on_content_clicked)
+                widget.ask_requested.connect(self._on_content_ask)
                 self._content_row_pool.append(widget)
                 self._contents_rows.addWidget(widget)
             checked = row.path in self._checked_files if is_files else False
@@ -2677,17 +2767,24 @@ class _PreallocDetailPanel(QWidget):
             self._checked_files.discard(path)
 
     def _on_content_clicked(self, path: str):
-        """A file asks about itself; an item is drilled into."""
+        """Drilling into an item. Nothing else - see _on_content_ask."""
         if not path:
             return
         from app.models.entity_contents import MODE_ITEMS
         if self._contents is not None and self._contents.mode == MODE_ITEMS:
             if self._drill_cb:
                 self._drill_cb(path)
-            return
-        # No Ask AI button beside every file: selecting one is what opens the
-        # question, which keeps the list quiet and scannable.
-        if self._ask_ai_file_cb:
+
+    def _on_content_ask(self, path: str):
+        """The row's Ask AI button. Never a bare click on the row.
+
+        A click used to do this, on a row drawn with an arrow cursor and no
+        chevron - the model started because you touched a list. The original
+        objection to a button on every row was that it made the list loud, and
+        that still holds; it is answered by revealing the button on hover and
+        on focus rather than by hiding the action inside the row.
+        """
+        if path and self._ask_ai_file_cb:
             self._ask_ai_file_cb(path)
 
     def _on_crumb_clicked(self):
