@@ -1418,6 +1418,10 @@ _ALWAYS_STANDALONE_DIR_NAMES = {
     "text-generation-webui", "oobabooga", ".ollama",
 }
 
+# Version-control directories. Their presence names the parent a project, so
+# they are exempt from the generic depth guard below - see pass 1.
+_VCS_DIR_NAMES = frozenset({".git", ".svn", ".hg"})
+
 # Maximum relative depth (from scan root) before generic _DIR_ENTITY_MAP
 # entries are suppressed as "too deep to be a user-facing entity".
 # depth 1 = direct child of scan root, depth 5 = 5 levels deep.
@@ -2301,13 +2305,31 @@ def _pass1_known_dirs(ctx: "_DetectionContext"):
             if any(part in _APP_CONTAINER_SEGMENTS
                    for part in norm_path.split("/")):
                 continue
-            # Guard 4: too many levels from scan root for a generic entity
-            rel_depth = norm_path.count("/") - root_depth
-            if rel_depth > _MAX_GENERIC_DIR_DEPTH:
-                continue
+            # Guard 4: too many levels from scan root for a generic entity.
+            #
+            # A version-control directory is exempt. This guard exists to stop
+            # *generic* folder names ("cache", "logs", "bin") from producing an
+            # entity wherever they happen to appear; .git is not generic, it is
+            # the definitive statement that its parent is a project, and how
+            # far down that sits is an accident of where someone keeps code.
+            #
+            # Measured on this machine: seven repositories under
+            # E:/Work/Projects/Focus/irizi-eyesight sit at rel_depth 6 and were
+            # all suppressed here. Only the one carrying requirements.txt was
+            # detected at all - by the marker pass, not this one - so a folder
+            # of seven projects showed one item in its drill-down while its
+            # size counted all seven.
+            #
+            # Guards 1-3 still apply: a checkout inside a registered
+            # application, deep inside Program Files, or under a framework
+            # container is still not a project of the user's.
+            if lower_name not in _VCS_DIR_NAMES:
+                rel_depth = norm_path.count("/") - root_depth
+                if rel_depth > _MAX_GENERIC_DIR_DEPTH:
+                    continue
 
         # For VCS dirs (.git, .svn, .hg), the entity is the parent project.
-        if lower_name in (".git", ".svn", ".hg"):
+        if lower_name in _VCS_DIR_NAMES:
             parent = f.parent
             parent_norm = parent.replace("\\", "/").lower()
             if parent_norm in ctx.claimed_paths:
