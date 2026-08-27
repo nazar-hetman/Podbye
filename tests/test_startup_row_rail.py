@@ -150,13 +150,24 @@ def test_the_columns_hold_their_longest_label(qapp):
 
 # ── the action is text, not a button box ──────────────────────────
 
-def test_the_action_has_no_box(qapp):
-    """Twenty-five outlined buttons outweighed the entries they belonged to."""
+def test_the_action_is_a_compact_button(qapp):
+    """This used to assert the opposite, and the reasoning it recorded still
+    stands: twenty-five outlined buttons outweighed the entries they belonged
+    to. The answer was a smaller button, not the loss of the affordance - as
+    bare text the one control this screen exists to offer read as a label. It
+    keeps a border and a fill at 10px with tight padding.
+
+    Width is pinned with it: a styled QPushButton cannot shrink below its own
+    chrome, so at the old 54px column it overflowed and squeezed the name and
+    meta labels beside it into nothing.
+    """
     row = _row(qapp, _entry())
     qss = row._toggle_btn.styleSheet()
 
-    assert "border: none" in qss
-    assert "background: transparent" in qss
+    assert "border: 1px solid" in qss
+    assert "background: transparent" not in qss
+    assert "font-size: 10px" in qss
+    assert row._ACTION_W >= 80, "no room for the label in French"
 
 
 # ── staleness ─────────────────────────────────────────────────────
