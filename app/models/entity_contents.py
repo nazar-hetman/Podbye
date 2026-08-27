@@ -313,10 +313,16 @@ def walk_contents(root: str, budget_ms: int = DEFAULT_BUDGET_MS,
             return True
         return (time.perf_counter() - started) * 1000 > budget_ms
 
-    def add(key: str, label: str, named: bool, size: int):
+    def add(key: str, label: str, named: bool, size: int, relative: str = ""):
+        # *relative* is carried so the row can be given a real path. The row
+        # used to derive one from the bucket key, which is a grouping token
+        # rather than a location: "child:chrome" yielded the path "chrome",
+        # and "rule:cache/cache_data" yielded "cache/cache_data". Clicking such
+        # a row asked the AI about a path that does not exist anywhere, and the
+        # lookup's failure was reported as "This file is no longer on disk".
         row = buckets.get(key)
         if row is None:
-            buckets[key] = [size, 1, label, named]
+            buckets[key] = [size, 1, label, named, relative]
         else:
             row[0] += size
             row[1] += 1
@@ -354,16 +360,18 @@ def walk_contents(root: str, budget_ms: int = DEFAULT_BUDGET_MS,
             total_files += 1
             rule_path, rule_name = rule_for(child_rel, rules)
             if rule_name:
-                add("rule:" + rule_path, rule_name, True, size)
+                add("rule:" + rule_path, rule_name, True, size, rule_path)
             elif child_top:
-                add("child:" + child_top.lower(), child_top, False, size)
+                # child_top keeps its real case; the key is lowercased only to
+                # group case-variant siblings together.
+                add("child:" + child_top.lower(), child_top, False, size, child_top)
             else:
                 add("loose", "", False, size)
 
     rows = [ContentRow(label=label, size_bytes=size, file_count=files,
                        named=named,
-                       path="" if key == "loose" else key.split(":", 1)[1])
-            for key, (size, files, label, named) in buckets.items()]
+                       path=(f"{root_norm}/{relative}" if relative else ""))
+            for (size, files, label, named, relative) in buckets.values()]
     rows = _condense(rows, total_bytes)
     return Contents(mode=MODE_CONTENTS, rows=rows, total_bytes=total_bytes,
                     total_files=total_files, truncated=truncated)

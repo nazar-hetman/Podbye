@@ -764,17 +764,26 @@ def _finding_for_path(path: str):
         return None
     try:
         st = os.stat(path)
+    except FileNotFoundError:
+        return None                     # genuinely not there
     except OSError:
-        return None
+        # There, but its metadata cannot be read - locked by the process using
+        # it, or permission denied. Everything the prompt actually needs is the
+        # path itself, so refusing here would turn "I cannot read the size" into
+        # "this file does not exist", which is a different and untrue statement.
+        st = None
     from app.models.finding import Finding, categorize
     name = os.path.basename(path) or path
     ext = os.path.splitext(name)[1].lower()
     is_dir = os.path.isdir(path)
+    size = st.st_size if st else 0
     category, source_rule, semantic_label, confidence = categorize(
-        path, name, ext, is_dir, st.st_size)
+        path, name, ext, is_dir, size)
     return Finding(
-        path=path, name=name, is_dir=is_dir, size_bytes=st.st_size,
-        extension=ext, modified=st.st_mtime, accessed=st.st_atime,
+        path=path, name=name, is_dir=is_dir, size_bytes=size,
+        extension=ext,
+        modified=st.st_mtime if st else 0.0,
+        accessed=st.st_atime if st else 0.0,
         parent=os.path.dirname(path), category=category,
         source_rule=source_rule, semantic_label=semantic_label,
         owner_confidence=confidence,
