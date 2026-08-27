@@ -1210,5 +1210,10 @@
   "Ask the local AI what {name} is": "Demander à l’IA locale ce qu’est {name}",
   "Kept": "Conservé",
   "Remove from Keep": "Retirer des conservés",
-  "You are keeping this — Podbye will never select or delete it": "Vous conservez ceci — Podbye ne le sélectionnera ni ne le supprimera jamais"
+  "You are keeping this — Podbye will never select or delete it": "Vous conservez ceci — Podbye ne le sélectionnera ni ne le supprimera jamais",
+  "PODBYE ASSESSMENT": "ÉVALUATION PODBYE",
+  "Ask again": "Redemander",
+  "View result": "Voir le résultat",
+  "Generate a new explanation and replace the saved one": "Générer une nouvelle explication et remplacer celle enregistrée",
+  "Show the saved explanation for {name}": "Afficher l’explication enregistrée pour {name}"
 }

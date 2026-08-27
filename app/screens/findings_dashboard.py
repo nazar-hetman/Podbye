@@ -1914,9 +1914,11 @@ class ContentRowWidget(QFrame):
         self._path = ""
         self._drillable = False
         self._askable = False
+        self._analysed = False
 
     def bind(self, content_row, *, selectable: bool, checked: bool = False,
-             provisional: bool = False, drillable: bool = False):
+             provisional: bool = False, drillable: bool = False,
+             analysed: bool = False):
         from app.models.finding import _format_size
         self._path = content_row.path
         label = content_row.label or tr("Other data")
@@ -1942,8 +1944,16 @@ class ContentRowWidget(QFrame):
         # drillable items keeps its full width for names.
         ask_policy.setRetainSizeWhenHidden(self._askable)
         self._btn_ask.setSizePolicy(ask_policy)
+        self._analysed = bool(analysed)
         if self._askable:
+            # A row that has already been explained is not offering to spend a
+            # model run - it is offering to show the answer it has. Saying
+            # "Ask AI" there invites the user to pay twice for the same text.
+            self._btn_ask.setText(tr("View result") if self._analysed
+                                  else tr("Ask AI"))
             self._btn_ask.setToolTip(
+                tr("Show the saved explanation for {name}", name=label)
+                if self._analysed else
                 tr("Ask the local AI what {name} is", name=label))
         if self._drillable:
             self._name.setToolTip(
@@ -2058,6 +2068,7 @@ class _PreallocDetailPanel(QWidget):
         uninstall_cb: Callable | None = None,
         ask_ai_cb: Callable | None = None,
         ask_ai_file_cb: Callable | None = None,
+        analysed_cb: Callable | None = None,
         keep_cb: Callable | None = None,
         arm_cb: Callable | None = None,
         entities_cb: Callable | None = None,
@@ -2073,6 +2084,9 @@ class _PreallocDetailPanel(QWidget):
         self._uninstall_cb = uninstall_cb
         self._ask_ai_cb = ask_ai_cb
         self._ask_ai_file_cb = ask_ai_file_cb
+        # "Has this path already been explained?" - the row needs it to know
+        # whether its button offers a model run or the answer from the last one.
+        self._analysed_cb = analysed_cb
         self._keep_cb = keep_cb
         self._arm_cb = arm_cb
         self._entities_cb = entities_cb
@@ -2304,7 +2318,12 @@ class _PreallocDetailPanel(QWidget):
         # only one shrinkable pinned the other at its minimum: with the caption
         # fixed the badge sat permanently truncated, and with the caption on an
         # Ignored policy it lost every pixel to the row's stretch and vanished.
-        self._ai_title = ElidedLabel(tr("AI ASSESSMENT"))
+        # "PODBYE ASSESSMENT", not "AI": the category, the risk tier, the
+        # confidence and the removal advice under this heading are produced by
+        # Podbye's own rules and stand whether or not a model ever runs. Only
+        # the prose in the block is the model's. Calling the whole section AI
+        # attributed the verdict to the thing least responsible for it.
+        self._ai_title = ElidedLabel(tr("PODBYE ASSESSMENT"))
         self._ai_title.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         self._ai_title.setMinimumWidth(90)
         self._ai_title.setStyleSheet(
@@ -2484,9 +2503,21 @@ class _PreallocDetailPanel(QWidget):
 
     @staticmethod
     def _fit_text_height(edit):
+        """Grow to the document, with a floor of two lines.
+
+        No ceiling: the block deliberately does not scroll - it used to be a
+        scroll area inside the panel's own scroll area, which put two vertical
+        scrollbars side by side at the right edge - so it grows and the panel
+        scrolls. Nothing is ever cut off; it simply gets taller.
+
+        The floor is the new part. A one-line answer collapsed the box to the
+        height of that line, so the section changed size under the reader every
+        time a shorter answer replaced a longer one.
+        """
         doc = edit.document()
         doc.setTextWidth(max(1, edit.viewport().width()))
-        edit.setFixedHeight(int(doc.size().height()) + 4)
+        two_lines = int(edit.fontMetrics().lineSpacing() * 2)
+        edit.setFixedHeight(max(int(doc.size().height()), two_lines) + 4)
 
     def _on_open(self):
         if self._current_path:
@@ -2526,7 +2557,10 @@ class _PreallocDetailPanel(QWidget):
         finding_updated → populate() signal path."""
         if not (self._current_entity and self._ask_ai_cb):
             return
-        reason = self._ask_ai_cb(self._current_entity)
+        # The label is the state: with an answer on screen this is a
+        # regeneration, and the cached one must be stepped over.
+        regenerate = self._ai_ask_btn.text() == tr("Ask again")
+        reason = self._ask_ai_cb(self._current_entity, regenerate)
         if reason:
             return  # couldn't queue (handled/announced by the callback)
         # Optimistic in-progress state so the panel reacts instantly. Keep the
@@ -2707,7 +2741,10 @@ class _PreallocDetailPanel(QWidget):
             # one thing is how a screen starts disagreeing with itself.
             widget.bind(row, selectable=is_files, checked=checked,
                         provisional=contents.provisional,
-                        drillable=is_items)
+                        drillable=is_items,
+                        analysed=bool(self._analysed_cb
+                                      and row.path
+                                      and self._analysed_cb(row.path)))
             widget.setVisible(True)
         for spare in self._content_row_pool[len(shown):]:
             spare.setVisible(False)
@@ -3074,11 +3111,16 @@ class _PreallocDetailPanel(QWidget):
         # On-demand: offer "Ask AI" when this item has no answer yet (or failed)
         # and an explainer is wired. This lets the user get reasoning for a
         # single item even if the bulk AI pass never ran.
+        # Offered whether or not an answer exists: with one it regenerates,
+        # which is the only way to get a different reading after switching
+        # models or changing tone. It used to disappear the moment an answer
+        # arrived, so the one point at which re-asking becomes useful was the
+        # point the control went away.
         can_ask_ai = (
             self._ask_ai_cb is not None
-            and not has_ai_prose
             and ai_status not in ("pending", "analyzing")
         )
+        ask_again = can_ask_ai and has_ai_prose
         show_ai = (
             bool(ai_explanation or ai_status in ("pending", "analyzing", "failed", "error"))
             or is_duplicate
@@ -3086,7 +3128,10 @@ class _PreallocDetailPanel(QWidget):
             or can_ask_ai
         )
         self._ai_section.setVisible(show_ai)
-        self._ai_ask_btn.setText(tr("Ask AI"))
+        self._ai_ask_btn.setText(tr("Ask again") if ask_again else tr("Ask AI"))
+        self._ai_ask_btn.setToolTip(
+            tr("Generate a new explanation and replace the saved one")
+            if ask_again else "")
         self._ai_ask_btn.setVisible(can_ask_ai)
         self._ai_ask_btn.setEnabled(True)
         if show_ai:
@@ -3272,6 +3317,7 @@ class RightSidebar(QFrame):
         uninstall_cb: Callable | None = None,
         ask_ai_cb: Callable | None = None,
         ask_ai_file_cb: Callable | None = None,
+        analysed_cb: Callable | None = None,
         keep_cb: Callable | None = None,
         arm_cb: Callable | None = None,
         entities_cb: Callable | None = None,
@@ -3327,6 +3373,7 @@ class RightSidebar(QFrame):
             uninstall_cb=uninstall_cb,
             ask_ai_cb=ask_ai_cb,
             ask_ai_file_cb=ask_ai_file_cb,
+            analysed_cb=analysed_cb,
             keep_cb=keep_cb,
             arm_cb=arm_cb,
             entities_cb=entities_cb,
@@ -4191,6 +4238,7 @@ class CategoryDetailView(QFrame):
             uninstall_cb=self._handle_deep_uninstall,
             ask_ai_cb=self._on_ask_ai,
             ask_ai_file_cb=self._on_ask_ai_file,
+            analysed_cb=self._path_has_explanation,
             keep_cb=self._toggle_keep,
             arm_cb=self._arm_path,
             entities_cb=self._all_entities,
@@ -4595,10 +4643,14 @@ class CategoryDetailView(QFrame):
             return None
         return self._scan_state.find_by_path(path)
 
-    def _on_ask_ai(self, entity: dict):
+    def _on_ask_ai(self, entity: dict, regenerate: bool = False):
         """On-demand 'Ask AI' for a single item — works even when the bulk AI
         pass was never run. The explanation streams back via ai_finding_updated,
-        which refreshes the inspector in place."""
+        which refreshes the inspector in place.
+
+        *regenerate* is "Ask again": step over the stored answer and write the
+        new one in its place.
+        """
         if not self._scan_state:
             return "unavailable"
         ai = getattr(self._scan_state, "ai_explainer", None)
@@ -4610,7 +4662,7 @@ class CategoryDetailView(QFrame):
         # Stamp the current session so the streamed result isn't discarded as
         # stale by ScanState._on_ai_finding_updated.
         ai._session_id = getattr(self._scan_state, "_session_id", "")
-        reason = ai.explain_item(live)
+        reason = ai.explain_item(live, force_refresh=regenerate)
         if reason == "no-model":
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.information(
@@ -4619,6 +4671,19 @@ class CategoryDetailView(QFrame):
                 tr("Select an AI model in Settings to use Ask AI."),
             )
         return reason
+
+    def _path_has_explanation(self, path: str) -> bool:
+        """True when this path already carries an answer worth reopening.
+
+        Read from the live item rather than a cache probe: the cache is keyed
+        on model, tone, length and language, so asking it whether *some* answer
+        exists would say yes for a reading the user can no longer get back.
+        """
+        live = self._find_live_item(path)
+        if live is None:
+            return False
+        return (getattr(live, "ai_status", "") in ("ready", "done")
+                and bool(getattr(live, "ai_explanation", "")))
 
     def _on_ask_ai_file(self, path: str):
         """On-demand AI for a single *file* inside an entity (Files tab).

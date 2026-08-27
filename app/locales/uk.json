@@ -1211,5 +1211,10 @@
   "Ask the local AI what {name} is": "Запитати локальний ШІ, що таке {name}",
   "Kept": "Збережено",
   "Remove from Keep": "Прибрати зі Збережених",
-  "You are keeping this — Podbye will never select or delete it": "Ви зберігаєте це — Podbye ніколи не обере та не видалить його"
+  "You are keeping this — Podbye will never select or delete it": "Ви зберігаєте це — Podbye ніколи не обере та не видалить його",
+  "PODBYE ASSESSMENT": "ОЦІНКА PODBYE",
+  "Ask again": "Запитати знову",
+  "View result": "Переглянути результат",
+  "Generate a new explanation and replace the saved one": "Згенерувати нове пояснення та замінити збережене",
+  "Show the saved explanation for {name}": "Показати збережене пояснення для {name}"
 }

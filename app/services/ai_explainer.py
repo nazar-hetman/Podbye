@@ -316,8 +316,13 @@ class AIExplainer(QObject):
             self._total_done = 0
             self._total_failed = 0
 
-    def explain_item(self, item) -> str:
+    def explain_item(self, item, force_refresh: bool = False) -> str:
         """Explain one Finding/SmartEntity on demand (user clicked "Ask AI").
+
+        *force_refresh* is "Ask again": skip the stored answer and generate a
+        new one, then write it over the old cache entry. Without it a re-ask
+        returns the same text instantly, which is right for reopening a result
+        and useless for regenerating one.
 
         Works for both scan modes and deliberately bypasses the global
         'ai_findings_enabled' toggle and the risky-only filter — the user
@@ -336,6 +341,10 @@ class AIExplainer(QObject):
         item.ai_status = "pending"
         item.ai_explanation = ""
         item.ai_error = ""
+        # Read by the worker and cleared there, so a forced re-ask does not
+        # make every later pass over the same item bypass the cache too.
+        if force_refresh:
+            item.ai_force_refresh = True
         with self._lock:
             self._queue.insert(0, item)  # front of queue — the user is waiting
             self._total_queued += 1
@@ -466,7 +475,13 @@ class AIExplainer(QObject):
         # Check cache first (language-aware) - behavior depends on run_mode
         # NEW runs: completely bypass cache (fresh analysis)
         # RESUME/RESTORE: allow cache reuse
-        if use_cache and self._run_mode != "new":
+        # "Ask again" clears the stored answer for this one item. The write
+        # below still happens, so the regenerated text replaces the entry
+        # rather than leaving the old one behind it.
+        force_refresh = bool(getattr(finding, "ai_force_refresh", False))
+        if force_refresh:
+            finding.ai_force_refresh = False
+        if use_cache and not force_refresh and self._run_mode != "new":
             cached = _load_cached(finding, model, tone, length, language)
             if cached:
                 finding.ai_status = "ready"
@@ -568,7 +583,13 @@ class AIExplainer(QObject):
         # Check cache (language-aware) - behavior depends on run_mode
         # NEW runs: completely bypass cache (fresh analysis)
         # RESUME/RESTORE: allow cache reuse
-        if use_cache and self._run_mode != "new":
+        # "Ask again" clears the stored answer for this one item. The write
+        # below still happens, so the regenerated text replaces the entry
+        # rather than leaving the old one behind it.
+        force_refresh = bool(getattr(entity, "ai_force_refresh", False))
+        if force_refresh:
+            entity.ai_force_refresh = False
+        if use_cache and not force_refresh and self._run_mode != "new":
             cached = _load_entity_cached(entity, model, tone, length, language)
             if cached:
                 entity.ai_status = "ready"

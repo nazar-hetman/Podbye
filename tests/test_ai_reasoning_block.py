@@ -39,7 +39,9 @@ ENTITY = {
 def _sidebar(qapp, height):
     from app.screens.findings_dashboard import RightSidebar
     side = RightSidebar(open_cb=lambda p: None, copy_cb=lambda p: None,
-                        ask_ai_cb=lambda e: "")
+                        # Takes the regenerate flag: the same button is
+                        # "Ask AI" with no answer and "Ask again" with one.
+                        ask_ai_cb=lambda e, regenerate=False: "")
     side.resize(500, height)
     side.show()
     return side
@@ -163,7 +165,7 @@ def test_only_one_reasoning_widget_shows_for_an_ai_answer(qapp):
 
 
 def test_only_one_reasoning_widget_shows_for_a_default_explanation(qapp):
-    panel = _panel(qapp, ask_ai=lambda e: "")
+    panel = _panel(qapp, ask_ai=lambda e, regenerate=False: "")
     panel.populate(NO_PROSE)
     panel.show()
 
@@ -172,7 +174,7 @@ def test_only_one_reasoning_widget_shows_for_a_default_explanation(qapp):
 
 def test_asking_ai_after_viewing_an_answered_item_shows_one_widget(qapp):
     """The reported repro, in order: answered item, then Ask AI on another."""
-    panel = _panel(qapp, ask_ai=lambda e: "")
+    panel = _panel(qapp, ask_ai=lambda e, regenerate=False: "")
     panel.show()
 
     panel.populate(WITH_PROSE)          # leaves _ai_has_long_reasoning True
@@ -185,7 +187,7 @@ def test_asking_ai_after_viewing_an_answered_item_shows_one_widget(qapp):
 
 
 def test_the_stale_answer_is_not_left_on_screen(qapp):
-    panel = _panel(qapp, ask_ai=lambda e: "")
+    panel = _panel(qapp, ask_ai=lambda e, regenerate=False: "")
     panel.show()
     panel.populate(WITH_PROSE)
     panel.populate(NO_PROSE)
@@ -204,7 +206,7 @@ def test_the_stale_answer_is_not_left_on_screen(qapp):
 ])
 def test_no_state_ever_shows_both(qapp, entity):
     """Sweep every branch that writes the block, not just the reported one."""
-    panel = _panel(qapp, ask_ai=lambda e: "")
+    panel = _panel(qapp, ask_ai=lambda e, regenerate=False: "")
     panel.show()
     panel.populate(entity)
 
