@@ -1203,5 +1203,8 @@
   "Maintenance": "Maintenance",
   "reset & product info": "réinitialisation et infos produit",
   "Reset all settings?": "Réinitialiser tous les paramètres ?",
-  "Every preference goes back to its default — endpoint, model, theme, language and the cleanup safeguards.\n\nYour scan history and kept paths are not touched.": "Chaque préférence revient à sa valeur par défaut — point de terminaison, modèle, thème, langue et garde-fous du nettoyage.\n\nVotre historique d’analyses et vos chemins conservés ne sont pas touchés."
+  "Every preference goes back to its default — endpoint, model, theme, language and the cleanup safeguards.\n\nYour scan history and kept paths are not touched.": "Chaque préférence revient à sa valeur par défaut — point de terminaison, modèle, thème, langue et garde-fous du nettoyage.\n\nVotre historique d’analyses et vos chemins conservés ne sont pas touchés.",
+  "Emptying Recycle Bin…": "Vidage de la Corbeille…",
+  "The Recycle Bin is being emptied. Wait for that to finish, then try again.": "La Corbeille est en cours de vidage. Attendez la fin, puis réessayez.",
+  "the Recycle Bin is being emptied": "la Corbeille est en cours de vidage"
 }

@@ -319,6 +319,11 @@ class QuickCleanupScreen(QWidget):
 
         self._build_ui()
         theme_signaller().theme_changed.connect(self._on_theme_changed)
+        # The emptier outlives this screen, so the screen subscribes to it
+        # rather than holding it. A screen rebuilt mid-empty picks the state
+        # back up from is_emptying() on its first refresh.
+        from app.services import bin_emptier
+        bin_emptier.signaller().finished.connect(self._on_bin_emptied)
 
     def set_settings_store(self, store):
         self._settings_store = store
@@ -797,7 +802,18 @@ class QuickCleanupScreen(QWidget):
 
     def refresh_recycle_bin(self):
         """Show what is sitting in the bin, waiting to actually be freed."""
+        from app.services import bin_emptier
         from app.services.recycle_bin import recycle_bin_status
+
+        if bin_emptier.is_emptying():
+            # Querying mid-empty returns a number that is already wrong, and
+            # showing a falling count invites a second click on a button that
+            # is doing the thing already.
+            self._bin_lbl.setText(tr("Emptying Recycle Bin…"))
+            self._btn_empty_bin.setEnabled(False)
+            self._bin_note.setVisible(False)
+            return
+
         size_bytes, items = recycle_bin_status()
         self._bin_bytes = size_bytes
         has_content = size_bytes > 0 or items > 0
@@ -810,7 +826,11 @@ class QuickCleanupScreen(QWidget):
 
     def _on_empty_recycle_bin(self):
         from PySide6.QtWidgets import QMessageBox
-        from app.services.recycle_bin import empty_recycle_bin, recycle_bin_status
+        from app.services import bin_emptier
+        from app.services.recycle_bin import recycle_bin_status
+
+        if bin_emptier.is_emptying():
+            return
 
         size_bytes, items = recycle_bin_status()
         if not (size_bytes or items):
@@ -827,12 +847,22 @@ class QuickCleanupScreen(QWidget):
         )
         if reply != QMessageBox.Yes:
             return
-        ok, message = empty_recycle_bin()
+        # Off the UI thread, and owned by the service rather than by this
+        # widget: a language change or a screen swap must not be able to end a
+        # shell call that is midway through deleting files.
+        bin_emptier.start()
         self.refresh_recycle_bin()
-        if not ok:
-            QMessageBox.warning(self, tr("Empty Recycle Bin"), message)
+        self._update_summary()
 
     # ── Background work ───────────────────────────────────────────
+
+    def _on_bin_emptied(self, ok: bool, message: str):
+        """Signalled by the service, possibly on a screen that did not start it."""
+        self.refresh_recycle_bin()
+        self._update_summary()
+        if not ok:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, tr("Empty Recycle Bin"), message)
 
     def busy_reason(self) -> str:
         """Why this screen must not be torn down right now, or "".
@@ -841,6 +871,10 @@ class QuickCleanupScreen(QWidget):
         language change destroys this screen, and with it the running
         CleanupWorker — which crashes the process outright.
         """
+        from app.services import bin_emptier
+        reason = bin_emptier.busy_reason()
+        if reason:
+            return reason
         if self._worker is not None and self._worker.isRunning():
             return tr("a cleanup is removing files")
         if self._detector is not None and self._detector.isRunning():
@@ -848,7 +882,14 @@ class QuickCleanupScreen(QWidget):
         return ""
 
     def stop_background_work(self, timeout_ms: int = 3000) -> bool:
+        from app.services import bin_emptier
         from app.services.workers import stop_all
+
+        # No timeout, and before the others. timeout_ms is a cancellation
+        # budget - stop, or be cut loose from your parent - and neither half
+        # of that is available for a shell call with no cancel handle. Cutting
+        # this one loose is the crash, not the escape from it.
+        bin_emptier.wait()
         return stop_all(self._worker, self._detector, timeout_ms=timeout_ms)
 
     def _clear_rows(self):
@@ -1021,7 +1062,13 @@ class QuickCleanupScreen(QWidget):
 
         self._wc_sub.setText(tr("// scanning") if self._state == _SCANNING else "// summary")
 
-        if selected and self._state == _READY:
+        from app.services import bin_emptier
+        if bin_emptier.is_emptying() and self._state == _READY:
+            # Refusing on click is the guard; this is so the button does not
+            # invite the click in the first place.
+            self._btn_clean.setText(tr("Emptying Recycle Bin…"))
+            self._btn_clean.setEnabled(False)
+        elif selected and self._state == _READY:
             self._btn_clean.setText(tr("Clean {size}").format(size=_format_size(total_bytes)))
             self._btn_clean.setEnabled(True)
         elif self._state == _READY:
@@ -1031,6 +1078,13 @@ class QuickCleanupScreen(QWidget):
     # ── Cleanup ───────────────────────────────────────────────────
 
     def _on_clean_clicked(self):
+        # Same reason as the Findings path: a cleanup recycles files, and the
+        # bin cannot be filled and emptied at once without the two counts
+        # disagreeing about what is in there.
+        from app.services import bin_emptier
+        if bin_emptier.is_emptying():
+            return
+
         selected = [r for r in self._rows if r.is_checked]
         if not selected:
             return

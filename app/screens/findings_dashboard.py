@@ -4543,6 +4543,16 @@ class CategoryDetailView(QFrame):
     def _run_cleanup(self, items: list[dict]) -> bool:
         if not items or not self._scan_state:
             return False
+        # Recycling into a bin that is midway through being emptied races the
+        # shell for the same files and leaves the counts on two screens
+        # disagreeing about what is in there.
+        from app.services import bin_emptier
+        if bin_emptier.is_emptying():
+            QMessageBox.information(
+                self, tr("Move to Recycle Bin"),
+                tr("The Recycle Bin is being emptied. Wait for that to finish, "
+                   "then try again."))
+            return False
         session_id = getattr(self._scan_state, "_session_id", "")
         def _log(msg: str):
             if hasattr(self._scan_state, "log_line"):
