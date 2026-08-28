@@ -75,14 +75,36 @@ def _session_display_unit(s: dict) -> str:
     return "entities" if s.get("entities") else "files"
 
 
-def _session_ai_counts(s: dict) -> tuple[int, int]:
-    if "ai_ready_count" in s or "ai_total_count" in s:
-        ready = int(s.get("ai_ready_count", 0) or 0)
-        total = int(s.get("ai_total_count", _session_display_count(s)) or 0)
-        return ready, total
+# ai_status values an item can carry (models/smart_entity.py). "none" and
+# "disabled" mean the item never entered the AI queue.
+_AI_EXPLAINED = ("ready", "done")
+_AI_IN_FLIGHT = ("pending", "analyzing")
+_AI_ATTEMPTED = _AI_EXPLAINED + _AI_IN_FLIGHT + ("failed", "error", "cancelled")
+
+
+def _session_ai_counts(s: dict) -> tuple[int, int, int]:
+    """(explained, attempted, in_flight) for a session.
+
+    ``attempted`` counts items that were actually queued for the AI. It is
+    deliberately not the number of findings: bulk AI is off by default
+    (``ai_findings_enabled``) and per-item "Ask AI" is the ordinary path, so on
+    a stock install nothing is queued and the honest denominator is zero.
+
+    Reading the old ``ai_total_count`` here would keep the bug alive for every
+    session already on disk — it holds a findings count, not a queue length —
+    so recognition is by the new key only, and anything older is recounted from
+    the items themselves.
+    """
+    if "ai_attempted_count" in s:
+        return (int(s.get("ai_ready_count", 0) or 0),
+                int(s.get("ai_attempted_count", 0) or 0),
+                int(s.get("ai_active_count", 0) or 0))
     items = _display_items(s)
-    ready = sum(1 for it in items if it.get("ai_status") in ("ready", "done"))
-    return ready, len(items)
+    return (
+        sum(1 for it in items if it.get("ai_status") in _AI_EXPLAINED),
+        sum(1 for it in items if it.get("ai_status") in _AI_ATTEMPTED),
+        sum(1 for it in items if it.get("ai_status") in _AI_IN_FLIGHT),
+    )
 
 
 def _session_risk_totals(s: dict) -> dict[str, int]:
@@ -320,7 +342,11 @@ class HomeScreen(QWidget):
 
         accent = get_palette().get("safe", "#7cc596")
 
-        panel = Panel()
+        # PanelAlt rather than Panel: this banner sits above every other state
+        # on the screen, and on the darker themes a plain panel was close enough
+        # to the background that the running totals looked like loose text on
+        # the page instead of a card of their own.
+        panel = Panel(alt=True)
         lay = panel.with_layout(vertical=True, margins=(16, 12, 16, 14), spacing=8)
         hdr = QLabel(tr("ALL-TIME IMPACT"))
         hdr.setObjectName("SectionHeader")
@@ -370,9 +396,11 @@ class HomeScreen(QWidget):
         target = s.get("target", "")
         ts = _ts_str(s.get("start_time", 0))
         mode = _display_mode(s.get("scan_mode", "smart"))
-        ai_ready, ai_total = _session_ai_counts(s)
-        ai_complete = ai_total == 0 or ai_ready >= ai_total
-        status = tr("Paused") if paused else (tr("Completed") if ai_complete else tr("Analysis Ready"))
+        _ready, _attempted, ai_in_flight = _session_ai_counts(s)
+        # A finished scan is finished. Only work genuinely still in the queue
+        # can hold it at "Analysis Ready"; an unexplained item is not pending.
+        status = tr("Paused") if paused else (
+            tr("Analysis Ready") if ai_in_flight else tr("Completed"))
         n = _session_display_count(s)
         unit = _session_display_unit(s)
         self._header_sub.setText(f"{status} · {n:,} {unit} · {ts} · {mode} · {target}")
@@ -431,7 +459,7 @@ class HomeScreen(QWidget):
 
     def _build_metrics_row(self, total_size: int, findings: int, ai_ready: int,
                            risk_totals: dict, cat_totals: dict,
-                           ai_total: int = 0):
+                           ai_attempted: int = 0, ai_in_flight: int = 0):
         cards_row = QHBoxLayout()
         cards_row.setSpacing(10)
 
@@ -519,13 +547,19 @@ class HomeScreen(QWidget):
         ac_hdr.setObjectName("SectionHeader")
         apply_tactical_label(ac_hdr, font_size=9, letter_spacing=2)
         ac_lay.addWidget(ac_hdr)
-        # Show progress (ready / total) rather than a bare "0" that reads as
-        # "done, nothing explained" while the queue is still running.
-        ai_in_progress = ai_total > 0 and ai_ready < ai_total
-        ac_num = QLabel(f"{ai_ready:,} / {ai_total:,}" if ai_total else f"{ai_ready:,}")
+        # Three genuinely different states, and the card must not conflate
+        # them: nothing was ever queued (the default, since bulk AI is off);
+        # the queue is running; the queue has drained. A ratio is only
+        # meaningful in the last two — with nothing attempted there is no
+        # denominator to show, and "0 / <every finding>" claimed a backlog
+        # that was never going to be worked through.
+        ac_num = QLabel(f"{ai_ready:,} / {ai_attempted:,}" if ai_attempted else "—")
         ac_num.setStyleSheet(f"{_MONO} font-size: 32px; font-weight: bold;")
         ac_lay.addWidget(ac_num)
-        ac_sub = QLabel(tr("analyzing…") if ai_in_progress else tr("explanations ready"))
+        ac_sub = QLabel(
+            tr("not analyzed") if not ai_attempted
+            else tr("analyzing…") if ai_in_flight
+            else tr("explanations ready"))
         ac_sub.setObjectName("Dim")
         ac_sub.setStyleSheet("font-size: 11px;")
         ac_lay.addWidget(ac_sub)
@@ -541,15 +575,18 @@ class HomeScreen(QWidget):
         cat_totals = s.get("category_totals", {})
         risk_totals = _session_risk_totals(s)
         display_count = _session_display_count(s)
-        ai_ready, ai_total = _session_ai_counts(s)
-        ai_pct     = min(100, int((ai_ready / max(ai_total, 1)) * 100))
-        ai_complete = ai_total == 0 or ai_ready >= ai_total
+        ai_ready, ai_attempted, ai_in_flight = _session_ai_counts(s)
+        ai_pct = min(100, int((ai_ready / ai_attempted) * 100)) if ai_attempted else 0
+        # "Complete" is about the scan, which has finished either way. Only a
+        # queue that is still draining makes this anything else.
+        ai_complete = ai_in_flight == 0
 
         self._build_metrics_row(
             total_size=total_size,
             findings=display_count,
             ai_ready=ai_ready,
-            ai_total=ai_total,
+            ai_attempted=ai_attempted,
+            ai_in_flight=ai_in_flight,
             risk_totals=risk_totals,
             cat_totals=cat_totals,
         )
@@ -591,13 +628,19 @@ class HomeScreen(QWidget):
         scan_lbl.setStyleSheet(f"{_PIXEL} font-size: 9px; color: {_p.get('safe', '#7cc596')};")
         prog_grid.addWidget(scan_lbl)
 
-        ai_progress = tr("COMPLETE") if ai_pct >= 100 else f"{ai_pct}%"
+        # Nothing queued is not nought-percent-done. Painting it red said the
+        # AI had failed at a job it was never given.
+        if not ai_attempted:
+            ai_progress = tr("NOT RUN")
+            ai_color = _p.get("text_faint", "#6a7c71")
+        else:
+            ai_progress = tr("COMPLETE") if ai_pct >= 100 else f"{ai_pct}%"
+            ai_color = (
+                _p.get("safe", "#7cc596") if ai_pct >= 100
+                else _p.get("review", "#d8b46a") if ai_pct > 50
+                else _p.get("risk", "#d68a78")
+            )
         ai_lbl = QLabel(tr("AI ANALYSIS: {progress}", progress=ai_progress))
-        ai_color = (
-            _p.get("safe", "#7cc596") if ai_pct >= 100
-            else _p.get("review", "#d8b46a") if ai_pct > 50
-            else _p.get("risk", "#d68a78")
-        )
         ai_lbl.setStyleSheet(f"{_PIXEL} font-size: 9px; color: {ai_color};")
         prog_grid.addWidget(ai_lbl)
         prog_grid.addStretch()
@@ -625,13 +668,14 @@ class HomeScreen(QWidget):
     def _build_resume_panel(self, data: dict):
         risk_totals = _session_risk_totals(data)
         cat_totals  = data.get("category_totals", {})
-        ai_ready, ai_total = _session_ai_counts(data)
+        ai_ready, ai_attempted, ai_in_flight = _session_ai_counts(data)
 
         self._build_metrics_row(
             total_size=data.get("total_size", 0),
             findings=_session_display_count(data),
             ai_ready=ai_ready,
-            ai_total=ai_total,
+            ai_attempted=ai_attempted,
+            ai_in_flight=ai_in_flight,
             risk_totals=risk_totals,
             cat_totals=cat_totals,
         )
@@ -695,7 +739,8 @@ class HomeScreen(QWidget):
         # Aggregate insights from semantic items
         review_n    = sum(1 for it in items if normalize_risk(it.get("risk")) in ("Review", "Protected"))
         reclaimable = sum(it.get("reclaimable_bytes", 0) for it in items)
-        ai_done     = sum(1 for it in items if it.get("ai_status") in ("ready", "done"))
+        ai_done      = sum(1 for it in items if it.get("ai_status") in _AI_EXPLAINED)
+        ai_queued    = sum(1 for it in items if it.get("ai_status") in _AI_ATTEMPTED)
 
         # Largest category from saved totals or recomputed
         cat_totals = s.get("category_totals", {})
@@ -737,8 +782,12 @@ class HomeScreen(QWidget):
                            f"~{_format_size(reclaimable)}",
                            _p.get("safe", "#7cc596"))
 
+        # Same rule as the AI card: the denominator is what was queued. Against
+        # len(items) this row read "0 / 1278 analyzed" on a stock install, which
+        # describes a backlog rather than a feature that was never switched on.
         self._add_stat(row, "AI",
-                       f"{ai_done} / {len(items)} {tr('analyzed')}",
+                       f"{ai_done} / {ai_queued} {tr('analyzed')}" if ai_queued
+                       else tr("not analyzed"),
                        _p.get("text_dim", "#8a9b8f"))
 
         row.addStretch()

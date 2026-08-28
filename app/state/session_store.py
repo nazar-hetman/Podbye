@@ -533,6 +533,14 @@ def _build_history_record(data: dict) -> dict:
     }
 
 
+# ─── What the AI actually did to a session ───────────────────────
+# ai_status on an entity (see models/smart_entity.py). "none" and "disabled"
+# mean the item never entered the queue — they are not work that is pending.
+_AI_EXPLAINED = ("ready", "done")
+_AI_IN_FLIGHT = ("pending", "analyzing")
+_AI_ATTEMPTED = _AI_EXPLAINED + _AI_IN_FLIGHT + ("failed", "error", "cancelled")
+
+
 def _build_last_run_summary(data: dict) -> dict:
     """Extract lightweight metadata for startup/Home rendering."""
     summary = _build_history_record(data)
@@ -547,8 +555,16 @@ def _build_last_run_summary(data: dict) -> dict:
             if isinstance(v, (int, float))
         )
     display_unit = "entities" if entities else ("files" if findings else "items")
-    ai_ready_count = sum(1 for it in display_items if it.get("ai_status") in ("ready", "done"))
-    ai_total_count = len(display_items) if display_items else display_count
+    # Only items that actually entered the AI queue may appear in a
+    # denominator. Bulk AI is off by default (ai_findings_enabled) and per-item
+    # "Ask AI" is the normal path, so on a stock install nothing is queued —
+    # counting every finding invented a queue of work nobody had asked for.
+    ai_ready_count = sum(1 for it in display_items
+                         if it.get("ai_status") in _AI_EXPLAINED)
+    ai_attempted_count = sum(1 for it in display_items
+                             if it.get("ai_status") in _AI_ATTEMPTED)
+    ai_active_count = sum(1 for it in display_items
+                          if it.get("ai_status") in _AI_IN_FLIGHT)
     summary.update({
         "last_update": data.get("last_update", 0.0),
         "saved_at": data.get("saved_at", time.time()),
@@ -556,7 +572,8 @@ def _build_last_run_summary(data: dict) -> dict:
         "display_count": display_count,
         "display_unit": display_unit,
         "ai_ready_count": ai_ready_count,
-        "ai_total_count": ai_total_count,
+        "ai_attempted_count": ai_attempted_count,
+        "ai_active_count": ai_active_count,
     })
     return summary
 
@@ -591,9 +608,6 @@ def _load_session_prefix_summary(path: Path) -> dict | None:
                     data = json.loads(lightweight_json)
                     if isinstance(data, dict):
                         summary = _build_last_run_summary(data)
-                        if summary.get("status") == "completed":
-                            summary["ai_ready_count"] = summary.get("display_count", 0)
-                            summary["ai_total_count"] = summary.get("display_count", 0)
                         return summary
                     return None
 

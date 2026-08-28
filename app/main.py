@@ -238,8 +238,15 @@ class PodbyeWindow(QMainWindow):
     def _busy_reason(self) -> str:
         """What is running that a shell rebuild would destroy, or "".
 
-        Screens own their own threads, so each one answers for itself.
+        Screens own their own threads, so each one answers for itself. The
+        Recycle Bin emptier is asked first and separately: it is owned by the
+        service rather than by a screen, precisely so that closing the screen
+        that started it does not end it.
         """
+        from app.services import bin_emptier
+        reason = bin_emptier.busy_reason()
+        if reason:
+            return reason
         for screen in self._screens.values():
             reason = getattr(screen, "busy_reason", None)
             if callable(reason):
@@ -252,6 +259,13 @@ class PodbyeWindow(QMainWindow):
         return ""
 
     def _stop_all_background_work(self, timeout_ms: int = 3000) -> bool:
+        # Waited for first, and without a deadline. Every other worker here is
+        # cancellable, so timeout_ms is a "stop, or be orphaned" budget; the
+        # bin emptier can be neither cancelled nor safely abandoned, so the
+        # only correct move is to let the shell call finish.
+        from app.services import bin_emptier
+        bin_emptier.wait()
+
         stopped = True
         for screen in list(self._screens.values()):
             stop = getattr(screen, "stop_background_work", None)
@@ -527,7 +541,17 @@ class PodbyeWindow(QMainWindow):
     # ── Background / tray ─────────────────────────────────────────
 
     def _is_busy(self) -> bool:
-        """True while a scan, entity detection or AI job is still running."""
+        """True while a scan, entity detection or AI job is still running.
+
+        Deliberately excludes the Recycle Bin emptier, even though that is
+        certainly work in flight. This flag drives prompts that offer to
+        *stop* what is running - "Continuing will stop it and discard the
+        results it has collected so far" - and there is no honest way to say
+        that about a shell call with no cancel handle. It is also unrelated to
+        what those prompts guard: opening a History session does not touch the
+        bin. Closing still waits for it, in _stop_all_background_work, and a
+        shell rebuild is still blocked by _busy_reason.
+        """
         if self._scan_state.is_running:
             return True
         return bool(self._ai_explainer and self._ai_explainer.is_running)

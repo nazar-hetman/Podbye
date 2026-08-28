@@ -30,10 +30,22 @@ _CLOUD_PLACEHOLDER_MASK = (
     | _FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
 )
 
-# Directories to never descend into (always skipped silently)
+# Directories to never descend into (always skipped silently), and never
+# record either.
 _SKIP_DIRS = {
-    "$recycle.bin", "system volume information", ".git",
+    "$recycle.bin", "system volume information",
 }
+
+# Version-control directories: not descended into - their object stores are
+# thousands of files nobody triages - but *recorded*, because their presence
+# is what tells the detector that the parent folder is a project.
+#
+# ".git" used to live in _SKIP_DIRS, which skips before recording. The
+# detector's VCS rule therefore never fired: it waits for a .git finding that
+# the scan never produced. Measured on a real all-drives scan, zero of 1,327
+# entities were detected that way, and seven repositories in one folder went
+# unrecognised because only one of them happened to carry requirements.txt.
+_VCS_DIRS = {".git", ".hg", ".svn"}
 
 # Per-folder metadata the OS writes and rewrites on its own. These are a few
 # hundred bytes each, cannot be meaningfully deleted (Windows recreates them),
@@ -217,7 +229,19 @@ class ScanWorker(QThread):
                                 self._skipped_symlinks += 1
                                 self._record_skipped(entry.path, SKIP_REASON_LOOP)
                                 continue
-                            if entry.name.lower() in _SKIP_DIRS:
+                            entry_lower = entry.name.lower()
+                            if entry_lower in _SKIP_DIRS:
+                                continue
+                            if entry_lower in _VCS_DIRS:
+                                # Recorded, not descended: one finding that
+                                # names the parent a project, without the
+                                # object store behind it.
+                                vcs_finding = self._finding_from_entry(
+                                    entry, is_dir=True)
+                                if vcs_finding and not self._should_skip(
+                                        vcs_finding.path):
+                                    batch.append(vcs_finding)
+                                    self._scanned += 1
                                 continue
                             if (self._root_devs is not None
                                     and self._crosses_volume(entry.path)):
@@ -319,7 +343,11 @@ class ScanWorker(QThread):
         if self._skipped_known > 0:
             parts.append(f"{self._skipped_known:,} already known (resume)")
         self.log.emit(" · ".join(parts))
-        self.progress.emit(self._scanned, "done")
+        # Empty, not "done": this argument is the path currently being scanned
+        # and the receiver prints it verbatim under the elapsed clock. A
+        # sentinel here rendered as the literal word "done" sitting where a
+        # path belongs. CleanupWorker already emits "" for the same final tick.
+        self.progress.emit(self._scanned, "")
         self.finished_scan.emit()
 
     def _record_skipped(self, path: str, reason: str):

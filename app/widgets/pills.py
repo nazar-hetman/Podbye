@@ -15,11 +15,19 @@ _VARIANT_MAP = {
     "running":   "review",
     "idle":      "text_faint",
     "info":      "text_dim",
+    # Borderless: a read-only status line, not a pill. Every other variant
+    # draws a border and reads as a control, which is wrong for a badge that
+    # sits in a row of buttons and cannot be pressed. See _BORDERLESS below.
+    "status":    "text_dim",
     "awaiting_review": "review",
     "cleaned":   "safe",
     "partial_halted": "risk",
     "protected": "risk",
 }
+
+# Variants drawn without a border or fill, so they read as text rather than as
+# something you can press.
+_BORDERLESS = frozenset({"status"})
 
 _VARIANT_BG_MAP = {
     "safe":      "safe_soft",
@@ -63,10 +71,11 @@ class Badge(QLabel):
     def refresh_style(self):
         fg = self._resolve_fg()
         bg = self._resolve_bg()
+        border = "none" if self._variant in _BORDERLESS else f"1px solid {fg}"
         self.setStyleSheet(
             f"color: {fg}; padding: 0px 9px; "
             f"font-family: 'JetBrains Mono'; font-size: 10px; letter-spacing: 1px; "
-            f"border: 1px solid {fg}; background: {bg}; "
+            f"border: {border}; background: {bg}; "
             f"border-radius: 2px;"
         )
 

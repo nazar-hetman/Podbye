@@ -21,10 +21,15 @@ class AskAIDialog(QDialog):
     lands on the same object the rest of the UI reads from.
     """
 
-    def __init__(self, item, explainer, parent=None):
+    def __init__(self, item, explainer, parent=None, facts: dict | None = None):
         super().__init__(parent)
         self._item = item
         self._explainer = explainer
+        # What the caller measured about this item — a folder's real size and
+        # file count. Sent with every request from this dialog, the first one
+        # and each "Ask again", so a regenerated answer is held to the same
+        # facts as the first.
+        self._facts = dict(facts or {})
         self._connected = False
 
         self.setWindowTitle(tr("Ask AI"))
@@ -62,6 +67,16 @@ class AskAIDialog(QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(10)
+        # Regenerating lives here rather than on the row behind the dialog: the
+        # row reopens this window, and the decision to spend a model run again
+        # belongs next to the answer you are dissatisfied with.
+        self._btn_again = QPushButton(tr("Ask again"))
+        self._btn_again.setCursor(Qt.PointingHandCursor)
+        self._btn_again.setToolTip(
+            tr("Generate a new explanation and replace the saved one"))
+        self._btn_again.setVisible(False)
+        self._btn_again.clicked.connect(self._on_ask_again)
+        btn_row.addWidget(self._btn_again)
         btn_row.addStretch()
         self._btn_close = QPushButton(tr("Close"))
         self._btn_close.setCursor(Qt.PointingHandCursor)
@@ -84,7 +99,7 @@ class AskAIDialog(QDialog):
         self._explainer.finding_updated.connect(self._on_updated)
         self._connected = True
 
-        reason = self._explainer.explain_item(self._item)
+        reason = self._explainer.explain_item(self._item, facts=self._facts)
         if reason == "no-model":
             self._disconnect()
             self._status.setText(
@@ -107,11 +122,29 @@ class AskAIDialog(QDialog):
                 tr("Reasoning is not available right now: {error}").format(error=err)
             )
 
+    def _on_ask_again(self):
+        """Generate a new explanation over the top of the stored one."""
+        self._btn_again.setEnabled(False)
+        self._status.setText(tr("Analyzing…"))
+        if not self._connected:
+            self._explainer.finding_updated.connect(self._on_updated)
+            self._connected = True
+        reason = self._explainer.explain_item(self._item, force_refresh=True,
+                                              facts=self._facts)
+        if reason == "no-model":
+            self._disconnect()
+            self._btn_again.setEnabled(True)
+            self._status.setText(
+                tr("Select an AI model in Settings to use Ask AI."))
+
     def _show_answer(self, text: str):
         self._disconnect()
         self._status.setText("")
         self._body.setPlainText(text)
         self._body.setVisible(True)
+        # Only once there is something to replace.
+        self._btn_again.setEnabled(True)
+        self._btn_again.setVisible(True)
 
     def _disconnect(self):
         if not self._connected:

@@ -978,6 +978,25 @@ class ScanState(QObject):
             _log.debug("[smart] [LIFECYCLE] ERROR: Emitting entities_ready despite error to unblock UI")
             self.entities_ready.emit()
 
+        finally:
+            # Detection is over however this method exits, so the flag comes
+            # down here rather than on each path.
+            #
+            # Two paths did not clear it. The early return when
+            # _pending_entities is None, and this method's own except - which
+            # exists to unblock the UI and cleared everything except the one
+            # flag that keeps it blocked. is_analysis_active is read straight
+            # off it, and the language switch is refused before it ever
+            # consults _busy_reason():
+            #
+            #     busy = ("an analysis is running"
+            #             if self._scan_state.is_analysis_active
+            #             else self._busy_reason())
+            #
+            # so a leak here refuses every later language change, with a
+            # reason that is not true, until the app is restarted.
+            self._entity_detection_running = False
+
     # ── Session persistence ──────────────────────────────────
 
     def _aggregates_snapshot(self) -> dict:

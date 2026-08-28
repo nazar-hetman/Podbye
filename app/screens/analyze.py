@@ -40,6 +40,9 @@ def _get_stages_smart():
         (tr("AI classification"), "ai"),
     ]
 
+from app.themes.theme_manager import rgba as _rgba
+
+
 def _chip_styles() -> dict:
     """Return chip QSS map for the active theme."""
     from app.themes.theme_manager import get_palette
@@ -54,12 +57,22 @@ def _chip_styles() -> dict:
     review_soft = p.get("review_soft", "#2c2516")
     safe_soft = p.get("safe_soft", "#1c2e22")
     risk_soft = p.get("risk_soft", "#2e1f1c")
+    # A finished stage is a status, not something to press. "active" keeps its
+    # fill because it is the one stage actually doing work and should draw the
+    # eye; "done" drops to a bare tinted border, which is what separates a
+    # label from a button. It reads worst on Paper, where safe_soft is a solid
+    # tan panel and a row of finished stages looked like a row of buttons.
+    #
+    # Borders use rgba(), never a hex alpha suffix. "#7cc596" + "70" makes an
+    # eight-digit hex, and Qt reads those as #AARRGGBB — so the old "done"
+    # border was not a faded green at all but rgb(197,150,112), a muddy tan
+    # that belonged to no palette. Same for the "failed" border.
     return {
         "idle":    f"background: transparent; border: 1px solid {border};      padding: 4px 12px; color: {faint};",
         "pending": f"background: transparent; border: 1px solid {border_alt};   padding: 4px 12px; color: {dim};",
         "active":  f"background: {review_soft}; border: 1px solid {review};      padding: 4px 12px; color: {review};",
-        "done":    f"background: {safe_soft}; border: 1px solid {safe}70;        padding: 4px 12px; color: {safe};",
-        "failed":  f"background: {risk_soft}; border: 1px solid {risk}80;        padding: 4px 12px; color: {risk};",
+        "done":    f"background: transparent; border: 1px solid {_rgba(safe, 0.45)}; padding: 4px 12px; color: {safe};",
+        "failed":  f"background: transparent; border: 1px solid {_rgba(risk, 0.55)}; padding: 4px 12px; color: {risk};",
     }
 
 
@@ -235,6 +248,7 @@ class AnalyzeScreen(QWidget):
         if state.entity_count:
             self._pf_sub.setText(tr("// Semantic grouping complete"))
         self._set_badge(tr("Complete"), "completed")
+        self._update_findings_title()
 
     def _apply_mode_combo_style(self):
         from app.themes.theme_manager import get_palette
@@ -509,9 +523,9 @@ class AnalyzeScreen(QWidget):
         pf_hdr = QHBoxLayout(self._pf_hdr_frame)
         pf_hdr.setContentsMargins(0, 0, 0, 0)
         pf_hdr.setSpacing(8)
-        pf_title = QLabel(tr("PARTIAL FINDINGS"))
-        pf_title.setStyleSheet("font-family: 'Silkscreen', 'JetBrains Mono'; font-size: 9px; letter-spacing: 2px;")
-        pf_hdr.addWidget(pf_title)
+        self._pf_title = QLabel(tr("PARTIAL FINDINGS"))
+        self._pf_title.setStyleSheet("font-family: 'Silkscreen', 'JetBrains Mono'; font-size: 9px; letter-spacing: 2px;")
+        pf_hdr.addWidget(self._pf_title)
         self._pf_sub = QLabel(tr("// Waiting for scan"))
         self._pf_sub.setObjectName("Muted")
         self._pf_sub.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 9px;")
@@ -692,6 +706,29 @@ class AnalyzeScreen(QWidget):
 
     def _refresh_header_meta(self):
         return
+
+    def _update_findings_title(self):
+        """"Partial" is a claim about the run, so it has to follow the run.
+
+        The table is genuinely partial while the pipeline is working, and the
+        heading warns you not to trust the totals yet. Once the pipeline is
+        complete those totals are final and the warning is simply wrong — it
+        was still there on a finished scan, telling the user their results were
+        incomplete. A stopped or halted run keeps the old title, because there
+        the findings really are partial.
+        """
+        complete = self._pipeline_state == "complete"
+        self._pf_title.setText(tr("FINDINGS") if complete else tr("PARTIAL FINDINGS"))
+
+    def _mark_ai_skipped(self):
+        """AI never ran, so there is no progress to report — not 0% of it.
+
+        "0%" beside a stage chip that says "skipped" reads as a job that stalled
+        before it started. An em dash is the same thing this screen already
+        shows when the queue turns out to be empty.
+        """
+        self._ai_bar.setValue(0)
+        self._ai_prog_lbl.setText("—")
 
     def _refresh_idle_telemetry(self):
         is_idle = self._pipeline_state == "idle"
@@ -1371,8 +1408,10 @@ class AnalyzeScreen(QWidget):
                 # fire. Finish the pipeline here or the elapsed timer ticks
                 # forever and the state stays stuck in "ai_classifying".
                 self._chips[3].set_state("done", tr("skipped"))
+                self._mark_ai_skipped()
                 self._ai_complete = True
                 self._pipeline_state = "complete"
+                self._update_findings_title()
                 self._elapsed_timer.stop()
                 self._ai_poll.stop()
                 if not was_stopped and not halted:
@@ -1455,7 +1494,9 @@ class AnalyzeScreen(QWidget):
         elif ai and not ai.is_running:
             self._ai_complete = True
             self._pipeline_state = "complete"
+            self._update_findings_title()
             self._chips[3].set_state("done", tr("skipped"))
+            self._mark_ai_skipped()
             self._set_badge(tr("Complete"), "completed")
             self._elapsed_timer.stop()
             self._feed.add_line(f"[smart] analysis complete · {entity_count} entities")
@@ -1528,6 +1569,7 @@ class AnalyzeScreen(QWidget):
         # Only mark COMPLETE and reset button if grouping is also done
         if self._grouping_complete:
             self._pipeline_state = "complete"
+            self._update_findings_title()
             self._set_badge(tr("Complete"), "completed")
             self._elapsed_timer.stop()  # Stop timer - pipeline truly complete
             self._feed.add_line("[smart] pipeline complete")

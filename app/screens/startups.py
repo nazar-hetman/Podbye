@@ -371,7 +371,12 @@ class StartupListRow(QFrame):
     # breathing room. Too narrow and a fixed column clips its own text, which
     # would be worse than the jitter it replaced.
     _BADGE_W = 92
-    _ACTION_W = 54
+    # Wide enough for the toggle as a button, in every shipped language:
+    # "Disable" needs 62px, Ukrainian 74px and French 80px once the border and
+    # padding are counted. At 54 the styled button could not shrink to fit, so
+    # it overflowed its column and squeezed the name and meta labels beside it
+    # into ellipses - the button clipped, and took the row's text with it.
+    _ACTION_W = 84
 
     def __init__(self, entry: StartupEntry, parent=None):
         super().__init__(parent)
@@ -395,7 +400,12 @@ class StartupListRow(QFrame):
         center = QVBoxLayout()
         center.setSpacing(3)
 
-        self._name_lbl = QLabel()
+        # Same reasoning as the meta line below. Real entry names run to
+        # "OneDrive Startup Task-S-1-5-21-3897710897-..." - one unbreakable
+        # token far wider than any row - and an Ignored policy on a plain
+        # QLabel let the layout cut it off mid-word with nothing to show for
+        # it. The head of the name is the identifying part.
+        self._name_lbl = ElidedLabel("")
         self._name_lbl.setStyleSheet("font-size: 14px; font-weight: 760;")
         self._name_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         center.addWidget(self._name_lbl)
@@ -414,7 +424,13 @@ class StartupListRow(QFrame):
         self._toggle_btn.setCursor(Qt.PointingHandCursor)
         self._toggle_btn.clicked.connect(self._on_toggle_clicked)
 
-        self._meta_lbl = QLabel()
+        # Elides rather than clips. "Microsoft Corporation - System startup
+        # registry (64-bit)" is longer than any row is wide, and an Ignored
+        # size policy on a plain QLabel lets the layout squeeze it without the
+        # label doing anything about it: the text simply ran off the end. The
+        # publisher matters more than the tail of the source label, so it
+        # keeps the head and the full string stays on the tooltip.
+        self._meta_lbl = ElidedLabel("")
         self._meta_lbl.setObjectName("Dim")
         self._meta_lbl.setStyleSheet(
             f"font-family: 'JetBrains Mono'; font-size: 10px; color: {get_palette().get('text_dim', '#8a9b8f')};"
@@ -517,14 +533,25 @@ class StartupListRow(QFrame):
         p = get_palette()
         primary = p.get("text", "#d6e2da") if self._entry.enabled else p.get("text_dim", "#8a9b8f")
         secondary = p.get("text_dim", "#8a9b8f") if self._entry.enabled else p.get("text_faint", "#57685e")
-        idle_bg = "transparent" if self._entry.enabled else "rgba(138, 155, 143, 9)"
+        # A disabled entry is a different state, not a slightly quieter row.
+        # This was rgba(138, 155, 143, 9) — a fixed forest-ish tint at alpha 9
+        # of 255, invisible on any theme and wrong on three of them. It now
+        # takes a real recessed surface from the palette, so a disabled row
+        # reads as switched off at a glance rather than on close inspection.
+        idle_bg = "transparent" if self._entry.enabled else p.get("bg_deep", "#070c09")
         if self._selected:
             accent = p.get("accent", "#7cc596")
             bg = p.get("accent_soft", "#1b2e22")
-            border = p.get("border_hover", "#3a5648")
+            # The selected row is marked by its accent, not by a hairline in
+            # the same border colour every other state uses. The left bar goes
+            # to 4px and the surrounding border takes the accent at half
+            # strength, so selection reads the same in all four themes rather
+            # than depending on how far accent_soft happens to sit from the
+            # list background in each one.
+            border = _rgba(accent, 120)
             self.setStyleSheet(
                 f"QFrame#StartupListRow {{ background: {bg}; "
-                f"border-left: 3px solid {accent}; "
+                f"border-left: 4px solid {accent}; "
                 f"border-top: 1px solid {border}; "
                 f"border-bottom: 1px solid {border}; "
                 f"border-right: 1px solid {border}; }}"
@@ -557,18 +584,25 @@ class StartupListRow(QFrame):
 
     @staticmethod
     def _toggle_style(enabled: bool) -> str:
-        """A text action, not a button box.
+        """A compact button, not a line of text.
 
-        Twenty-five outlined buttons stacked down the page carried more visual
-        weight than the entries they belonged to. The affordance stays on every
-        row — it is the screen's whole point — but as accent-coloured text.
+        This was deliberately styled as bare text once, because twenty-five
+        outlined buttons down the page outweighed the entries they belonged
+        to. The answer to that is a smaller button, not the loss of the
+        affordance: as text it read as a label, on the one control the screen
+        exists to offer. So it keeps a border and a fill, at 10px with tight
+        padding, quiet enough to repeat twenty-five times.
         """
         p = get_palette()
         fg = p.get("safe", "#7cc596") if enabled else p.get("text_dim", "#8a9b8f")
+        border = _rgba(fg, 110)
+        panel_alt = p.get("panel_alt", "#19231c")
+        panel_hover = p.get("panel_hover", "#1d2c25")
         return (
-            "font-family: 'JetBrains Mono'; font-size: 10px; "
-            "padding: 2px 0px; text-align: right; "
-            f"color: {fg}; border: none; background: transparent;"
+            f"QPushButton {{ font-family: 'JetBrains Mono'; font-size: 10px; "
+            f"padding: 3px 8px; border-radius: 2px; color: {fg}; "
+            f"border: 1px solid {border}; background: {panel_alt}; }}"
+            f"QPushButton:hover {{ border-color: {fg}; background: {panel_hover}; }}"
         )
 
 
@@ -766,6 +800,11 @@ class StartupInspectorPanel(QFrame):
 
         key = QLabel(label.upper())
         key.setObjectName("Muted")
+        # Wraps rather than clips. The compact column is 88px and French turns
+        # "LAUNCH PATH" into "CHEMIN DE LANCEMENT", which needs 135px - a field
+        # name cut in half is worse than a field name on two lines, and the
+        # column cannot grow without taking the width from the value beside it.
+        key.setWordWrap(True)
         key.setFixedWidth(88 if self._compact else 112)
         key.setStyleSheet(
             f"font-family: 'JetBrains Mono'; font-size: 11px; font-weight: 600; "
@@ -825,11 +864,16 @@ class StartupInspectorPanel(QFrame):
         section_qss = (
             "QFrame#StartupDetailSection { background: transparent; border: none; }"
         )
-        # Contextual reasoning sits in a bordered box, matching the Findings
-        # inspector's reasoning block so both item panels read the same way.
+        # Contextual reasoning is supporting material, so it reads as prose on
+        # the panel. It used to be the only boxed section here while the
+        # recommendation had no container at all, which put the frame around
+        # the explanation and left the conclusion looking like a caption above
+        # it. The box moved to the recommendation; this keeps a left rule so
+        # the block still reads as one passage.
         reasoning_qss = (
             f"QFrame#StartupDetailReasoning {{ background: transparent; "
-            f"border: 1px solid {p.get('border', '#213028')}; border-radius: 2px; }}"
+            f"border: none; border-left: 2px solid {p.get('border', '#213028')}; "
+            f"border-radius: 0px; }}"
         )
         self._explanation_host.setStyleSheet(reasoning_qss)
         self._inspection_frame.setStyleSheet(section_qss)
@@ -847,8 +891,12 @@ class StartupInspectorPanel(QFrame):
     def _apply_recommendation_style(self, accent: str):
         p = get_palette()
         border = _rgba(accent, 130)
+        # The conclusion gets the container. Tinted in the accent the verdict
+        # already carries, so the section's weight tracks its severity instead
+        # of being uniform.
         self._recommendation_frame.setStyleSheet(
-            "QFrame#StartupRecommendationSection { background: transparent; border: none; }"
+            f"QFrame#StartupRecommendationSection {{ background: {_rgba(accent, 20)}; "
+            f"border: 1px solid {border}; border-radius: 2px; }}"
         )
         self._rec_status_lbl.setStyleSheet(
             f"font-family: 'JetBrains Mono'; font-size: 10px; "
@@ -1526,6 +1574,77 @@ class StartupsScreen(QWidget):
         from app.services.workers import stop_worker
         return stop_worker(self._ai_worker, timeout_ms)
 
+    # Re-reading the registry and the Startup folders costs about a third of a
+    # second, and a screen can be shown several times in a row while a window
+    # settles. Collapse those into one read.
+    #
+    # Class-level, not per-instance: the rate limit belongs to the machine's
+    # startup list, not to a particular widget. The app only ever has one of
+    # these screens, so this changes nothing there - but it stops a rebuilt or
+    # second instance re-reading the registry a moment after the first did.
+    _REFRESH_INTERVAL_S = 3.0
+    _last_refresh = 0.0
+
+    def showEvent(self, event):
+        """Refresh the list whenever the page is opened.
+
+        Startup entries change outside this app - an installer adds one, an
+        uninstaller leaves one behind - so a list built on a previous visit
+        describes a machine that has moved on. Opening the page is when the
+        user expects it to be true.
+        """
+        super().showEvent(event)
+        self._refresh_entries()
+
+    def _refresh_entries(self):
+        """Re-read the machine and merge into what is already on screen.
+
+        Deliberately does not touch the model. An automatic refresh may not
+        start work that costs money and minutes: Re-analyze is the action that
+        re-runs the AI, and it stays the only one that does. A newly appeared
+        entry is listed immediately and carries no verdict until asked for.
+        """
+        if self._ai_worker and self._ai_worker.isRunning():
+            return                      # a full analysis is mid-flight; leave it alone
+        if not self._entries:
+            # Nothing to refresh yet. The first read of the machine stays the
+            # explicit action it already was - the idle page offers "Analyze
+            # Startups" for it - because walking the registry and the Startup
+            # folders on a page the user has only glanced at is work nobody
+            # asked for. This is the refresh, not the first analysis.
+            return
+
+        now = time.monotonic()
+        if now - StartupsScreen._last_refresh < self._REFRESH_INTERVAL_S:
+            return
+        StartupsScreen._last_refresh = now
+
+        from app.services.startup_detector import detect_startup_entries
+        try:
+            found = detect_startup_entries()
+        except Exception:
+            return                      # a refresh nobody asked for must not break the page
+
+        # Carry the AI work across for entries that are still here. Matching is
+        # by key, which is what the row widgets and the selection are keyed on.
+        previous = {e.key: e for e in self._entries}
+        for entry in found:
+            old = previous.get(entry.key)
+            if old is None:
+                continue
+            entry.ai_status = old.ai_status
+            entry.ai_explanation = old.ai_explanation
+            entry.recommendation = old.recommendation
+
+        self._entries = found
+        # Nothing is cleared first: the rows on screen are replaced by the
+        # rebuilt list, so reopening does not blank a list mid-read.
+        self._reapply_filters()
+        # The selected entry may have been uninstalled between visits.
+        if self._selected_key and self._selected_key not in {e.key for e in self._entries}:
+            self._selected_key = None
+            self._clear_detail_sidebar()
+
     def _analyze(self):
         if self._ai_worker and self._ai_worker.isRunning():
             self._ai_worker.cancel()
@@ -1539,7 +1658,15 @@ class StartupsScreen(QWidget):
         self._show_results()
         self._start_ai()
 
-    def _start_ai(self):
+    def _start_ai(self, entries: list | None = None):
+        """Run the model over *entries*, defaulting to the whole list.
+
+        The worker analyses everything it is handed - there is no skip for an
+        entry that already has a verdict - so the subset matters. Re-analyze
+        passes nothing and gets the full run it promises; the refresh on open
+        passes only what arrived since the last visit, or opening the page
+        would silently do the expensive thing the button is for.
+        """
         if not self._settings_store:
             return
         if not self._settings_store.get("ai_startups_enabled", True):
@@ -1548,10 +1675,11 @@ class StartupsScreen(QWidget):
             self._reapply_filters()
             return
 
-        if not self._entries:
+        targets = self._entries if entries is None else entries
+        if not targets:
             return
 
-        self._ai_worker = StartupAIWorker(self._entries, self._settings_store, parent=self)
+        self._ai_worker = StartupAIWorker(targets, self._settings_store, parent=self)
         self._ai_worker.entry_updated.connect(self._on_ai_entry_updated)
         self._ai_worker.queue_status.connect(self._on_queue_status)
         self._ai_worker.start()

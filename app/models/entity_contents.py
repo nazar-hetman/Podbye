@@ -170,15 +170,24 @@ def child_entities(entity: dict, everything: list) -> list:
     return kept
 
 
-def items_summary(entity: dict, everything: list) -> Contents:
+def items_summary(entity: dict, everything: list, exclude=None) -> Contents:
     """The ITEMS section: what lives inside, each its own decision.
 
     Its own total, deliberately. A parent's size has its children subtracted
     by the disjointness pass — ``_src`` displays 2.4 GB while the two projects
     inside it hold 30 GB — so borrowing the header's figure would be wrong in
     both directions.
+
+    *exclude* drops children the caller is already showing somewhere else. An
+    entity's children are frequently members of the same group as the entity
+    itself, so the panel that lists a group's parts and this section were
+    listing the same rows — same names, same sizes, one above the other. What
+    is left is what the parts list does not already say.
     """
     children = child_entities(entity, everything)
+    if exclude:
+        skip = {_norm(p) for p in exclude if p}
+        children = [c for c in children if _norm(c.get("path", "")) not in skip]
     if not children:
         return Contents()
     rows = [ContentRow(label=child.get("name", ""),
@@ -313,10 +322,16 @@ def walk_contents(root: str, budget_ms: int = DEFAULT_BUDGET_MS,
             return True
         return (time.perf_counter() - started) * 1000 > budget_ms
 
-    def add(key: str, label: str, named: bool, size: int):
+    def add(key: str, label: str, named: bool, size: int, relative: str = ""):
+        # *relative* is carried so the row can be given a real path. The row
+        # used to derive one from the bucket key, which is a grouping token
+        # rather than a location: "child:chrome" yielded the path "chrome",
+        # and "rule:cache/cache_data" yielded "cache/cache_data". Clicking such
+        # a row asked the AI about a path that does not exist anywhere, and the
+        # lookup's failure was reported as "This file is no longer on disk".
         row = buckets.get(key)
         if row is None:
-            buckets[key] = [size, 1, label, named]
+            buckets[key] = [size, 1, label, named, relative]
         else:
             row[0] += size
             row[1] += 1
@@ -354,16 +369,18 @@ def walk_contents(root: str, budget_ms: int = DEFAULT_BUDGET_MS,
             total_files += 1
             rule_path, rule_name = rule_for(child_rel, rules)
             if rule_name:
-                add("rule:" + rule_path, rule_name, True, size)
+                add("rule:" + rule_path, rule_name, True, size, rule_path)
             elif child_top:
-                add("child:" + child_top.lower(), child_top, False, size)
+                # child_top keeps its real case; the key is lowercased only to
+                # group case-variant siblings together.
+                add("child:" + child_top.lower(), child_top, False, size, child_top)
             else:
                 add("loose", "", False, size)
 
     rows = [ContentRow(label=label, size_bytes=size, file_count=files,
                        named=named,
-                       path="" if key == "loose" else key.split(":", 1)[1])
-            for key, (size, files, label, named) in buckets.items()]
+                       path=(f"{root_norm}/{relative}" if relative else ""))
+            for (size, files, label, named, relative) in buckets.values()]
     rows = _condense(rows, total_bytes)
     return Contents(mode=MODE_CONTENTS, rows=rows, total_bytes=total_bytes,
                     total_files=total_files, truncated=truncated)

@@ -201,7 +201,9 @@ def test_a_kept_part_cannot_be_armed(view, kept):
     row = next(r for r in _live(view._part_pool)
                if r.entity()["path"] == LOCAL)
     assert row._check_btn.isEnabled() is False
-    assert row._risk_badge.text() == "KEEP"
+    # KEPT, not KEEP: the badge reports a state and the button beside it
+    # performs an action, so they must not share a word.
+    assert row._risk_badge.text() == "KEPT"
 
 
 def test_a_kept_part_says_which_folder_the_mark_is_on(view, kept):
@@ -281,8 +283,8 @@ def test_the_inspector_agrees_with_the_row(view, kept):
     row = next(r for r in _live(view._part_pool)
                if r.entity()["path"] == LONE["path"])
     panel = view._right_sidebar.detail_widget
-    assert row._risk_badge.text() == "KEEP"
-    assert panel._risk_badge.text() == "KEEP"
+    assert row._risk_badge.text() == "KEPT"
+    assert panel._risk_badge.text() == "KEPT"
 
 
 def test_a_kept_item_is_offered_no_delete_button(view, kept):
@@ -292,4 +294,4 @@ def test_a_kept_item_is_offered_no_delete_button(view, kept):
 
     panel = view._right_sidebar.detail_widget
     assert not panel._btn_recycle.isVisible()
-    assert panel._btn_keep.text() == "Stop keeping"
+    assert panel._btn_keep.text() == "Remove from Keep"

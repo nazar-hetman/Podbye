@@ -86,6 +86,86 @@ def _language_instruction(language: str) -> str:
     return _LANGUAGE_INSTRUCTIONS.get(key, f"Return explanation in {language} only. Do not use any other language.")
 
 
+# ── What was actually measured ─────────────────────────────────
+#
+# The reported failure: the model calls a 40 GB folder empty. It was told to.
+# A directory's own ``st_size`` is the size of its entry (4 KB on NTFS), and
+# the scanner records folders as 0 bytes on purpose — the entity detector
+# aggregates sizes afterwards, so re-summing children during the walk would be
+# paid twice. Either way the prompt carried a bare "Size: 0 B", and that is the
+# one hard number in it: a small model reads it as the fact it can be sure of
+# and writes "this folder is empty".
+#
+# So a size is never sent as a bare number now. It is sent as measured or as
+# unknown, and a facts line says which — in the imperative, last in the prompt,
+# because that is the position a small model weights most.
+
+# Size strings that mean "we did not look", not "there is nothing there".
+_UNMEASURED_SIZE_TEXT = frozenset({"", "0", "0 b", "-", "—", "unknown"})
+
+
+def _is_measured(size: str, size_bytes: int = -1, file_count: int = 0,
+                 folder_count: int = 0) -> bool:
+    """Whether we actually know how much is inside this item.
+
+    *size_bytes* is authoritative when the caller has it; -1 means it was not
+    supplied and the formatted string is all there is to go on. A count of
+    files or folders settles it on its own — a folder with 12,000 files in it
+    is not empty whatever its byte total says.
+    """
+    if file_count or folder_count:
+        return True
+    if size_bytes >= 0:
+        return size_bytes > 0
+    return (size or "").strip().lower() not in _UNMEASURED_SIZE_TEXT
+
+
+def _size_text(size: str, measured: bool, is_dir: bool = True) -> str:
+    """What goes after "Size:" — never a zero we did not measure.
+
+    Only a folder's size can be unknown this way. A file's comes straight off
+    its own stat entry, so a 0-byte file really is 0 bytes and a cloud
+    placeholder keeps the marker the rest of the UI shows it with.
+    """
+    text = (size or "").strip()
+    return text if (measured or not is_dir) else "not measured"
+
+
+def _facts_line(*, is_dir: bool, measured: bool, size: str,
+                file_count: int = 0, folder_count: int = 0) -> str:
+    """The constraint that stops the model inventing an empty folder.
+
+    Only for folders: a file's size comes straight off its own stat entry and
+    was never in doubt.
+
+    *measured* is passed in rather than re-derived, because by this point
+    *size* is display text — "not measured" reads as a perfectly good size
+    string to anything that only looks at the string.
+    """
+    if not is_dir:
+        return ""
+    if not measured:
+        return (
+            "Measured facts you must not contradict: the contents of this "
+            "folder were not counted, so its size is unknown to you. Never "
+            "say it is empty, small, or unused, and never guess a size — say "
+            "what the folder is for instead."
+        )
+    held = []
+    if file_count:
+        held.append(f"{file_count:,} files")
+    if folder_count:
+        held.append(f"{folder_count:,} folders")
+    inventory = " and ".join(held)
+    holds = (f"{inventory}, {size} in total" if inventory
+             else f"{size} of data")
+    return (
+        f"Measured facts you must not contradict: this folder holds {holds}. "
+        "It is NOT empty — never say it is empty, unused, or that it contains "
+        "nothing."
+    )
+
+
 def _truncate_path(path: str, max_len: int = 120) -> str:
     """Shorten very long paths to reduce prompt token count."""
     if len(path) <= max_len:
@@ -110,11 +190,20 @@ def build_prompt(
     tone: str = "neutral",
     length: str = "standard",
     language: str = "English",
+    size_bytes: int = -1,
+    file_count: int = 0,
+    folder_count: int = 0,
 ) -> str:
     """Build a complete prompt for one finding.
 
     Parameters mirror the Finding model fields.
     *tone*, *length*, and *language* come from user settings.
+
+    *size_bytes*, *file_count* and *folder_count* are what the caller actually
+    measured, and they are deliberately separate from *size*: *size* is a
+    display string, and a folder's is routinely "0 B" because nothing summed
+    it, which is not the same statement as "this folder is empty". -1 means
+    the caller has no byte count and the string is all there is to go on.
     """
     tone_key = tone.lower().strip()
     length_key = length.lower().strip()
@@ -125,6 +214,11 @@ def build_prompt(
 
     item_type = "folder" if is_dir else "file"
     display_path = _truncate_path(path)
+    measured = _is_measured(size, size_bytes, file_count, folder_count)
+    size_str = _size_text(size, measured, is_dir)
+    facts = _facts_line(is_dir=is_dir, measured=measured, size=size_str,
+                        file_count=file_count, folder_count=folder_count)
+    facts_block = f"{facts}\n" if facts else ""
 
     # Compact
     if length_key == "compact":
@@ -132,7 +226,8 @@ def build_prompt(
             f"{preamble} {fmt} {_DIRECTNESS} {lang}\n\n"
             f"{item_type.capitalize()}: {name}\n"
             f"Path: {display_path}\n"
-            f"Size: {size}\n"
+            f"Size: {size_str}\n"
+            f"{facts_block}"
         )
 
     # Standard
@@ -141,7 +236,8 @@ def build_prompt(
             f"{preamble} {fmt} {_DIRECTNESS} {lang}\n\n"
             f"{item_type.capitalize()}: {name}\n"
             f"Path: {display_path}\n"
-            f"Size: {size} | Category: {category}\n"
+            f"Size: {size_str} | Category: {category}\n"
+            f"{facts_block}"
         )
 
     # Detailed
@@ -149,7 +245,8 @@ def build_prompt(
         f"{preamble} {fmt} {_DIRECTNESS} {lang}\n\n"
         f"{item_type.capitalize()}: {name}\n"
         f"Path: {display_path}\n"
-        f"Size: {size} | Category: {category}\n"
+        f"Size: {size_str} | Category: {category}\n"
+        f"{facts_block}"
     )
 
 
@@ -209,6 +306,7 @@ def build_entity_prompt(
     tone: str = "neutral",
     length: str = "standard",
     language: str = "English",
+    size_bytes: int = -1,
 ) -> str:
     """Build a prompt for a SmartEntity (grouped folder/content).
 
@@ -223,6 +321,13 @@ def build_entity_prompt(
     fmt = _ENTITY_FORMAT.get(length_key, _ENTITY_FORMAT["standard"])
     lang = _language_instruction(language)
     display_path = _truncate_path(path)
+
+    measured = _is_measured(size, size_bytes, file_count, folder_count)
+    size_str = _size_text(size, measured)
+    # An entity always stands for a folder, so it always gets the constraint.
+    facts = _facts_line(is_dir=True, measured=measured, size=size_str,
+                        file_count=file_count, folder_count=folder_count)
+    facts_block = f"{facts}\n" if facts else ""
 
     sample_str = ""
     if children_sample:
@@ -245,8 +350,9 @@ def build_entity_prompt(
             f"{preamble} {fmt} {_DIRECTNESS} {lang}\n\n"
             f"Entity: {name}\n"
             f"Path: {display_path}\n"
-            f"Type: {entity_type_label} | Size: {size} | Files: {file_count}\n"
+            f"Type: {entity_type_label} | Size: {size_str} | Files: {file_count}\n"
             f"{ownership_str}"
+            f"{facts_block}"
         )
 
     if length_key == "standard":
@@ -254,9 +360,10 @@ def build_entity_prompt(
             f"{preamble} {fmt} {_DIRECTNESS} {lang}\n\n"
             f"Entity: {name}\n"
             f"Path: {display_path}\n"
-            f"Type: {entity_type_label} | Size: {size} | {file_count} files, {folder_count} folders\n"
+            f"Type: {entity_type_label} | Size: {size_str} | {file_count} files, {folder_count} folders\n"
             f"{ownership_str}"
             f"{sample_str}"
+            f"{facts_block}"
         )
 
     # Detailed
@@ -264,7 +371,8 @@ def build_entity_prompt(
         f"{preamble} {fmt} {_DIRECTNESS} {lang}\n\n"
         f"Entity: {name}\n"
         f"Path: {display_path}\n"
-        f"Type: {entity_type_label} | Size: {size} | Files: {file_count} | Folders: {folder_count}\n"
+        f"Type: {entity_type_label} | Size: {size_str} | Files: {file_count} | Folders: {folder_count}\n"
         f"{ownership_str}"
         f"{sample_str}"
+        f"{facts_block}"
     )

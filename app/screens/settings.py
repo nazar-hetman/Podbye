@@ -90,6 +90,23 @@ def _panel_title(title: str, subtitle: str = "") -> QHBoxLayout:
     return row
 
 
+# The AI page's form grid. The label column lives in _setting_row; these are
+# the two columns to its right, so a value and its action land in the same
+# place in every row of a panel rather than wherever the text happened to end.
+_VALUE_COL_WIDTH = 280      # matches the endpoint input; a minimum, not a cap
+_ACTION_COL_WIDTH = 88
+# Scan's value blocks are prose rather than fields, so they get their own,
+# wider column — one width for both, so the page has a single value edge.
+_SCAN_VALUE_WIDTH = 360
+# Wide enough for a real %APPDATA% path on one line; see _storage_row.
+_PATH_VALUE_WIDTH = 560
+# A floor, not a guarantee: a Qt style sheet's min-height beats setFixedHeight,
+# so the theme has the last word on the rendered height. What this buys is that
+# both buttons reach it the same way, instead of one carrying an inline
+# min-height that overrode #Ghost's padding while the other did not.
+_ACTION_HEIGHT = 32
+
+
 def _divider() -> QFrame:
     """Dashed-style divider between setting rows."""
     f = QFrame()
@@ -371,8 +388,15 @@ class SettingsScreen(QWidget):
             self._styled_radios.append(radio)
 
     def _helper_style(self) -> str:
+        """Subdued guidance: smaller than a description, not fainter than one.
+
+        This used text_faint, which is the colour a disabled control wears, and
+        measured 3.3-3.9 against panel_alt on every theme where 4.5 is the bar
+        for text this size. Guidance that is styled like something switched off
+        is guidance nobody reads. Size still marks it as secondary.
+        """
         p = get_palette()
-        return f"font-size: 10px; color: {p.get('text_faint', '#57685e')};"
+        return f"font-size: 10px; color: {p.get('text_dim', '#8a9b8f')};"
 
     def _on_endpoint_mode_changed(self, _checked: bool = False):
         """Switch between the built-in local endpoint and a custom server one.
@@ -657,8 +681,10 @@ class SettingsScreen(QWidget):
                 "close_behavior", self._close_behavior_combo.currentData()))
         win_lay.addLayout(_setting_row(
             tr("When closing while busy"),
-            tr("If a task is still running when you close the window, Podbye can "
-               "ask, keep working in the system tray, or stop and quit."),
+            # The label above already states the condition, so the description
+            # only has to list the choices. Restating it cost this row eight
+            # wrapped lines in a 208px column beside a single 42px dropdown.
+            tr("Podbye can ask, keep working in the system tray, or stop and quit."),
             self._close_behavior_combo,
         ))
 
@@ -722,8 +748,12 @@ class SettingsScreen(QWidget):
         self._btn_test = QPushButton(tr("Test"))
         self._btn_test.setObjectName("Ghost")
         self._btn_test.setCursor(Qt.PointingHandCursor)
-        # No inline stylesheet — it would suppress the #Ghost fill/border and
-        # leave the button invisible on a panel_alt panel.
+        # Height set as a widget property, not a stylesheet: an inline
+        # stylesheet here would take precedence over #Ghost's fill and border
+        # and leave the button invisible on a panel_alt panel. Test rendered
+        # 12px tall beside a 32px Refresh — two Ghost buttons, one panel.
+        self._btn_test.setFixedWidth(_ACTION_COL_WIDTH)
+        self._btn_test.setFixedHeight(_ACTION_HEIGHT)
         self._btn_test.clicked.connect(self._test_connection)
         ep_h.addWidget(self._btn_test)
         srv_lay.addLayout(_setting_row(tr("Endpoint"), tr("Ollama-compatible HTTP server. Podbye never reaches the public network."), ep_w))
@@ -740,12 +770,19 @@ class SettingsScreen(QWidget):
         conn_top.setContentsMargins(0, 0, 0, 0)
         conn_top.setSpacing(8)
         self._conn_status_lbl = QLabel("")
+        # Minimum, never fixed. The status line runs to "offline · no Ollama,
+        # LM Studio or llama.cpp server found" — 672px of text. A fixed column
+        # would align the button by truncating the sentence that explains why
+        # the button is there. Short states still reserve the column, so the
+        # action lands on the same axis in every case that fits.
+        self._conn_status_lbl.setMinimumWidth(_VALUE_COL_WIDTH)
         self._conn_status_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
         conn_top.addWidget(self._conn_status_lbl)
 
         self._btn_start_ollama = QPushButton(tr("Start Ollama"))
         self._btn_start_ollama.setObjectName("Ghost")
         self._btn_start_ollama.setCursor(Qt.PointingHandCursor)
+        self._btn_start_ollama.setFixedHeight(_ACTION_HEIGHT)
         self._btn_start_ollama.setVisible(False)
         self._btn_start_ollama.clicked.connect(self._start_ollama)
         conn_top.addWidget(self._btn_start_ollama)
@@ -768,16 +805,17 @@ class SettingsScreen(QWidget):
         lib_h.setContentsMargins(0, 0, 0, 0)
         lib_h.setSpacing(8)
         self._library_count_lbl = QLabel(tr("0 models available"))
+        self._library_count_lbl.setMinimumWidth(_VALUE_COL_WIDTH)
         self._library_count_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
         lib_h.addWidget(self._library_count_lbl)
-        lib_h.addStretch()
         self._btn_refresh_models = QPushButton(tr("Refresh"))
         self._btn_refresh_models.setObjectName("Ghost")
         self._btn_refresh_models.setCursor(Qt.PointingHandCursor)
-        self._btn_refresh_models.setFixedWidth(88)
-        self._btn_refresh_models.setStyleSheet(self._utility_btn_qss())
+        self._btn_refresh_models.setFixedWidth(_ACTION_COL_WIDTH)
+        self._btn_refresh_models.setFixedHeight(_ACTION_HEIGHT)
         self._btn_refresh_models.clicked.connect(self._test_connection)
         lib_h.addWidget(self._btn_refresh_models)
+        lib_h.addStretch()
         srv_lay.addLayout(_setting_row(tr("Library"), tr("Local model catalog read from the server."), lib_w))
 
         # Local-only disclosure
@@ -852,7 +890,11 @@ class SettingsScreen(QWidget):
         self._length_combo.currentTextChanged.connect(lambda text: self._save_value("ai_length", text))
         expl_lay.addLayout(_setting_row(tr("Explanation length"), tr("Controls how much the model writes per finding."), self._length_combo))
 
-        expl_lay.addWidget(_divider())
+        # No separator here. Style, length and language are one group — all
+        # three describe how the explanation is written — so a rule between
+        # length and language split a subgroup rather than marking one, and
+        # left the scope toggles below attached to language instead. The panel
+        # already separates its rows with a consistent 10px rhythm.
 
         # AI explanation language
         ai_lang_w = QWidget()
@@ -1028,16 +1070,40 @@ class SettingsScreen(QWidget):
         self._register_styled_panel(self._keep_panel)
 
         self._keep_list_box = QWidget()
-        self._keep_list_box.setMinimumWidth(340)
+        self._keep_list_box.setMinimumWidth(_SCAN_VALUE_WIDTH)
         self._keep_list_layout = QVBoxLayout(self._keep_list_box)
         self._keep_list_layout.setContentsMargins(0, 0, 0, 0)
         self._keep_list_layout.setSpacing(4)
-        keep_lay.addLayout(_setting_row(
+
+        # The row and the empty state are alternatives, not a row that happens
+        # to be empty. Held in a container so one can replace the other: the
+        # "nothing yet" line used to sit in the value column, dim, beside an
+        # equally dim description — two columns of muted text that read as a
+        # form with a blank field rather than as a section with nothing in it.
+        self._keep_row_host = QWidget()
+        keep_row_lay = QVBoxLayout(self._keep_row_host)
+        keep_row_lay.setContentsMargins(0, 0, 0, 0)
+        keep_row_lay.setSpacing(0)
+        keep_row_lay.addLayout(_setting_row(
             tr("Kept paths"),
             tr("Marked with Keep in Findings. Nothing inside these is ever "
                "selected by a bulk action, and cleanup refuses them outright."),
             self._keep_list_box,
         ))
+        keep_lay.addWidget(self._keep_row_host)
+
+        # Spans the panel rather than sitting in a column, and carries the
+        # safety rule itself: hiding the row would otherwise hide the sentence
+        # explaining what a Keep mark actually does.
+        self._keep_empty_lbl = QLabel(
+            tr("Nothing kept yet. Use Keep on any finding — kept paths are never "
+               "selected by a bulk action, and cleanup refuses them outright.")
+        )
+        self._keep_empty_lbl.setObjectName("Dim")
+        self._keep_empty_lbl.setStyleSheet("font-size: 11px;")
+        self._keep_empty_lbl.setWordWrap(True)
+        keep_lay.addWidget(self._keep_empty_lbl)
+
         lay.addWidget(self._keep_panel)
         self._refresh_kept_paths()
 
@@ -1052,15 +1118,37 @@ class SettingsScreen(QWidget):
         # disabled under "Not available yet" — a control that could never be
         # used, on the one screen where the user is deciding how much to trust
         # cleanup.
-        method_lbl = QLabel(tr("Files are moved to the Recycle Bin and can be restored."))
-        method_lbl.setWordWrap(True)
-        method_lbl.setMaximumWidth(360)
-        fh_lay.addLayout(_setting_row(
-            tr("Cleanup method"),
-            tr("Podbye never deletes permanently. Emptying the Recycle Bin is "
-               "always your own, separate decision."),
-            method_lbl,
-        ))
+        # The method is a fact, so it reads as a value with its explanation
+        # under it. It used to be stated twice, once per column: the
+        # description said "Podbye never deletes permanently. Emptying the
+        # Recycle Bin is always your own, separate decision" while the value
+        # beside it said "Files are moved to the Recycle Bin and can be
+        # restored" — the same three facts, in two places, in muted type.
+        method_w = QWidget()
+        method_v = QVBoxLayout(method_w)
+        method_v.setContentsMargins(0, 0, 0, 0)
+        method_v.setSpacing(4)
+
+        self._method_value_lbl = QLabel(tr("Recycle Bin"))
+        self._method_value_lbl.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 11px;")
+        method_v.addWidget(self._method_value_lbl)
+
+        # One sentence, all three guarantees: never permanent, recoverable,
+        # and emptying the Bin stays the user's own action.
+        method_note = QLabel(tr("Podbye never deletes permanently — items stay "
+                                "recoverable until you empty the Bin yourself."))
+        method_note.setObjectName("Dim")
+        method_note.setStyleSheet("font-size: 11px;")
+        method_note.setWordWrap(True)
+        # Fixed, not a maximum. A word-wrapping QLabel reports a narrow size
+        # hint, and the container sizes to it — the note wrapped at 165px and
+        # stood eight lines tall instead of three. Wrapping never clips, so
+        # pinning the width is safe here.
+        method_note.setFixedWidth(_SCAN_VALUE_WIDTH)
+        method_v.addWidget(method_note)
+
+        fh_lay.addLayout(_setting_row(tr("Cleanup method"), "", method_w))
 
         lay.addWidget(fh_panel)
         lay.addStretch()
@@ -1081,11 +1169,11 @@ class SettingsScreen(QWidget):
                 widget.deleteLater()
 
         paths = keep_list.kept_paths()
+        # Swap the whole row for the section-state line, rather than leaving a
+        # labelled row with an empty value column.
+        self._keep_row_host.setVisible(bool(paths))
+        self._keep_empty_lbl.setVisible(not paths)
         if not paths:
-            empty = QLabel(tr("Nothing yet — use Keep on any finding."))
-            empty.setObjectName("Dim")
-            empty.setStyleSheet("font-size: 11px;")
-            layout.addWidget(empty)
             return
 
         for path in paths:
@@ -1217,7 +1305,11 @@ class SettingsScreen(QWidget):
         # Diagnostics
         diag_panel = Panel(alt=True)
         dg_lay = diag_panel.with_layout(vertical=True, margins=(14, 12, 14, 12), spacing=10)
-        dg_lay.addLayout(_panel_title(tr("Diagnostics"), tr("support")))
+        # Not diagnostics: there is nothing here that reports on a fault. The
+        # panel holds one maintenance action and the product metadata under it,
+        # so it says so. "Open logs folder" was the only diagnostic it ever had
+        # and it was removed when it turned out Podbye logs to the console.
+        dg_lay.addLayout(_panel_title(tr("Maintenance"), tr("reset & product info")))
         self._register_styled_panel(diag_panel)
 
         btn_row = QWidget()
@@ -1228,11 +1320,16 @@ class SettingsScreen(QWidget):
         # "Open logs folder" used to live here. Podbye configures logging to the
         # console only, so the button created an empty directory and opened it —
         # a support action that could never produce anything to send.
-        btn_reset = QPushButton(tr("Reset all settings"))
-        btn_reset.setObjectName("Danger")
-        btn_reset.setCursor(Qt.PointingHandCursor)
-        btn_reset.clicked.connect(self._reset_all_settings)
-        br_lay.addWidget(btn_reset)
+        # Quiet at rest, dangerous on contact. #Danger paints a filled red
+        # button, which made the loudest thing on this page an action nobody
+        # comes here to perform — and Analyze's Stop button shares that name,
+        # so the weight belongs there rather than being taken away from it.
+        self._btn_reset = QPushButton(tr("Reset all settings"))
+        self._btn_reset.setObjectName("DangerQuiet")
+        self._btn_reset.setCursor(Qt.PointingHandCursor)
+        self._restyle_reset_button()
+        self._btn_reset.clicked.connect(self._reset_all_settings)
+        br_lay.addWidget(self._btn_reset)
 
         br_lay.addStretch()
         dg_lay.addWidget(btn_row)
@@ -1275,7 +1372,17 @@ class SettingsScreen(QWidget):
             self._config_path_lbl = path_lbl
         path_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
         path_lbl.setWordWrap(True)
-        path_lbl.setMaximumWidth(380)
+        # 380px broke "C:\Users\<name>\AppData\Roaming\Podbye\sessions"
+        # across two lines, splitting one value at whatever character happened
+        # to land on the boundary. A real path needs ~552px, so the cap is set
+        # above that: one line wherever the window allows, wrapping only when
+        # the window is genuinely too narrow to hold it.
+        # A minimum, not a maximum. A word-wrapping QLabel reports a narrow
+        # size hint and the container sizes to it, so a cap alone left the
+        # label at 484px and the path still broke over two lines. The app's
+        # window minimum is 1100px, which leaves ~609px for this column, so
+        # 560 fits at every size the window can actually be.
+        path_lbl.setMinimumWidth(_PATH_VALUE_WIDTH)
         path_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
         col.addWidget(path_lbl)
 
@@ -1586,6 +1693,27 @@ class SettingsScreen(QWidget):
         t.start()
 
     def _reset_all_settings(self):
+        """Every preference at once, with no undo — so it asks first.
+
+        It did not. One click cleared the endpoint, the model, the theme, the
+        language and the safeguard toggles, with nothing between the pointer
+        and the loss. Same shape as the other irreversible prompt in the app
+        (main.py's close-while-busy question): Yes/No, defaulting to No.
+        """
+        from PySide6.QtWidgets import QMessageBox
+
+        answer = QMessageBox.question(
+            self,
+            tr("Reset all settings?"),
+            tr("Every preference goes back to its default — endpoint, model, "
+               "theme, language and the cleanup safeguards.\n\n"
+               "Your scan history and kept paths are not touched."),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
         if self._store:
             self._store.reset()
             self._load_from_store()
@@ -1604,6 +1732,31 @@ class SettingsScreen(QWidget):
     def _register_styled_panel(self, panel: QFrame):
         panel.setStyleSheet(self._settings_panel_qss())
         self._styled_panels.append(panel)
+
+    def _restyle_reset_button(self):
+        """Reset reads as an ordinary secondary button at rest, and turns red
+        on hover and on keyboard focus.
+
+        The danger is real, so it is shown at the moment the user is about to
+        act rather than for the whole time the page is open. Focus is included
+        deliberately: someone tabbing to this button gets the same warning a
+        pointer does.
+        """
+        if not hasattr(self, "_btn_reset"):
+            return
+        p = get_palette()
+        risk = p.get("risk", "#c67a69")
+        risk_soft = p.get("risk_soft", "#2a1d1a")
+        rest_border = p.get("border_alt", "#2b3d33")
+        rest_text = p.get("text_dim", "#8a9b8f")
+        danger = f"border-color: {risk}; color: {risk};"
+        self._btn_reset.setStyleSheet(
+            f"QPushButton#DangerQuiet {{ background: transparent; "
+            f"border: 1px solid {rest_border}; color: {rest_text}; "
+            f"padding: 7px 14px; border-radius: 2px; font-size: 11px; }}"
+            f"QPushButton#DangerQuiet:hover {{ background: {risk_soft}; {danger} }}"
+            f"QPushButton#DangerQuiet:focus {{ {danger} }}"
+        )
 
     def _restyle_apply_button(self):
         """Re-apply the language Apply button style with the current palette.
@@ -1649,6 +1802,7 @@ class SettingsScreen(QWidget):
         )
         if active:
             self._switch_section(active)
+        self._restyle_reset_button()
         # Re-apply the Apply button style with the current palette too.
         if hasattr(self, "_btn_apply_lang"):
             self._restyle_apply_button()

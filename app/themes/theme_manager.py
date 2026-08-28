@@ -61,30 +61,30 @@ PALETTES = {
         "mono_font":    _MONO,
     },
     "amber": {
-        "bg":           "#14100a",
-        "bg_deep":      "#0b0805",
-        "panel":        "#1d160d",
-        "panel_alt":    "#231b10",
-        "panel_hover":  "#2b2114",
-        "border":       "#302517",
-        "border_alt":   "#40311e",
-        "border_hover": "#61492a",
+        "bg":           "#141312",
+        "bg_deep":      "#0c0b0a",
+        "panel":        "#1c1a18",
+        "panel_alt":    "#222020",
+        "panel_hover":  "#2a2725",
+        "border":       "#2e2b28",
+        "border_alt":   "#3d3935",
+        "border_hover": "#575049",
         "text":         "#ebdbbd",
-        "text_dim":     "#aa9370",
-        "text_faint":   "#897253",
+        "text_dim":     "#a29a8d",
+        "text_faint":   "#837c72",
         "accent":       "#d79c54",
         "accent_hover": "#e4b572",
-        "accent_soft":  "#2b2114",
+        "accent_soft":  "#32281c",
         "on_accent":    "#0b0805",
         "safe":         "#b0bc6a",
-        "review":       "#d79c54",
+        "review":       "#d5c173",
         "risk":         "#cb785d",
         "optional":     "#7e96a4",
         "safe_soft":    "#222613",
-        "review_soft":  "#2b2114",
+        "review_soft":  "#262213",
         "risk_soft":    "#2a1a13",
         "optional_soft": "#1c2228",
-        "tint_bg":      "#17120b",
+        "tint_bg":      "#171514",
         "header_font":  _PIXEL,
         "body_font":    _BODY,
         "mono_font":    _MONO,
@@ -92,18 +92,18 @@ PALETTES = {
     "mono": {
         "bg":           "#080808",
         "bg_deep":      "#030303",
-        "panel":        "#101010",
-        "panel_alt":    "#171717",
-        "panel_hover":  "#1f1f1f",
-        "border":       "#202020",
-        "border_alt":   "#313131",
+        "panel":        "#161616",
+        "panel_alt":    "#1d1d1d",
+        "panel_hover":  "#252525",
+        "border":       "#2a2a2a",
+        "border_alt":   "#3a3a3a",
         "border_hover": "#4a4a4a",
         "text":         "#f0f0f0",
         "text_dim":     "#9a9a9a",
         "text_faint":   "#707070",
-        "accent":       "#d9d9d9",
-        "accent_hover": "#f2f2f2",
-        "accent_soft":  "#1a1a1a",
+        "accent":       "#c2c2c2",
+        "accent_hover": "#dcdcdc",
+        "accent_soft":  "#262626",
         "on_accent":    "#050505",
         "safe":         "#86a89f",
         "review":       "#bea26f",
@@ -113,7 +113,7 @@ PALETTES = {
         "review_soft":  "#1a1711",
         "risk_soft":    "#1a1311",
         "optional_soft": "#15181b",
-        "tint_bg":      "#0d0d0d",
+        "tint_bg":      "#121212",
         "header_font":  _PIXEL,
         "body_font":    _BODY,
         "mono_font":    _MONO,
@@ -128,7 +128,7 @@ PALETTES = {
         "border_alt":   "#9f907d",
         "border_hover": "#817360",
         "text":         "#232621",
-        "text_dim":     "#636558",
+        "text_dim":     "#5c5e52",
         "text_faint":   "#7b776b",
         "accent":       "#6a7562",
         "accent_hover": "#525b4d",
@@ -155,75 +155,61 @@ THEME_KEYS  = ["forest", "amber", "mono", "paper"]
 _current_theme_key = "forest"
 
 
-# ─── Per-theme category color palettes ───────────────────────────
-# Each palette preserves semantic identity (Media=purple-ish, Apps=blue,
-# Documents=green, etc.) but transforms saturation, brightness, and
-# warmth to harmonise with the active theme background.
+# ─── Category color palettes ─────────────────────────────────────
+# These are data colours, not theme accents. A category's colour is what ties
+# a row marker to its slice of the donut, so it carries meaning the way a key
+# on a chart does — which means it has to survive the theme, not follow it.
+#
+# Black used to get its own greyscale ramp here. That broke the mapping twice
+# over: the donut went grey while the row markers stayed coloured, and the
+# ramp held only nine distinct greys for nineteen categories, so Applications,
+# Media and Protected / Restricted were all #dedede — three different slices
+# the eye had no way to tell apart. Black's monochrome treatment belongs to
+# chrome, surfaces, borders, text and controls; the data keeps its colours.
+#
+# Two palettes, then, split by background rather than by theme: one for the
+# dark themes and one for Paper, whose light surface needs deeper, more
+# saturated inks. Measured on Black's panel the dark set sits at the same
+# readability as on Forest's and Amber's — min 2.13 against 2.00 and 2.04 —
+# so sharing it puts Black on the footing the other two already had.
+
+# Protected / Restricted and Unknown used to repeat Media and Documents
+# exactly, so four categories drew as two colours: a row and its donut segment
+# could agree with each other and still be indistinguishable from a different
+# category's pair. Both moved into hue bands the palette was not using - 315
+# and 53 - and both were picked to sit in its muted tier (L 0.36-0.50,
+# S 0.21-0.38) rather than to maximise separation, so the set still reads as
+# one family. Each clears dE 21 from every other category, measured against
+# the palette's own tightest existing pair, Applications / Media at dE 18.
+
+_DARK_CATEGORY_COLORS = {
+    "Applications": "#086798",
+    "Application Data": "#11a5b1",
+    "System": "#b00f50",
+    "Dev Artifacts": "#409e02",
+    "Cache & Temp": "#8f6304",
+    "AI / ML": "#6e33ce",
+    "Browser Data": "#8f80e7",
+    "Databases & Saves": "#d46d7c",
+    "Media": "#33546b",
+    "Documents": "#578a8f",
+    "Archives": "#7a3748",
+    "Games": "#578149",
+    "Virtual Machines": "#6d5837",
+    "User Profile": "#554286",
+    "System Logs": "#7d79aa",
+    "Duplicates": "#a27075",
+    "Protected / Restricted": "#8a4478",
+    "Unknown": "#948d55",
+    "Other": "#d1d1d1",
+}
 
 _CATEGORY_COLORS = {
-    "forest": {
-        "Applications": "#086798",
-        "Application Data": "#11a5b1",
-        "System": "#b00f50",
-        "Dev Artifacts": "#409e02",
-        "Cache & Temp": "#8f6304",
-        "AI / ML": "#6e33ce",
-        "Browser Data": "#8f80e7",
-        "Databases & Saves": "#d46d7c",
-        "Media": "#33546b",
-        "Documents": "#578a8f",
-        "Archives": "#7a3748",
-        "Games": "#578149",
-        "Virtual Machines": "#6d5837",
-        "User Profile": "#554286",
-        "System Logs": "#7d79aa",
-        "Duplicates": "#a27075",
-        "Protected / Restricted": "#33546b",
-        "Unknown": "#578a8f",
-        "Other": "#d1d1d1"
-    },
-    "amber": {
-        "Applications": "#086798",
-        "Application Data": "#11a5b1",
-        "System": "#b00f50",
-        "Dev Artifacts": "#409e02",
-        "Cache & Temp": "#8f6304",
-        "AI / ML": "#6e33ce",
-        "Browser Data": "#8f80e7",
-        "Databases & Saves": "#d46d7c",
-        "Media": "#33546b",
-        "Documents": "#578a8f",
-        "Archives": "#7a3748",
-        "Games": "#578149",
-        "Virtual Machines": "#6d5837",
-        "User Profile": "#554286",
-        "System Logs": "#7d79aa",
-        "Duplicates": "#a27075",
-        "Protected / Restricted": "#33546b",
-        "Unknown": "#578a8f",
-        "Other": "#d1d1d1"
-    },
-    "mono": {
-        "Applications": "#dedede",
-        "Application Data": "#c9c9c9",
-        "System": "#b5b5b5",
-        "Dev Artifacts": "#a2a2a2",
-        "Cache & Temp": "#8f8f8f",
-        "AI / ML": "#7c7c7c",
-        "Browser Data": "#6a6a6a",
-        "Databases & Saves": "#585858",
-        "Media": "#dedede",
-        "Documents": "#c9c9c9",
-        "Archives": "#b5b5b5",
-        "Games": "#a2a2a2",
-        "Virtual Machines": "#8f8f8f",
-        "User Profile": "#7c7c7c",
-        "System Logs": "#6a6a6a",
-        "Duplicates": "#585858",
-        "Protected / Restricted": "#dedede",
-        "Unknown": "#c9c9c9",
-        "Other": "#1c1c1c"
-    },
+    # One object, deliberately shared: a category means the same thing in every
+    # dark theme, and a second copy is a second thing to forget to update.
+    "forest": _DARK_CATEGORY_COLORS,
+    "amber": _DARK_CATEGORY_COLORS,
+    "mono": _DARK_CATEGORY_COLORS,
     "paper": {
         "Applications": "#1d8ac7",
         "Application Data": "#2b9860",
@@ -243,9 +229,23 @@ _CATEGORY_COLORS = {
         "Duplicates": "#9e547c",
         "Protected / Restricted": "#4c7592",
         "Unknown": "#507c60",
-        "Other": "#1f1f1f"
+        "Other": "#1f1f1f",
     },
 }
+
+
+def rgba(hex_color: str, alpha: float) -> str:
+    """CSS rgba() from a #rrggbb palette colour.
+
+    Qt parses an eight-digit hex as #AARRGGBB, so appending two alpha digits to
+    a #rrggbb value silently reorders the channels into a different colour
+    rather than fading the one you asked for.
+    """
+    h = hex_color.lstrip("#")
+    if len(h) != 6:
+        return hex_color
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return f"rgba({r}, {g}, {b}, {alpha:.2f})"
 
 
 def get_category_colors(theme_key: str = None) -> dict:

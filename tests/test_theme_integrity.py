@@ -60,3 +60,105 @@ def test_palette_values_are_hex_colors():
             if key.endswith("_font"):
                 continue
             assert color_like.match(val), f"{name}.{key} = {val!r} is not a hex colour"
+
+
+# ── surfaces must be visible against their background ────────────
+
+def _relative_luminance(hex_color: str) -> float:
+    h = hex_color.lstrip("#")
+    channels = []
+    for i in (0, 2, 4):
+        v = int(h[i:i + 2], 16) / 255
+        channels.append(v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4)
+    r, g, b = channels
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contrast(a: str, b: str) -> float:
+    la, lb = _relative_luminance(a), _relative_luminance(b)
+    hi, lo = max(la, lb), min(la, lb)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def test_cards_are_distinguishable_from_the_page():
+    """A card whose surface matches the page is not a card.
+
+    Black sat at 1.053 — the flattest of the four, and the only theme with no
+    hue difference to carry the edge, so it was also the one where it showed.
+    The floor is below every current theme but above where Black and Amber were.
+    """
+    for name, p in PALETTES.items():
+        ratio = _contrast(p["bg"], p["panel"])
+        assert ratio >= 1.065, (
+            f"theme '{name}': panel {p['panel']} is only {ratio:.3f} against "
+            f"bg {p['bg']} — the card edge disappears")
+
+
+def test_the_raised_surface_is_actually_raised():
+    """PanelAlt has to differ from Panel or the distinction buys nothing."""
+    for name, p in PALETTES.items():
+        assert p["panel_alt"] != p["panel"], (
+            f"theme '{name}': panel_alt is identical to panel")
+
+
+# ── risk tiers must not impersonate the accent ───────────────────
+
+def test_no_caution_tier_collides_with_the_accent():
+    """Amber shipped review == accent == #d79c54.
+
+    The accent is the colour of a CTA, a selected row and a key figure. A tier
+    that asks the user to *stop and judge* must not wear it: "this needs your
+    attention" rendered identically to "click here" is the one confusion a
+    cleanup tool cannot afford.
+
+    'safe' is deliberately exempt. Forest sets safe == accent, and there the
+    two agree rather than conflict — the accent marks the recommended action
+    and Safe is the tier that action applies to. Only the tiers that mean
+    "not simply go ahead" are held apart from it.
+    """
+    for name, p in PALETTES.items():
+        for tier in ("review", "risk", "optional"):
+            assert p[tier] != p["accent"], (
+                f"theme '{name}': caution tier '{tier}' is the accent colour {p['accent']}")
+
+
+def test_risk_tiers_are_distinct_from_each_other():
+    for name, p in PALETTES.items():
+        tiers = {t: p[t] for t in ("safe", "review", "risk", "optional")}
+        assert len(set(tiers.values())) == len(tiers), (
+            f"theme '{name}': two risk tiers share a colour — {tiers}")
+
+
+def test_caution_tints_do_not_collide_with_the_selection_tint():
+    """The soft variants back the same badges; same argument, same exemption."""
+    for name, p in PALETTES.items():
+        for tier in ("review_soft", "risk_soft", "optional_soft"):
+            assert p[tier] != p["accent_soft"], (
+                f"theme '{name}': '{tier}' is the selection tint {p['accent_soft']}")
+
+
+def test_a_selected_row_is_visible_against_an_unselected_one():
+    """The selection tint is painted over panel_alt, the table row colour.
+
+    This broke silently once: raising Black's panel_alt to lift its cards off
+    the page left accent_soft below the new row colour, so a selected row went
+    from faintly lighter to faintly darker and read as no selection at all.
+    Amber lost more than half its separation the same way. The two values have
+    to move together, so the relationship is pinned rather than the numbers.
+    """
+    for name, p in PALETTES.items():
+        ratio = _contrast(p["accent_soft"], p["panel_alt"])
+        assert ratio >= 1.08, (
+            f"theme '{name}': selection tint {p['accent_soft']} is only "
+            f"{ratio:.3f} against the row colour {p['panel_alt']} — "
+            f"a selected row is indistinguishable")
+
+
+def test_selection_moves_the_right_way_for_the_theme():
+    """Dark themes lift the selected row toward the light; the light theme
+    presses it down. A dark theme that darkens the selection reads as a hole."""
+    for name, p in PALETTES.items():
+        row_is_dark = _relative_luminance(p["panel_alt"]) < 0.5
+        sel_is_lighter = _relative_luminance(p["accent_soft"]) > _relative_luminance(p["panel_alt"])
+        assert sel_is_lighter == row_is_dark, (
+            f"theme '{name}': selection goes the wrong direction against its row")
