@@ -60,8 +60,9 @@ def test_ask_ai_on_a_restored_session_still_opens(qapp, tmp_path, monkeypatch):
     asked = {}
 
     class _StubDialog:
-        def __init__(self, item, explainer, parent=None):
+        def __init__(self, item, explainer, parent=None, facts=None):
             asked["item"] = item
+            asked["facts"] = facts
 
         def exec(self):
             return 0

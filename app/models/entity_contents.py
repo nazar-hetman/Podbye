@@ -170,15 +170,24 @@ def child_entities(entity: dict, everything: list) -> list:
     return kept
 
 
-def items_summary(entity: dict, everything: list) -> Contents:
+def items_summary(entity: dict, everything: list, exclude=None) -> Contents:
     """The ITEMS section: what lives inside, each its own decision.
 
     Its own total, deliberately. A parent's size has its children subtracted
     by the disjointness pass — ``_src`` displays 2.4 GB while the two projects
     inside it hold 30 GB — so borrowing the header's figure would be wrong in
     both directions.
+
+    *exclude* drops children the caller is already showing somewhere else. An
+    entity's children are frequently members of the same group as the entity
+    itself, so the panel that lists a group's parts and this section were
+    listing the same rows — same names, same sizes, one above the other. What
+    is left is what the parts list does not already say.
     """
     children = child_entities(entity, everything)
+    if exclude:
+        skip = {_norm(p) for p in exclude if p}
+        children = [c for c in children if _norm(c.get("path", "")) not in skip]
     if not children:
         return Contents()
     rows = [ContentRow(label=child.get("name", ""),

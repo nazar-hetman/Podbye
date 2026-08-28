@@ -744,7 +744,7 @@ def _part_reason_text(entity: dict) -> str:
     return reason or contains
 
 
-def _finding_for_path(path: str):
+def _finding_for_path(path: str, measured_bytes: int = 0):
     """Build a Finding for *path* from disk, or None if it is not there.
 
     "Ask AI" on a file used to look the path up in the scan's findings list and
@@ -759,6 +759,11 @@ def _finding_for_path(path: str):
     dates are the whole input to the prompt. A live object from the model is
     still preferred when there is one, so the answer lands on the instance the
     rest of the UI reads from.
+
+    *measured_bytes* is what the Contents section already measured for a
+    folder. Without it the folder's size here is ``os.stat().st_size``, which
+    on NTFS is the 4 KB of its own directory entry however much is inside —
+    a number the model reads as "this is empty" and says so.
     """
     if not path:
         return None
@@ -777,6 +782,8 @@ def _finding_for_path(path: str):
     ext = os.path.splitext(name)[1].lower()
     is_dir = os.path.isdir(path)
     size = st.st_size if st else 0
+    if is_dir:
+        size = int(measured_bytes or 0)
     category, source_rule, semantic_label, confidence = categorize(
         path, name, ext, is_dir, size)
     return Finding(
@@ -788,6 +795,25 @@ def _finding_for_path(path: str):
         source_rule=source_rule, semantic_label=semantic_label,
         owner_confidence=confidence,
     )
+
+
+def _path_key(path: str) -> str:
+    """Comparison form for a path: forward slashes, no trailing one, folded.
+
+    Deliberately not _norm_path, which is the *display* form a few hundred
+    lines up and keeps the case a person needs to read.
+    """
+    return (path or "").replace("\\", "/").rstrip("/").lower()
+
+
+def _entity_facts(entity: dict) -> dict:
+    """The measured scale of an entity, for the prompt. {} when unmeasured."""
+    facts = {
+        "size_bytes": int(entity.get("size_bytes", 0) or 0),
+        "file_count": int(entity.get("file_count", 0) or 0),
+        "folder_count": int(entity.get("folder_count", 0) or 0),
+    }
+    return facts if any(facts.values()) else {}
 
 
 def _is_content_container(entity: dict) -> bool:
@@ -1885,7 +1911,6 @@ class ContentRowWidget(QFrame):
         self._chevron.setStyleSheet("font-size: 13px;")
         self._chevron.setFixedWidth(10)
         self._chevron.setVisible(False)
-        row.addWidget(self._chevron, alignment=Qt.AlignVCenter)
 
         # Clicking a row used to run the model, on a row drawn with an arrow
         # cursor, no chevron and a tooltip that only named the path — the file
@@ -1905,7 +1930,23 @@ class ContentRowWidget(QFrame):
         policy = self._btn_ask.sizePolicy()
         policy.setRetainSizeWhenHidden(True)
         self._btn_ask.setSizePolicy(policy)
-        row.addWidget(self._btn_ask, alignment=Qt.AlignVCenter)
+        # The action lives in a slot of its own, and the slot is a fixed width
+        # the row keeps whatever state it is in. "View result" is six
+        # characters wider than "Ask AI", so a button that sized itself dragged
+        # the size column left the moment a row acquired an answer — the one
+        # column a person reads down was the one that would not stay still.
+        # Reserved from the widest label rather than a guessed constant, so it
+        # survives translation and a font change.
+        self._btn_ask.setStyleSheet(ask_ai_button_qss())
+        self._action_slot = QWidget()
+        self._action_slot.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+        slot = QHBoxLayout(self._action_slot)
+        slot.setContentsMargins(0, 0, 0, 0)
+        slot.setSpacing(0)
+        slot.addStretch()
+        slot.addWidget(self._chevron, alignment=Qt.AlignVCenter)
+        slot.addWidget(self._btn_ask, alignment=Qt.AlignVCenter)
+        row.addWidget(self._action_slot)
 
         # Reachable without a pointer: a hover-only affordance is a different
         # kind of hidden.
@@ -1915,6 +1956,33 @@ class ContentRowWidget(QFrame):
         self._drillable = False
         self._askable = False
         self._analysed = False
+        self._reserve_action_slot(drillable=False)
+
+    # Every label the slot has to be able to hold without moving anything.
+    # Both states of the same button, so the widest of them is the width.
+    def _action_labels(self) -> tuple:
+        return (tr("Ask AI"), tr("View result"))
+
+    def _reserve_action_slot(self, *, drillable: bool):
+        """Fix the slot to the widest thing this row could put in it.
+
+        Measured through the button's own sizeHint, with its stylesheet already
+        applied, because the padding in that stylesheet is most of the width.
+
+        A drillable row reserves only its chevron: the two kinds never share a
+        list — a section is items or it is contents — so the column still lines
+        up down the section, and a list of items keeps its width for names.
+        """
+        if drillable:
+            self._action_slot.setFixedWidth(self._chevron.width())
+            return
+        restore = self._btn_ask.text()
+        widest = 0
+        for label in self._action_labels():
+            self._btn_ask.setText(label)
+            widest = max(widest, self._btn_ask.sizeHint().width())
+        self._btn_ask.setText(restore)
+        self._action_slot.setFixedWidth(widest)
 
     def bind(self, content_row, *, selectable: bool, checked: bool = False,
              provisional: bool = False, drillable: bool = False,
@@ -1931,6 +1999,7 @@ class ContentRowWidget(QFrame):
         self._check.setChecked(bool(checked))
         self._check.blockSignals(False)
         self._drillable = bool(drillable)
+        self._reserve_action_slot(drillable=self._drillable)
         # Exactly one of the two: a row either navigates or offers the model.
         # Reusing the chevron for both would put two rows side by side that
         # look identical and do entirely different things.
@@ -1972,6 +2041,9 @@ class ContentRowWidget(QFrame):
         # The same button the Entity inspector and Startups use, so the action
         # is recognisable as the one action it is wherever it appears.
         self._btn_ask.setStyleSheet(ask_ai_button_qss())
+        # Padding, font and language all live in what was just applied, and all
+        # three decide how wide the slot has to be.
+        self._reserve_action_slot(drillable=self._drillable)
         self.setStyleSheet("QFrame#ContentRow { background: transparent; "
                            "border: none; }")
 
@@ -2074,6 +2146,7 @@ class _PreallocDetailPanel(QWidget):
         entities_cb: Callable | None = None,
         drill_cb: Callable | None = None,
         back_cb: Callable | None = None,
+        parts_cb: Callable | None = None,
         parent=None,
         compact: bool = False,
     ):
@@ -2092,6 +2165,10 @@ class _PreallocDetailPanel(QWidget):
         self._entities_cb = entities_cb
         self._drill_cb = drill_cb
         self._back_cb = back_cb
+        # The paths the panel above is listing right now. This section is not
+        # the only thing on the right-hand side, and it used to behave as
+        # though it were.
+        self._parts_cb = parts_cb
         self._compact = compact
         self._current_path: str = ""
         self._current_entity: dict = {}
@@ -2387,9 +2464,15 @@ class _PreallocDetailPanel(QWidget):
         self._ai_text = QTextEdit()
         self._ai_text.setReadOnly(True)
         self._ai_text.setStyleSheet(
-            "QTextEdit { background: transparent; border: none; "
+            "QTextEdit { background: transparent; border: none; padding: 0; "
             "font-family: 'JetBrains Mono'; font-size: 12px; }"
         )
+        # The block already has its own padding, and the app-wide stylesheet
+        # gives every QTextEdit another 12px top and bottom for the input
+        # fields it was written for — which is what made a two-line answer read
+        # as an oversized empty text box. The answer is prose in a card, not a
+        # field, so the padding above goes and the document keeps a hairline.
+        self._ai_text.document().setDocumentMargin(2)
         self._ai_text.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._ai_text.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._ai_text.setFrameShape(QFrame.NoFrame)
@@ -2510,14 +2593,25 @@ class _PreallocDetailPanel(QWidget):
         scrollbars side by side at the right edge - so it grows and the panel
         scrolls. Nothing is ever cut off; it simply gets taller.
 
-        The floor is the new part. A one-line answer collapsed the box to the
-        height of that line, so the section changed size under the reader every
-        time a shorter answer replaced a longer one.
+        The floor keeps the section from changing size under the reader every
+        time a shorter answer replaces a longer one - but it is a floor and not
+        a height: a one-sentence answer gets a one-sentence card, and only the
+        text decides where the bottom edge lands.
+
+        The chrome term is what the document does not know about. A QTextEdit
+        carries whatever padding and frame the stylesheet gives it, none of
+        which is in the document's height, so a box sized to the document alone
+        both clipped its own last line and drew the leftover as blank space.
+        Measured rather than assumed, and ignored when the widget has not been
+        laid out yet and the numbers do not mean anything.
         """
         doc = edit.document()
         doc.setTextWidth(max(1, edit.viewport().width()))
         two_lines = int(edit.fontMetrics().lineSpacing() * 2)
-        edit.setFixedHeight(max(int(doc.size().height()), two_lines) + 4)
+        chrome = edit.height() - edit.viewport().height()
+        if not 0 <= chrome <= 64:
+            chrome = 0
+        edit.setFixedHeight(max(int(doc.size().height()), two_lines) + chrome + 2)
 
     def _on_open(self):
         if self._current_path:
@@ -2603,17 +2697,24 @@ class _PreallocDetailPanel(QWidget):
 
         mode = mode_for(entity)
         world = self._entities_cb() if self._entities_cb else []
-        if mode == MODE_NONE and not (world and items_summary(entity, world)):
+        # Things that live inside win over parts that explain: if real
+        # entities sit within this one, they are what a person needs to see,
+        # and each is its own decision rather than a component of this.
+        #
+        # Minus whatever the parts panel is already showing. An entity's
+        # children are usually members of the same group as the entity itself,
+        # so selecting a container listed the same rows twice on one screen —
+        # the parts list above, and this section 200px below it, same names and
+        # same sizes. When they are all up there, this falls through to the
+        # components view, which says something the panel above does not.
+        items = (items_summary(entity, world, exclude=self._shown_as_parts())
+                 if world else None)
+        if mode == MODE_NONE and not items:
             # A single file, or a folder with nothing inside worth naming.
             # "Steam contains Steam" is the redundancy this removes.
             self._hide_contents()
             return
 
-        # Things that live inside win over parts that explain: if real
-        # entities sit within this one, they are what a person needs to see,
-        # and each is its own decision rather than a component of this.
-        world = self._entities_cb() if self._entities_cb else []
-        items = items_summary(entity, world) if world else None
         if items:
             self._contents = items
             self._render_contents()
@@ -2627,6 +2728,19 @@ class _PreallocDetailPanel(QWidget):
                                       file_paths_of(entity))
         elif entity.get("path"):
             self._start_contents_walk(entity["path"])
+
+    def _shown_as_parts(self) -> tuple:
+        """Paths the parts panel is displaying, or () when it is not on screen.
+
+        A panel that is hidden is not saying anything, so nothing it would have
+        said is suppressed here.
+        """
+        if not self._parts_cb:
+            return ()
+        try:
+            return tuple(self._parts_cb() or ())
+        except Exception:
+            return ()
 
     def _start_contents_walk(self, path: str, file_paths=None):
         """Start measuring, with the thread deliberately unparented.
@@ -2697,7 +2811,7 @@ class _PreallocDetailPanel(QWidget):
             MODE_FILES, MODE_ITEMS, removal_consequence,
         )
         contents = self._contents
-        if not contents:
+        if not contents or self._repeats_what_is_above(contents):
             self._hide_contents()
             return
 
@@ -2760,6 +2874,34 @@ class _PreallocDetailPanel(QWidget):
         self._apply_contents_style()
         self._contents_section.setVisible(True)
 
+    def _repeats_what_is_above(self, contents) -> bool:
+        """True when every row here is already a row in the panel above.
+
+        Excluding the child entities from the ITEMS list is not enough on its
+        own: a folder whose children are entities falls through to the measured
+        breakdown, and that breakdown buckets by top-level child — so the same
+        two projects came back a second time as components, under a different
+        heading, with the same names and the same sizes.
+
+        Dropping the individual rows instead would be worse than repeating
+        them. They are usually the biggest thing in the folder, and a CONTENTS
+        block that quietly omits 400 of a folder's 405 MB is not a breakdown,
+        it is a wrong one. So it is all or nothing: when the section adds a
+        single row of its own it is shown whole and honest, and when it adds
+        nothing it does not appear. Nothing is lost either way — the rows are
+        still above, with the checkbox and the risk chip this list never had.
+
+        The unnamed remainder row is ignored on purpose: "Other data, 5 KB" is
+        not a reason to keep a section that otherwise only repeats itself.
+        """
+        above = {_path_key(path) for path in self._shown_as_parts()}
+        if not above:
+            return False
+        named = [row for row in contents.rows if row.path]
+        if not named:
+            return False
+        return all(_path_key(row.path) in above for row in named)
+
     def _apply_contents_style(self):
         p = get_palette()
         self._contents_meta.setStyleSheet(
@@ -2821,8 +2963,32 @@ class _PreallocDetailPanel(QWidget):
         that still holds; it is answered by revealing the button on hover and
         on focus rather than by hiding the action inside the row.
         """
-        if path and self._ask_ai_file_cb:
-            self._ask_ai_file_cb(path)
+        if not (path and self._ask_ai_file_cb):
+            return
+        # The section has already measured this folder, off the UI thread, and
+        # the figures are on screen next to the button. Handing them to the
+        # request is what stops the answer disagreeing with the row above it.
+        self._ask_ai_file_cb(path, self._measured_facts_for(path))
+
+    def _measured_facts_for(self, path: str) -> dict:
+        """What the Contents walk knows about *path*, or {} if it knows nothing.
+
+        Empty for a provisional section: a row drawn before the walk finished
+        carries no measurement, and inventing one is the failure this exists to
+        prevent.
+        """
+        contents = self._contents
+        if contents is None or contents.provisional:
+            return {}
+        wanted = _path_key(path)
+        for row in contents.rows:
+            if _path_key(row.path) != wanted:
+                continue
+            if not (row.size_bytes or row.file_count):
+                return {}
+            return {"size_bytes": int(row.size_bytes),
+                    "file_count": int(row.file_count)}
+        return {}
 
     def _on_crumb_clicked(self):
         if self._back_cb:
@@ -2838,19 +3004,31 @@ class _PreallocDetailPanel(QWidget):
         self._crumb_btn.setVisible(True)
 
     def _apply_block_styles(self):
-        """Quiet workstation styling for the inspector sections."""
+        """Quiet workstation styling for the inspector sections.
+
+        A card where a card groups something, and none where it does not. The
+        two lists — what the selected thing is made of, and where its copies
+        are — are nested tables inside a column of prose, and a box is what
+        stops them merging into the lines above and below them. The reasoning
+        block is prose itself, so it is drawn as prose: a heading and its text,
+        with space doing the separating, exactly like DETECTED AS and REMOVAL
+        METHOD, which were never boxed and always read correctly.
+
+        This is one rectangle deep now, not three. The panes above and below no
+        longer carry borders of their own — the inspector shell draws the one
+        card, and these sit inside it.
+        """
         p = get_palette()
         border = p.get("border", "#213028")
-        for frame, obj_name in (
-            (self._ai_frame, "ReasoningBlock"),
-            (self._dup_section, "DuplicateLocationsBlock"),
-        ):
-            frame.setStyleSheet(
-                f"QFrame#{obj_name} {{ background: transparent; "
-                f"border: 1px solid {border}; border-radius: 2px; }}"
-            )
+        self._ai_frame.setStyleSheet(
+            "QFrame#ReasoningBlock { background: transparent; border: none; }"
+        )
         if self._ai_frame.layout():
-            self._ai_frame.layout().setContentsMargins(10, 9, 10, 9)
+            self._ai_frame.layout().setContentsMargins(0, 4, 0, 4)
+        self._dup_section.setStyleSheet(
+            f"QFrame#DuplicateLocationsBlock {{ background: transparent; "
+            f"border: 1px solid {border}; border-radius: 2px; }}"
+        )
         if self._dup_section.layout():
             self._dup_section.layout().setContentsMargins(10, 9, 10, 9)
         self._name_lbl.setStyleSheet(
@@ -2878,14 +3056,14 @@ class _PreallocDetailPanel(QWidget):
             f"font-family: 'JetBrains Mono'; font-size: 12px; color: {p.get('text', '#d6e2da')};"
         )
         self._ai_text.setStyleSheet(
-            f"QTextEdit {{ background: transparent; border: none; "
+            f"QTextEdit {{ background: transparent; border: none; padding: 0; "
             f"font-family: 'JetBrains Mono'; font-size: 12px; color: {p.get('text', '#d6e2da')}; }}"
         )
         self._dup_meta.setStyleSheet(
             f"font-family: 'JetBrains Mono'; font-size: 11px; color: {p.get('text_dim', '#8a9b8f')};"
         )
         self._dup_text.setStyleSheet(
-            f"QTextEdit {{ background: transparent; border: none; "
+            f"QTextEdit {{ background: transparent; border: none; padding: 0; "
             f"font-family: 'JetBrains Mono'; font-size: 11px; color: {p.get('text', '#d6e2da')}; }}"
         )
         self._btn_recycle.setStyleSheet(
@@ -3323,6 +3501,7 @@ class RightSidebar(QFrame):
         entities_cb: Callable | None = None,
         drill_cb: Callable | None = None,
         back_cb: Callable | None = None,
+        parts_cb: Callable | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -3379,6 +3558,7 @@ class RightSidebar(QFrame):
             entities_cb=entities_cb,
             drill_cb=drill_cb,
             back_cb=back_cb,
+            parts_cb=parts_cb,
             compact=True,
         )
         self.detail_widget.setStyleSheet("background: transparent; border: none;")
@@ -3393,14 +3573,15 @@ class RightSidebar(QFrame):
     def apply_style(self):
         p = get_palette()
         detail_bg = p.get("panel_alt", "#18241e")
-        border = p.get("border_alt", "#2b3d33")
         faint = p.get("text_faint", "#57685e")
         line = QColor(p.get("border", "#213028"))
         line.setAlpha(58)
         line_rgba = f"rgba({line.red()}, {line.green()}, {line.blue()}, {line.alpha()})"
+        # No card here. This is the lower section of the inspector shell, not
+        # a window beside it, and the shell paints the surface both sections
+        # stand on — see CategoryDetailView._apply_inspector_shell_style.
         self.setStyleSheet(
-            f"QFrame#RightSidebar {{ background: {detail_bg}; "
-            f"border: 1px solid {border}; border-radius: 2px; }}"
+            "QFrame#RightSidebar { background: transparent; border: none; }"
         )
         self._sep.setStyleSheet(f"background: {line_rgba}; border: none;")
         self._empty.setStyleSheet(
@@ -4175,7 +4356,7 @@ class CategoryDetailView(QFrame):
 
         # ── Right pane: what is inside the selected thing ────────
         self._parts_panel = QFrame()
-        self._parts_panel.setObjectName("PanelAlt")
+        self._parts_panel.setObjectName("InspectorSection")
         self._parts_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         parts_outer = QVBoxLayout(self._parts_panel)
         parts_outer.setContentsMargins(0, 0, 0, 0)
@@ -4184,7 +4365,14 @@ class CategoryDetailView(QFrame):
         parts_hdr = QHBoxLayout()
         parts_hdr.setContentsMargins(14, 12, 14, 6)
         parts_hdr.setSpacing(8)
-        self._parts_title_lbl = QLabel(tr("WHAT IS INSIDE"))
+        # "WHAT IS INSIDE X" over a list of parts, above an inspector whose own
+        # section is headed CONTENTS, read as one question asked twice. They
+        # are different questions: this is what the *group* is made of, each
+        # part its own decision with its own checkbox; CONTENTS below is what
+        # the *selected part* is made of, and none of it is separately
+        # removable. The heading now names the relationship instead of
+        # describing a direction.
+        self._parts_title_lbl = QLabel(tr("PARTS OF"))
         apply_tactical_label(self._parts_title_lbl, font_size=9, letter_spacing=2)
         parts_hdr.addWidget(self._parts_title_lbl)
         self._parts_name_lbl = ElidedLabel("")
@@ -4244,20 +4432,44 @@ class CategoryDetailView(QFrame):
             entities_cb=self._all_entities,
             drill_cb=self._drill_into,
             back_cb=self._drill_back,
+            parts_cb=self._visible_part_paths,
         )
         self._detail_widget = self._right_sidebar.detail_widget
 
         # The parts list and the detail share the right pane, and the user
         # decides how much of each they want.
         self._right_split = QSplitter(Qt.Vertical)
+        self._right_split.setObjectName("InspectorSplit")
         self._right_split.setChildrenCollapsible(False)
+        # Room for a hairline with air around it, rather than a 1px handle
+        # wedged between two panel edges.
+        self._right_split.setHandleWidth(11)
         self._right_split.addWidget(self._parts_panel)
         self._right_split.addWidget(self._right_sidebar)
         # Sized to its contents, not to a fixed share — see _fit_parts_pane.
         self._parts_panel.setMinimumHeight(96)
         self._right_split.setStretchFactor(0, 0)
         self._right_split.setStretchFactor(1, 1)
-        results_shell_layout.addWidget(self._right_split, stretch=7)
+
+        # One inspector with two sections in it, not two windows that happen to
+        # be stacked. Each pane used to carry its own border, so the seam
+        # between them was panel edge, splitter handle, panel edge — three
+        # lines saying "separate tool" about a group and the part of it
+        # currently selected. The card is out here now and the panes are drawn
+        # on its surface, so the eye reads one hierarchy: the group, its parts,
+        # the selected part, what that part is made of.
+        #
+        # It is still a splitter. The handle is drawn as the rule between the
+        # two sections and lights up on hover, so the drag stays discoverable
+        # while it is doing double duty as the separator.
+        self._inspector_shell = QFrame()
+        self._inspector_shell.setObjectName("InspectorShell")
+        shell_layout = QVBoxLayout(self._inspector_shell)
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(0)
+        shell_layout.addWidget(self._right_split)
+        results_shell_layout.addWidget(self._inspector_shell, stretch=7)
+        self._apply_inspector_shell_style()
 
         soft_line = QColor(get_palette().get("border", "#213028"))
         soft_line.setAlpha(58)
@@ -4662,7 +4874,12 @@ class CategoryDetailView(QFrame):
         # Stamp the current session so the streamed result isn't discarded as
         # stale by ScanState._on_ai_finding_updated.
         ai._session_id = getattr(self._scan_state, "_session_id", "")
-        reason = ai.explain_item(live, force_refresh=regenerate)
+        # The row already knows how big this is and how much is in it. A
+        # SmartEntity carries those figures itself, but a plain Finding does
+        # not — the scanner records every directory as 0 bytes — so they are
+        # sent with the request rather than left for the model to guess.
+        reason = ai.explain_item(live, force_refresh=regenerate,
+                                 facts=_entity_facts(entity))
         if reason == "no-model":
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.information(
@@ -4685,7 +4902,7 @@ class CategoryDetailView(QFrame):
         return (getattr(live, "ai_status", "") in ("ready", "done")
                 and bool(getattr(live, "ai_explanation", "")))
 
-    def _on_ask_ai_file(self, path: str):
+    def _on_ask_ai_file(self, path: str, facts: dict | None = None):
         """On-demand AI for a single *file* inside an entity (Files tab).
 
         Opens a dialog that issues the request and fills in the answer when it
@@ -4696,7 +4913,9 @@ class CategoryDetailView(QFrame):
         ai = getattr(self._scan_state, "ai_explainer", None)
         if not ai:
             return
-        live = self._find_live_item(path) or _finding_for_path(path)
+        facts = dict(facts or {})
+        live = (self._find_live_item(path)
+                or _finding_for_path(path, facts.get("size_bytes", 0)))
         if live is None:
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.information(
@@ -4709,7 +4928,7 @@ class CategoryDetailView(QFrame):
         # Stamp the session so the streamed result isn't discarded as stale.
         ai._session_id = getattr(self._scan_state, "_session_id", "")
         from app.widgets.ask_ai_dialog import AskAIDialog
-        AskAIDialog(live, ai, parent=self).exec()
+        AskAIDialog(live, ai, parent=self, facts=facts).exec()
 
     # ── Selection & cleanup ───────────────────────────────────────
 
@@ -4908,6 +5127,30 @@ class CategoryDetailView(QFrame):
 
     # ── Things: the left pane ─────────────────────────────────────
 
+    def _apply_inspector_shell_style(self):
+        """The one card, and the rule dividing the two sections inside it."""
+        p = get_palette()
+        line = QColor(p.get("border", "#213028"))
+        line.setAlpha(58)
+        rule = (f"rgba({line.red()}, {line.green()}, {line.blue()}, "
+                f"{line.alpha()})")
+        self._inspector_shell.setStyleSheet(
+            f"QFrame#InspectorShell {{ background: {p.get('panel_alt', '#18241e')}; "
+            f"border: 1px solid {p.get('border_alt', '#2b3d33')}; "
+            f"border-radius: 2px; }}"
+        )
+        # Both sections sit on the shell's surface. The same colour they each
+        # painted for themselves before, minus the borders that made two of it.
+        self._parts_panel.setStyleSheet(
+            "QFrame#InspectorSection { background: transparent; border: none; }"
+        )
+        self._right_split.setStyleSheet(
+            f"QSplitter#InspectorSplit::handle:vertical {{ background: {rule}; "
+            f"height: 1px; margin: 5px 14px; }}"
+            f"QSplitter#InspectorSplit::handle:vertical:hover {{ "
+            f"background: {p.get('border_hover', '#3a5648')}; }}"
+        )
+
     def _app_index(self):
         """Registry install-location -> display name, read once per screen."""
         if getattr(self, "_app_index_cache", None) is None:
@@ -5089,6 +5332,26 @@ class CategoryDetailView(QFrame):
 
     def _current_thing(self) -> dict | None:
         return self._things_by_key.get(self._selected_thing_key)
+
+    def _visible_part_paths(self) -> tuple:
+        """What the parts panel is listing right now, or () when it lists nothing.
+
+        Read by the inspector so its own section does not repeat rows the user
+        can already see above it. Derived on each call rather than cached:
+        _rebuild_parts sets the panel's rows and its visibility in the same
+        pass that then populates the inspector, so a cached copy would be one
+        selection behind exactly when it mattered.
+
+        The single-part case returns nothing because the panel is hidden there
+        — a hidden panel is not saying anything, so nothing it would have said
+        should be suppressed.
+        """
+        thing = self._current_thing()
+        if thing is None or len(thing["parts"]) <= 1:
+            return ()
+        if not self._parts_panel.isVisibleTo(self):
+            return ()
+        return tuple(e.get("path", "") for e in thing["parts"] if e.get("path"))
 
     def _rebuild_parts(self):
         """List the selected thing's parts — the only place arming happens."""
@@ -5585,6 +5848,10 @@ class FindingsDashboard(QWidget):
                 # The category heading bakes its hue into a stylesheet too.
                 if getattr(cv, "category", ""):
                     cv._apply_title_color()
+                # The shell's card and the rule between its two sections bake
+                # the palette in, the same way the blocks below them do.
+                if getattr(cv, "_inspector_shell", None) is not None:
+                    cv._apply_inspector_shell_style()
                 if hasattr(cv, "_detail_widget") and cv._detail_widget is not None:
                     cv._detail_widget._apply_block_styles()
                     # Built with the palette that was live at construction, so

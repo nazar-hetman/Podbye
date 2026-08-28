@@ -21,10 +21,15 @@ class AskAIDialog(QDialog):
     lands on the same object the rest of the UI reads from.
     """
 
-    def __init__(self, item, explainer, parent=None):
+    def __init__(self, item, explainer, parent=None, facts: dict | None = None):
         super().__init__(parent)
         self._item = item
         self._explainer = explainer
+        # What the caller measured about this item — a folder's real size and
+        # file count. Sent with every request from this dialog, the first one
+        # and each "Ask again", so a regenerated answer is held to the same
+        # facts as the first.
+        self._facts = dict(facts or {})
         self._connected = False
 
         self.setWindowTitle(tr("Ask AI"))
@@ -94,7 +99,7 @@ class AskAIDialog(QDialog):
         self._explainer.finding_updated.connect(self._on_updated)
         self._connected = True
 
-        reason = self._explainer.explain_item(self._item)
+        reason = self._explainer.explain_item(self._item, facts=self._facts)
         if reason == "no-model":
             self._disconnect()
             self._status.setText(
@@ -124,7 +129,8 @@ class AskAIDialog(QDialog):
         if not self._connected:
             self._explainer.finding_updated.connect(self._on_updated)
             self._connected = True
-        reason = self._explainer.explain_item(self._item, force_refresh=True)
+        reason = self._explainer.explain_item(self._item, force_refresh=True,
+                                              facts=self._facts)
         if reason == "no-model":
             self._disconnect()
             self._btn_again.setEnabled(True)

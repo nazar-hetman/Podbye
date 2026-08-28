@@ -22,7 +22,7 @@ _AI_GLOBAL_LOCK = threading.Lock()
 
 from PySide6.QtCore import QObject, Signal
 
-from app.models.finding import Finding
+from app.models.finding import Finding, _format_size
 from app.models.smart_entity import SmartEntity
 from app.services.ollama_client import generate
 from app.services.prompt_builder import build_prompt, build_entity_prompt
@@ -166,6 +166,12 @@ class AIExplainer(QObject):
         self._total_failed = 0
         self._session_id: str = ""  # set by ScanState for stale-result protection
         self._run_mode: str = "new"  # "new" | "resume" | "restore"
+        # What a single on-demand request knows about its item beyond the item
+        # itself: the measured contents of a folder, and whether the user asked
+        # for a regeneration. Keyed by path rather than carried on the object
+        # because a Finding is a slots dataclass and a full C:/ scan holds ~1.8M
+        # of them — a field there costs ~29 MB to serve one click at a time.
+        self._request_context: dict = {}
 
     # ── Public API ──────────────────────────────────────────
 
@@ -316,7 +322,22 @@ class AIExplainer(QObject):
             self._total_done = 0
             self._total_failed = 0
 
-    def explain_item(self, item, force_refresh: bool = False) -> str:
+    @staticmethod
+    def _context_key(item) -> str:
+        return (getattr(item, "path", "") or "").replace("\\", "/").lower()
+
+    def _take_request_context(self, item) -> dict:
+        """Read and clear what the caller sent with this one request.
+
+        Cleared on read: a folder measured once must not silently answer for
+        the next pass over the same path, and a forced re-ask must not make
+        every later pass bypass the cache too.
+        """
+        with self._lock:
+            return self._request_context.pop(self._context_key(item), {})
+
+    def explain_item(self, item, force_refresh: bool = False,
+                     facts: dict | None = None) -> str:
         """Explain one Finding/SmartEntity on demand (user clicked "Ask AI").
 
         *force_refresh* is "Ask again": skip the stored answer and generate a
@@ -343,9 +364,24 @@ class AIExplainer(QObject):
         item.ai_error = ""
         # Read by the worker and cleared there, so a forced re-ask does not
         # make every later pass over the same item bypass the cache too.
+        context = dict(facts or {})
+        context["force_refresh"] = bool(force_refresh)
         if force_refresh:
-            item.ai_force_refresh = True
+            try:
+                item.ai_force_refresh = True
+            except AttributeError:
+                # A SmartEntity carries the flag; a Finding cannot — it is a
+                # slots dataclass, and setting an undeclared attribute on one
+                # raised straight out of the "Ask again" click. The context
+                # below is what actually carries it for both.
+                pass
         with self._lock:
+            # An entry is cleared when its request runs, so anything still here
+            # in bulk belongs to asks that were cancelled before they did. The
+            # cost of dropping one is an answer that says "not measured".
+            if len(self._request_context) > 64:
+                self._request_context.clear()
+            self._request_context[self._context_key(item)] = context
             self._queue.insert(0, item)  # front of queue — the user is waiting
             self._total_queued += 1
         name = getattr(item, "name", "item")
@@ -478,8 +514,10 @@ class AIExplainer(QObject):
         # "Ask again" clears the stored answer for this one item. The write
         # below still happens, so the regenerated text replaces the entry
         # rather than leaving the old one behind it.
-        force_refresh = bool(getattr(finding, "ai_force_refresh", False))
-        if force_refresh:
+        context = self._take_request_context(finding)
+        force_refresh = bool(context.get("force_refresh")
+                             or getattr(finding, "ai_force_refresh", False))
+        if force_refresh and hasattr(finding, "ai_force_refresh"):
             finding.ai_force_refresh = False
         if use_cache and not force_refresh and self._run_mode != "new":
             cached = _load_cached(finding, model, tone, length, language)
@@ -496,11 +534,24 @@ class AIExplainer(QObject):
 
         # Build prompt
         from datetime import datetime
+        # A folder's own size is not the size of what is in it: the scanner
+        # records directories as 0 bytes on purpose, so "Size: 0 B" reached the
+        # model as the one hard number in the prompt and it duly reported empty
+        # folders. Whatever the caller measured wins; nothing at all is sent as
+        # unknown rather than as zero.
+        measured_bytes = int(context.get("size_bytes", -1))
+        if measured_bytes < 0:
+            measured_bytes = -1 if finding.is_dir else finding.size_bytes
+        size_text = (_format_size(measured_bytes) if measured_bytes > 0
+                     else finding.size)
         prompt = build_prompt(
             path=finding.path,
             name=finding.name,
             is_dir=finding.is_dir,
-            size=finding.size,
+            size=size_text,
+            size_bytes=measured_bytes,
+            file_count=int(context.get("file_count", 0) or 0),
+            folder_count=int(context.get("folder_count", 0) or 0),
             category=finding.category,
             risk=finding.risk,
             source_rule=finding.source_rule,
@@ -586,8 +637,10 @@ class AIExplainer(QObject):
         # "Ask again" clears the stored answer for this one item. The write
         # below still happens, so the regenerated text replaces the entry
         # rather than leaving the old one behind it.
-        force_refresh = bool(getattr(entity, "ai_force_refresh", False))
-        if force_refresh:
+        context = self._take_request_context(entity)
+        force_refresh = bool(context.get("force_refresh")
+                             or getattr(entity, "ai_force_refresh", False))
+        if force_refresh and hasattr(entity, "ai_force_refresh"):
             entity.ai_force_refresh = False
         if use_cache and not force_refresh and self._run_mode != "new":
             cached = _load_entity_cached(entity, model, tone, length, language)
@@ -609,6 +662,7 @@ class AIExplainer(QObject):
             entity_type=entity.entity_type,
             entity_type_label=ENTITY_TYPES.get(entity.entity_type, entity.entity_type),
             size=entity.size,
+            size_bytes=int(getattr(entity, "size_bytes", 0) or 0),
             file_count=entity.file_count,
             folder_count=entity.folder_count,
             category=entity.category,
