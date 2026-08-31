@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.models.finding import _format_size, split_size
-from app.widgets.controls import TacticalCheckBox
+from app.widgets.controls import style_container, TacticalCheckBox
 from app.services.cleanup_engine import CleanupWorker
 from app.services.cleanup_result_classifier import (
     STATE_ALREADY_CLEAN,
@@ -334,7 +334,7 @@ class QuickCleanupScreen(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("border: none;")
+        style_container(scroll, "border: none;")
 
         content = QWidget()
         main_lay = QVBoxLayout(content)
@@ -461,7 +461,7 @@ class QuickCleanupScreen(QWidget):
         self._exp_scroll.setFixedHeight(72)
         self._exp_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._exp_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self._exp_scroll.setStyleSheet("border: none; background: transparent;")
+        style_container(self._exp_scroll, "border: none; background: transparent;")
         self._exp_scroll.setWidget(self._exp_text_lbl)
         exp_lay.addWidget(self._exp_scroll)
 

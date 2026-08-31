@@ -127,7 +127,10 @@ def test_a_stored_verdict_wins_over_recomputation():
 
 
 def test_a_record_without_a_stored_verdict_is_recomputed():
-    assert _cleanup_status(_rec(4, 0, 6))[0] == "Attention"
+    """Four moved and six refused is Partial: something was achieved. Only a
+    run that achieved nothing gets the red word."""
+    assert _cleanup_status(_rec(4, 0, 6))[0] == "Partial"
+    assert _cleanup_status(_rec(0, 0, 6))[0] == "Attention"
 
 
 # ── the ambiguous metric is gone from both panels ─────────────────
@@ -155,8 +158,11 @@ def test_the_cleanup_panel_opens_on_what_was_cleaned(screen, qapp):
     screen._toggle_cleanup_detail(2)
     qapp.processEvents()
     keys = _metric_keys(screen._cleanup_detail_widget)
-    assert keys[:3] == ["CLEANED", "ITEMS", "ATTENTION"]
+    assert keys[:3] == ["CLEANED", "ITEMS", "NOT REMOVED"]
     assert "IMPACT" not in keys and "RESULT" not in keys
+    # "ATTENTION" counted protected paths Podbye had correctly refused to
+    # touch, so a run that did exactly the right thing reported 170 of them.
+    assert "ATTENTION" not in keys
 
 
 def test_the_session_panel_opens_on_what_can_be_reclaimed(screen, qapp):

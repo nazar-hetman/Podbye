@@ -11,6 +11,8 @@ and the thing that distinguishes a program you use from a leftover.
 import os
 import time
 
+import app.screens.startups as st
+
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -45,9 +47,34 @@ def _row(qapp, entry):
 
 # ── what each part of the row shows ───────────────────────────────
 
-def test_the_rail_carries_the_target_date(qapp):
-    row = _row(qapp, _entry(target_modified=time.mktime((2024, 3, 14, 0, 0, 0, 0, 0, -1))))
-    assert row._rail_lbl.text() == "2024-03-14"
+def test_the_row_has_no_column_under_its_buttons(qapp):
+    """It held three things in turn — the target date, then only a stale date,
+    then AI status — and each read as a caption for the button above it.
+
+    A row now has two places and one rule: prose on the left, controls on the
+    right, and a status is prose. Nothing is appended beneath a control.
+    """
+    row = _row(qapp, _entry())
+
+    assert not hasattr(row, "_rail_lbl")
+
+
+def test_a_stale_target_says_so_in_the_meta_line(qapp):
+    """The signal survives the move — in words, where the row's prose lives."""
+    old = time.time() - (st._STALE_TARGET_YEARS + 1) * 365 * 86400
+    row = _row(qapp, _entry(target_modified=old))
+
+    # full_text(), not text(): the meta line elides to whatever width the row
+    # has, and an unshown row has almost none.
+    assert "not updated since" in row._meta_lbl.full_text()
+    assert row._entry.target_modified_display in row._meta_lbl.full_text()
+
+
+def test_a_current_target_says_nothing_about_its_age(qapp):
+    """Only the stale case is worth a word; everything else is just a date."""
+    row = _row(qapp, _entry(target_modified=time.time() - 30 * 86400))
+
+    assert "not updated" not in row._meta_lbl.full_text()
 
 
 def test_the_role_sits_in_the_meta_line(qapp):
@@ -65,24 +92,25 @@ def test_the_role_sits_in_the_meta_line(qapp):
     assert "User startup registry" in meta
 
 
-def test_the_role_is_not_repeated_in_the_rail(qapp):
+def test_the_role_is_stated_once(qapp):
     row = _row(qapp, _entry())
-    assert "Creative helper" not in row._rail_lbl.text()
+    assert row._meta_lbl.full_text().count("Creative helper") == 1
 
 
 # ── missing data is omitted, not padded ───────────────────────────
 
-def test_an_unreadable_target_date_leaves_the_column_empty(qapp):
+def test_an_unreadable_target_date_says_nothing_about_age(qapp):
     """Scheduled tasks whose executable has moved have no mtime to show."""
     row = _row(qapp, _entry(target_modified=0.0))
 
-    assert row._rail_lbl.text() == ""
-    assert "Creative helper" in row._meta_lbl.text(), "the role must survive"
+    assert "not updated" not in row._meta_lbl.full_text()
+    assert "Creative helper" in row._meta_lbl.full_text(), "the role must survive"
 
 
 def test_no_placeholder_dash_is_invented(qapp):
     row = _row(qapp, _entry(impact="", target_modified=0.0))
-    assert row._rail_lbl.text() == ""
+
+    assert "—" not in row._meta_lbl.full_text()
 
 
 # ── the columns are fixed, which is the point ─────────────────────
@@ -112,12 +140,14 @@ def test_the_action_column_is_the_same_width_on_every_row(qapp):
     assert len(widths) == 1, f"action column varies by row: {widths}"
 
 
-def test_the_date_column_spans_the_two_above_it(qapp):
-    from app.screens.startups import StartupListRow, _RAIL_GAP
+def test_the_controls_are_the_only_thing_in_their_column(qapp):
+    """The badge and the action keep their fixed widths — that is what stops
+    the column scattering — and nothing else is placed beneath them."""
+    from app.screens.startups import StartupListRow
     row = _row(qapp, _entry())
 
-    assert row._rail_lbl.width() == (
-        StartupListRow._BADGE_W + _RAIL_GAP + StartupListRow._ACTION_W)
+    assert row._risk_badge.width() == StartupListRow._BADGE_W
+    assert row._toggle_btn.width() == StartupListRow._ACTION_W
 
 
 def test_the_columns_hold_their_longest_label(qapp):
@@ -190,7 +220,7 @@ def test_an_unknown_date_is_not_called_stale(qapp):
 
 def test_a_stale_row_explains_itself_on_hover(qapp):
     row = _row(qapp, _entry(target_modified=time.time() - 5 * YEAR))
-    assert "no longer use" in row._rail_lbl.toolTip()
+    assert "no longer use" in row._meta_lbl.toolTip()
 
 
 # ── the model side ────────────────────────────────────────────────

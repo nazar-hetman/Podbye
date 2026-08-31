@@ -15,7 +15,7 @@ from PySide6.QtGui import QColor
 
 from app.widgets.panels import Panel
 from app.widgets.panels import apply_tactical_label
-from app.widgets.controls import TacticalComboBox
+from app.widgets.controls import style_container, TacticalComboBox
 from app.widgets.tables import create_table, set_row, RowHighlightDelegate
 from app.widgets.feeds import OperatorFeed
 from app.models.finding import _format_size
@@ -338,7 +338,7 @@ class AnalyzeScreen(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("border: none;")
+        style_container(scroll, "border: none;")
 
         content = QWidget()
         layout = QVBoxLayout(content)
@@ -380,7 +380,7 @@ class AnalyzeScreen(QWidget):
         self._btn_folder = QPushButton()
         self._btn_folder.setObjectName("TargetFolderBtn")
         self._btn_folder.setCursor(Qt.PointingHandCursor)
-        self._btn_folder.setFixedHeight(30)
+        self._btn_folder.setMinimumHeight(30)
         self._btn_folder.clicked.connect(self._pick_folder)
         tf_lay.addWidget(self._btn_folder, stretch=1)
 
@@ -403,7 +403,7 @@ class AnalyzeScreen(QWidget):
         self._mode_combo.addItem(tr("All files"), "all")
         self._mode_combo.setCurrentIndex(0)
         self._mode_combo.setFixedWidth(188)
-        self._mode_combo.setFixedHeight(32)
+        self._mode_combo.setMinimumHeight(32)
         self._apply_mode_combo_style()
         self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         header.addWidget(self._mode_combo, alignment=Qt.AlignVCenter)
@@ -413,7 +413,7 @@ class AnalyzeScreen(QWidget):
         self._btn_scan.setCursor(Qt.PointingHandCursor)
         self._btn_scan.setEnabled(False)
         self._btn_scan.setFixedWidth(120)
-        self._btn_scan.setFixedHeight(32)
+        self._btn_scan.setMinimumHeight(32)
         self._btn_scan.clicked.connect(self._on_scan_btn)
         self._scan_active = False  # tracks whether we are currently scanning
         self._resuming = False     # set True by resume_scan to skip clear()
@@ -628,9 +628,7 @@ class AnalyzeScreen(QWidget):
         from app.themes.theme_manager import get_palette
         border = get_palette().get("border", "#213028")
         for frame in (self._pf_hdr_frame, self._of_hdr_frame):
-            frame.setStyleSheet(
-                "background: transparent; border: none;"
-            )
+            style_container(frame, "background: transparent; border: none;")
         sep_qss = f"background: {border}; border: none;"
         self._pf_hdr_sep.setStyleSheet(sep_qss)
         self._of_hdr_sep.setStyleSheet(sep_qss)

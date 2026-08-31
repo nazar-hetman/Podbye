@@ -108,9 +108,16 @@ def test_a_lone_row_under_appdata_says_where_too():
 # ── and it can explain the whole of itself ────────────────────────
 
 def test_opening_the_group_explains_all_of_it(view):
+    """The third complaint, answered where it is now answered: the group is
+    the subject of the inspector, so its own name, location and totals are
+    stated in full, with its members listed under them."""
     view.set_category("Application Data", SPLIT_APP)
     view._select_thing(_thing(view, "Contoso")["key"])
-    assert view._parts_name_lbl.text() == "Contoso"
-    assert "3 parts" in view._parts_summary_lbl.text()
-    shown = [r._name_lbl.text() for r in view._part_pool if not r.isHidden()]
+    panel = view._detail_widget
+
+    assert panel._name_lbl.text() == "Contoso", "not one member's name"
+    assert "3 items" in panel._kind_lbl.text()
+    assert "3 parts" in panel._parts_meta.text()
+    shown = [r._name_lbl.text() for r in panel._part_row_pool
+             if not r.isHidden()]
     assert set(shown) == {"Contoso (Roaming)", "Cache", "Contoso (Local)"}

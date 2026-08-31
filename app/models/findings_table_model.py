@@ -9,6 +9,8 @@ Provides:
 """
 from __future__ import annotations
 
+import re
+
 from PySide6.QtCore import (
     QAbstractTableModel, QModelIndex, QSortFilterProxyModel,
     Qt, QSize, QEvent,
@@ -374,12 +376,51 @@ class FindingsFilterProxy(QSortFilterProxyModel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._search_text = ""
+        # How far the current query has to reach to find anything. Recomputed
+        # with the query, not per row — see _narrowest_tier.
+        self._search_tier = 2
         self._risk_filter: set | None = None  # None = show all
         self._sort_key = "largest"
 
     def set_search(self, text: str):
         self._search_text = text.strip().lower()
+        self._search_tier = self._narrowest_tier()
         self.invalidateFilter()
+
+    # How hard the filter has to look. A query is answered from the narrowest
+    # of these that answers it at all, so a name never competes with a path.
+    _TIER_WORD = 0        # the query starts a word in the name
+    _TIER_NAME = 1        # the query is anywhere in the name
+    _TIER_BROAD = 2       # path, category, duplicate locations, child names
+
+    @staticmethod
+    def _name_words(name: str) -> list:
+        return [w for w in re.split(r"[^a-z0-9]+", (name or "").lower()) if w]
+
+    def _narrowest_tier(self) -> int:
+        """One pass over the source to see how far the query has to reach.
+
+        Cheap: this model holds the entities, ~1,200 of them after a full C:/
+        scan, not the 1.8M findings behind them. And it runs once per keystroke,
+        not once per row.
+        """
+        if not self._search_text:
+            return self._TIER_BROAD
+        model = self.sourceModel()
+        if model is None:
+            return self._TIER_BROAD
+        query = self._search_text
+        found_in_name = False
+        for row in range(model.rowCount()):
+            entity = model.data(model.index(row, COL_NAME), Qt.UserRole)
+            if not entity:
+                continue
+            name = entity.get("name", "").lower()
+            if any(word.startswith(query) for word in self._name_words(name)):
+                return self._TIER_WORD
+            if query in name:
+                found_in_name = True
+        return self._TIER_NAME if found_in_name else self._TIER_BROAD
 
     def set_risk_filter(self, risks: set | None):
         self._risk_filter = risks
@@ -406,25 +447,48 @@ class FindingsFilterProxy(QSortFilterProxyModel):
             if normalize_risk(entity.get("risk", "Review")) not in self._risk_filter:
                 return False
 
-        if self._search_text:
-            location_text = ""
-            for loc in entity.get("duplicate_locations", []) or []:
-                if isinstance(loc, dict):
-                    location_text += loc.get("path", "").lower()
-                else:
-                    location_text += str(loc).lower()
-            for path in entity.get("children_sample", []) or []:
-                location_text += str(path).lower()
-            haystack = (
-                entity.get("name", "").lower()
-                + entity.get("path", "").lower()
-                + entity.get("category", "").lower()
-                + location_text
-            )
-            if self._search_text not in haystack:
-                return False
+        if self._search_text and not self._matches_search(entity):
+            return False
 
         return True
+
+    def _matches_search(self, entity: dict) -> bool:
+        """Name first, and only then everything else.
+
+        Everything used to be one concatenated haystack — name, path, category,
+        every duplicate location and every sampled child name — searched by
+        plain substring. Measured against a real 706-entity C:/ scan, typing
+        "d" matched 700 of them, because nearly every *path* contains a d:
+        AppData, ProgramData, Windows, Downloads. "di" still matched 204. You
+        had to reach "disc" before Discord stopped being buried, which is what
+        was reported.
+
+        Names are what people type, so the query is answered from the narrowest
+        place that answers it at all: words in a name, then anywhere in a name,
+        then everything else. "di" reaches the first tier and returns the nine
+        rows whose names begin a word with it, rather than the 204 that contain
+        those letters somewhere — NVI*di*A, Stu*di*o, and every path with a
+        "di" in it. Nothing is unreachable: a query only found in a path, like
+        "appdata" or "steamapps", falls through to the last tier and still
+        works.
+
+        The fields are also joined with a separator now. Concatenated raw, a
+        query could match across a boundary that does not exist — a name ending
+        in "npm" followed by a path beginning "c:/" matched "npmc".
+        """
+        query = self._search_text
+        name = entity.get("name", "").lower()
+        if self._search_tier == self._TIER_WORD:
+            return any(word.startswith(query) for word in self._name_words(name))
+        if self._search_tier == self._TIER_NAME:
+            return query in name
+
+        parts = [entity.get("path", ""), entity.get("category", "")]
+        for loc in entity.get("duplicate_locations", []) or []:
+            parts.append(loc.get("path", "") if isinstance(loc, dict)
+                         else str(loc))
+        parts.extend(str(path) for path in entity.get("children_sample", []) or [])
+        return query in "\n".join(p.lower() for p in parts if p)
 
     def lessThan(self, left, right) -> bool:
         le = self.sourceModel().data(left, Qt.UserRole)

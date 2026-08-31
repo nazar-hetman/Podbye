@@ -79,7 +79,7 @@
   "AI EXPLAINING": "EXPLICATION EN COURS",
   "AI EXPLANATION": "EXPLICATION IA",
   "AI PROCESSING": "TRAITEMENT IA",
-  "AI RECOMMENDATIONS": "RECOMMANDATIONS IA",
+  "RECOMMENDATION": "RECOMMANDATION",
   "AI Runtime Cache": "Cache d'exécution IA",
   "AI active": "IA active",
   "AI analysis": "Analyse IA",
@@ -611,7 +611,6 @@
   "Quit Podbye": "Quitter Podbye",
   "Quit and stop the work": "Quitter et arrêter",
   "RECLAIMABLE": "RÉCUPÉRABLE",
-  "RECOMMENDATION": "RECOMMANDATION",
   "REFERENCE": "RÉFÉRENCE",
   "REMOVAL METHOD": "MÉTHODE DE SUPPRESSION",
   "RESUME LAST RUN": "REPRENDRE",
@@ -930,7 +929,8 @@
   "Visibility": "Affichage",
   "WAITING": "EN ATTENTE",
   "WHAT HAPPENED & HOW TO FINISH": "CE QUI S'EST PASSÉ",
-  "PARTS OF": "PARTIES DE",
+  "PARTS": "PARTIES",
+  "// part of {name}": "// partie de {name}",
   "WHEN": "QUAND",
   "WHY FLAGGED": "POURQUOI SIGNALÉ",
   "WORKSTATION": "POSTE DE TRAVAIL",
@@ -1215,5 +1215,10 @@
   "Ask again": "Redemander",
   "View result": "Voir le résultat",
   "Generate a new explanation and replace the saved one": "Générer une nouvelle explication et remplacer celle enregistrée",
-  "Show the saved explanation for {name}": "Afficher l’explication enregistrée pour {name}"
+  "Show the saved explanation for {name}": "Afficher l’explication enregistrée pour {name}",
+  "not updated since {date}": "pas mis à jour depuis {date}",
+  "Fallback explanation": "explication de secours",
+  "Detecting Windows startup programs…": "Détection des programmes de démarrage Windows…",
+  "NOT REMOVED": "NON SUPPRIMÉ",
+  "partly cleaned": "partiellement nettoyé"
 }

@@ -81,7 +81,7 @@
   "AI EXPLAINING": "AI ПОЯСНЕННЯ",
   "AI EXPLANATION": "AI ПОЯСНЕННЯ",
   "AI PROCESSING": "ОБРОБКА AI",
-  "AI RECOMMENDATIONS": "AI РЕКОМЕНДАЦІЇ",
+  "RECOMMENDATION": "РЕКОМЕНДАЦІЯ",
   "AI Runtime Cache": "Кеш виконання ШІ",
   "AI active": "AI активний",
   "AI analysis": "Аналіз ШІ",
@@ -613,7 +613,6 @@
   "Quit Podbye": "Вийти з Podbye",
   "Quit and stop the work": "Вийти та зупинити роботу",
   "RECLAIMABLE": "ДО ЗВІЛЬНЕННЯ",
-  "RECOMMENDATION": "РЕКОМЕНДАЦІЯ",
   "REFERENCE": "ДОВІДКА",
   "REMOVAL METHOD": "СПОСІБ ВИДАЛЕННЯ",
   "RESUME LAST RUN": "ПРОДОВЖИТИ ОСТАННІЙ ЗАПУСК",
@@ -931,7 +930,8 @@
   "Visibility": "Видимість",
   "WAITING": "ОЧІКУВАННЯ",
   "WHAT HAPPENED & HOW TO FINISH": "ЩО СТАЛОСЯ ТА ЯК ЗАВЕРШИТИ",
-  "PARTS OF": "ЧАСТИНИ",
+  "PARTS": "ЧАСТИНИ",
+  "// part of {name}": "// частина {name}",
   "WHEN": "КОЛИ",
   "WHY FLAGGED": "ЧОМУ ПОЗНАЧЕНО",
   "WORKSTATION": "РОБОЧА СТАНЦІЯ",
@@ -1216,5 +1216,10 @@
   "Ask again": "Запитати знову",
   "View result": "Переглянути результат",
   "Generate a new explanation and replace the saved one": "Згенерувати нове пояснення та замінити збережене",
-  "Show the saved explanation for {name}": "Показати збережене пояснення для {name}"
+  "Show the saved explanation for {name}": "Показати збережене пояснення для {name}",
+  "not updated since {date}": "не оновлювався з {date}",
+  "Fallback explanation": "запасне пояснення",
+  "Detecting Windows startup programs…": "Виявлення програм автозапуску Windows…",
+  "NOT REMOVED": "НЕ ВИДАЛЕНО",
+  "partly cleaned": "частково очищено"
 }
