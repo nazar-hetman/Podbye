@@ -1467,12 +1467,14 @@ class AnalyzeScreen(QWidget):
             return
 
         entity_count = self._scan_state.entity_count
+        stopped = self._scan_state.current_phase == "stopped"
 
         self._grouping_complete = True
-        self._pipeline_state = "ai_classifying"
+        self._pipeline_state = "stopped" if stopped else "ai_classifying"
         self._chips[2].set_state("done", f"{entity_count} entities")
-        _set_determinate(self._scan_bar, 100, "#7cc596")
-        self._scan_prog_lbl.setText("100%")
+        if not stopped:
+            _set_determinate(self._scan_bar, 100, "#7cc596")
+            self._scan_prog_lbl.setText("100%")
         self._update_partial_table()
         self._feed.add_line(f"[smart] {entity_count} semantic entities ready")
 
@@ -1481,6 +1483,18 @@ class AnalyzeScreen(QWidget):
             self._scan_state.entity_progress.disconnect(self._on_entity_progress)
         except RuntimeError:
             pass
+
+        if stopped:
+            # A stopped run now commits the grouping it finished, so this slot
+            # fires for it too. Everything below assumes a whole scan: it would
+            # bar the progress at 100%, badge the run Complete, start duplicate
+            # detection over a partial file list, and — worst — call
+            # save_session_final("completed"), overwriting the preserved
+            # "stopped" session that Resume needs to continue from.
+            self._feed.add_line(
+                f"[smart] stopped · {entity_count} entities from a partial scan")
+            self._reset_scan_button()
+            return
 
         ai = self._scan_state.ai_explainer
         self._wire_ai_signals()
@@ -1680,7 +1694,12 @@ class AnalyzeScreen(QWidget):
                 "{entities} entities · {raw:,} raw items · {size}",
                 entities=entity_count, raw=self._scan_state.total_count,
                 size=self._scan_state.total_size_str))
-            self._pf_sub.setText(tr("// Semantic grouping complete"))
+            # A stopped run reaches here too now that its grouping is kept.
+            # These are the categories of what was visited, not of the drive.
+            self._pf_sub.setText(
+                tr("// Partial — analysis was stopped")
+                if self._scan_state.current_phase == "stopped"
+                else tr("// Semantic grouping complete"))
         else:
             self._pf_count.setText(f"{self._scan_state.total_count:,} items · {self._scan_state.total_size_str}")
             self._pf_sub.setText(tr("// Raw file mode"))

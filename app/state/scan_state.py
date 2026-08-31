@@ -523,7 +523,19 @@ class ScanState(QObject):
 
     def stop_all(self):
         """Full stop: cancel scan worker, entity detection, AI queue, mark stopped."""
+        # _is_running covers the filesystem walk only, and the walk has already
+        # finished by the time grouping starts. Testing it alone meant a stop
+        # during entity detection never set the stopped phase at all: Findings
+        # read "entity_detection" forever and sat on "PREPARING STORAGE
+        # OVERVIEW" for a scan that had ended minutes earlier, with no way
+        # out and nothing on screen.
+        #
+        # AI classification is deliberately not in this test. Interrupting it
+        # leaves the map itself complete — every file was visited and grouped,
+        # only some explanations are missing — so sending a full storage map
+        # back to the stopped screen would be a lie in the other direction.
         was_running = self._is_running
+        was_detecting = self._entity_detection_running
         self._stopped = True
         self._halted = True
         
@@ -536,7 +548,7 @@ class ScanState(QObject):
         self.stop_ai_queue()
         self.log_line.emit("[ai] queue cancelled")
         
-        if was_running:
+        if was_running or was_detecting:
             self._set_phase("stopped", "analysis stopped by user")
         self.log_line.emit("[scan] stopped · partial results preserved")
 
@@ -856,14 +868,32 @@ class ScanState(QObject):
             _log.debug(f"[thread] _apply_entity_results on: {current_thread}")
             _log.debug("[smart] [LIFECYCLE] Step 1: Entity detection results on main thread")
             
-            if self._entity_detection_cancelled:
-                self.log_line.emit("[smart] entity detection was cancelled, aborting")
-                self._entity_detection_running = False
-                return
-                
+            # A cancel that arrives after the detector finished used to
+            # discard the finished result. Reported from a real run: the feed
+            # read "semantic grouping complete · 1684 entities created · 102%
+            # coverage" and then "entity detection cancelled", and all 1,684
+            # were dropped on the floor because the flag was set between the
+            # worker's emit and this slot running on the main thread.
+            #
+            # The worker returns without emitting when it notices the cancel
+            # itself, so anything that reaches here is a completed grouping of
+            # the findings collected so far. That is precisely the partial map
+            # worth keeping. What must not happen is the rest of the pipeline:
+            # a stopped run does not go on to spend minutes in the model.
+            cancelled = self._entity_detection_cancelled
+
             entities = getattr(self, "_pending_entities", None)
             if entities is None:
-                self.log_line.emit("[smart] ERROR: _pending_entities is None - CRITICAL BUG")
+                if cancelled:
+                    self.log_line.emit("[smart] entity detection was cancelled, aborting")
+                else:
+                    self.log_line.emit("[smart] ERROR: _pending_entities is None - CRITICAL BUG")
+                self._entity_detection_running = False
+                return
+
+            if cancelled and not entities:
+                self.log_line.emit("[smart] entity detection was cancelled, aborting")
+                self._entity_detection_running = False
                 return
             
             n_entities = len(entities)
@@ -924,7 +954,9 @@ class ScanState(QObject):
             ai_will_start = False
             skip_reason = None
             
-            if not self._ai_explainer:
+            if cancelled:
+                skip_reason = "analysis stopped"
+            elif not self._ai_explainer:
                 skip_reason = "AI explainer not configured"
             elif not self._settings_store:
                 skip_reason = "settings not loaded"
@@ -953,7 +985,10 @@ class ScanState(QObject):
                 _log.debug("[ai] [LIFECYCLE] Step 6b: AI queue started successfully")
             else:
                 _log.debug(f"[ai] [LIFECYCLE] Step 6a: AI skipped · {skip_reason}")
-                self._set_phase("complete", f"{n_entities} entities · {skip_reason}")
+                # Stopped stays stopped. Marking it complete would present a
+                # map built from a walk that never finished as a whole one.
+                self._set_phase("stopped" if cancelled else "complete",
+                                f"{n_entities} entities · {skip_reason}")
             
             # CRITICAL: Emit entities_ready to trigger Findings dashboard refresh
             _log.debug("[smart] [LIFECYCLE] Step 7: Emitting entities_ready signal...")

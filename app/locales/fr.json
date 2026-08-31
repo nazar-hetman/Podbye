@@ -1220,5 +1220,16 @@
   "Fallback explanation": "explication de secours",
   "Detecting Windows startup programs…": "Détection des programmes de démarrage Windows…",
   "NOT REMOVED": "NON SUPPRIMÉ",
-  "partly cleaned": "partiellement nettoyé"
+  "partly cleaned": "partiellement nettoyé",
+  "PARTIAL RESULTS": "RÉSULTATS PARTIELS",
+  "Resume analysis": "Reprendre l'analyse",
+  "View partial results": "Voir les résultats partiels",
+  "Analysis was stopped — some files were never scanned and are missing here.": "L'analyse a été interrompue — certains fichiers n'ont jamais été analysés et manquent ici.",
+  "Analysis was stopped. Showing {count:,} items found so far ({size}) — some files were never scanned and are missing here.": "L'analyse a été interrompue. Affichage de {count:,} éléments trouvés jusqu'ici ({size}) — certains fichiers n'ont jamais été analysés et manquent ici.",
+  "Analysis was stopped. Showing {count:,} items found so far — some files were never scanned and are missing here.": "L'analyse a été interrompue. Affichage de {count:,} éléments trouvés jusqu'ici — certains fichiers n'ont jamais été analysés et manquent ici.",
+  "The analysis was stopped before the storage map was fully ready.": "L'analyse a été interrompue avant que la carte du stockage ne soit prête.",
+  "Nothing was found before it stopped.": "Rien n'a été trouvé avant l'arrêt.",
+  "{count:,} items ({size}) were found before it stopped.": "{count:,} éléments ({size}) ont été trouvés avant l'arrêt.",
+  "{count:,} items were found before it stopped.": "{count:,} éléments ont été trouvés avant l'arrêt.",
+  "// Partial — analysis was stopped": "// Partiel — l'analyse a été interrompue"
 }

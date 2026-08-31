@@ -5883,12 +5883,89 @@ class LoadingStateWidget(QFrame):
         self._stat_coverage.setText(f"{coverage_pct}%")
 
 
-class StoppedStateWidget(QFrame):
-    """Stopped state shown when analysis was stopped before completion."""
+class PartialResultsNotice(QFrame):
+    """A persistent line saying the map on screen is incomplete.
+
+    Findings has no separate "partial" results mode and must not grow one: the
+    dashboard, the category lists and the folder tree all read the same scan
+    state whether the walk finished or was stopped. What is missing without
+    this strip is not a different UI, it is the one fact that distinguishes the
+    two — that some files were never visited, so an absence here is not
+    evidence of absence on disk.
+
+    It sits above the view stack rather than inside any one view, so drilling
+    into a category or the folder tree cannot leave it behind.
+    """
 
     def __init__(self, parent=None, on_resume: Callable = None):
         super().__init__(parent)
         self.on_resume = on_resume
+        self.setObjectName("PanelAlt")
+        self._build_ui()
+
+    def _build_ui(self):
+        row = QHBoxLayout(self)
+        row.setContentsMargins(22, 8, 22, 8)
+        row.setSpacing(10)
+
+        self._badge = Badge(tr("PARTIAL RESULTS"), "partial_halted")
+        row.addWidget(self._badge)
+
+        self._text = QLabel("")
+        self._text.setObjectName("Dim")
+        self._text.setWordWrap(True)
+        self._text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        row.addWidget(self._text, stretch=1)
+
+        self._resume_btn = QPushButton(tr("Resume analysis"))
+        self._resume_btn.setObjectName("Subtle")
+        self._resume_btn.setCursor(Qt.PointingHandCursor)
+        self._resume_btn.setMinimumHeight(26)
+        if self.on_resume:
+            self._resume_btn.clicked.connect(self.on_resume)
+        row.addWidget(self._resume_btn)
+
+        self.set_counts(0, "")
+        self.apply_style()
+
+    def apply_style(self):
+        p = get_palette()
+        # Scoped: a bare rule here would reach the badge and the button and
+        # strip the chrome that makes them readable as what they are.
+        style_container(self, (
+            f"background: {p.get('panel_alt', '#1b241e')}; "
+            f"border: none; "
+            f"border-bottom: 1px solid {p.get('border_alt', '#2a3830')};"
+        ))
+        self._text.setStyleSheet(f"font-size: 11px; color: {p.get('text_dim', '#8a9b8f')};")
+        self._badge.refresh_style()
+
+    def set_counts(self, count: int, size_str: str = ""):
+        """State what is on screen, so the gap is a size rather than a mood."""
+        if count > 0 and size_str:
+            self._text.setText(tr(
+                "Analysis was stopped. Showing {count:,} items found so far "
+                "({size}) — some files were never scanned and are missing here.",
+                count=count, size=size_str))
+        elif count > 0:
+            self._text.setText(tr(
+                "Analysis was stopped. Showing {count:,} items found so far — "
+                "some files were never scanned and are missing here.",
+                count=count))
+        else:
+            self._text.setText(tr(
+                "Analysis was stopped — some files were never scanned and are "
+                "missing here."))
+
+
+class StoppedStateWidget(QFrame):
+    """Stopped state shown when analysis was stopped before completion."""
+
+    def __init__(self, parent=None, on_resume: Callable = None,
+                 on_view_partial: Callable = None):
+        super().__init__(parent)
+        self.on_resume = on_resume
+        self.on_view_partial = on_view_partial
         self.setObjectName("Panel")
         self._build_ui()
 
@@ -5925,19 +6002,63 @@ class StoppedStateWidget(QFrame):
         desc.setAlignment(Qt.AlignCenter)
         desc.setWordWrap(True)
         layout.addWidget(desc)
+        self._desc = desc
 
         layout.addSpacing(20)
 
-        # Resume button
+        # Actions. Resume stays primary — finishing the walk is what this
+        # screen is for. Looking at what was already found is the lesser
+        # thing, and is only offered when there is something to look at: a
+        # button leading to an empty dashboard is worse than no button.
+        actions = QHBoxLayout()
+        actions.setSpacing(10)
+        actions.addStretch()
+
         if self.on_resume:
             resume_btn = QPushButton(tr("Resume Analysis →"))
             resume_btn.setObjectName("Primary")
             resume_btn.setStyleSheet("padding: 10px 24px; font-size: 13px;")
             resume_btn.setCursor(Qt.PointingHandCursor)
             resume_btn.clicked.connect(self.on_resume)
-            layout.addWidget(resume_btn, alignment=Qt.AlignCenter)
+            actions.addWidget(resume_btn)
+            self._resume_btn = resume_btn
+
+        self._partial_btn = QPushButton(tr("View partial results"))
+        self._partial_btn.setObjectName("Subtle")
+        self._partial_btn.setStyleSheet("padding: 10px 24px; font-size: 13px;")
+        self._partial_btn.setCursor(Qt.PointingHandCursor)
+        self._partial_btn.setVisible(False)
+        if self.on_view_partial:
+            self._partial_btn.clicked.connect(self.on_view_partial)
+        actions.addWidget(self._partial_btn)
+
+        actions.addStretch()
+        layout.addLayout(actions)
 
         layout.addStretch()
+
+    def set_partial_results(self, count: int, size_str: str = ""):
+        """Offer the partial view only when something was actually preserved.
+
+        Entity detection is cancelled on stop, so "preserved" here is the
+        findings the walk had already collected — not a finished storage map.
+        A stop in the first seconds of a scan leaves nothing behind, and then
+        there is no second action to offer.
+        """
+        self._partial_btn.setVisible(count > 0 and bool(self.on_view_partial))
+        if count > 0:
+            found = (tr("{count:,} items ({size}) were found before it stopped.",
+                        count=count, size=size_str) if size_str
+                     else tr("{count:,} items were found before it stopped.",
+                             count=count))
+            self._desc.setText(
+                tr("The analysis was stopped before the storage map was fully "
+                   "ready.") + "\n" + found)
+        else:
+            self._desc.setText(
+                tr("The analysis was stopped before the storage map was fully "
+                   "ready.") + "\n"
+                + tr("Nothing was found before it stopped."))
 
 
 class FindingsDashboard(QWidget):
@@ -5956,6 +6077,13 @@ class FindingsDashboard(QWidget):
     # Signal emitted when "Start Analysis" button clicked in empty state
     navigate_to_analyze = Signal()
 
+    # Emitted with the preserved session when Resume is chosen. main.py wires
+    # it to the same handler as the Home screen's Resume Scan, which is the
+    # only path that actually continues a stopped walk — navigating to Analyze
+    # alone lands on "Start scan", and starting one discards the very partial
+    # data this screen is offering to keep.
+    resume_requested = Signal(dict)
+
     def __init__(self, scan_state=None, parent=None):
         super().__init__(parent)
         self._scan_state = scan_state
@@ -5963,6 +6091,10 @@ class FindingsDashboard(QWidget):
 
         # View state machine
         self._current_view = "dashboard"  # dashboard | category | entity
+        # Set when the user chooses to look at what a stopped run collected.
+        # Not a results mode: the views below read the same scan state either
+        # way, and this only decides which of them a stopped phase opens on.
+        self._viewing_partial = False
         self._current_category: Optional[str] = None
         
         # Performance: debounced refresh
@@ -5984,6 +6116,9 @@ class FindingsDashboard(QWidget):
 
     def _on_theme_changed(self, _key: str = ""):
         try:
+            notice = getattr(self, "_partial_notice", None)
+            if notice is not None:
+                notice.apply_style()
             if hasattr(self, "_overview_view") and self._overview_view is not None:
                 self._overview_view._apply_panel_colors()
                 if hasattr(self._overview_view, "_donut"):
@@ -6032,6 +6167,14 @@ class FindingsDashboard(QWidget):
         page_header.addStretch()
         self._main_layout.addLayout(page_header)
 
+        # Above the stack on purpose: the dashboard, the category lists and
+        # the folder tree are all reached from here, and a notice that lived
+        # inside one of them would vanish on the first drill-down.
+        self._partial_notice = PartialResultsNotice(
+            on_resume=self._on_resume_analysis)
+        self._partial_notice.setVisible(False)
+        self._main_layout.addWidget(self._partial_notice)
+
         # Stacked widget for view switching
         self._stack = QStackedWidget()
 
@@ -6044,7 +6187,9 @@ class FindingsDashboard(QWidget):
         self._stack.addWidget(self._loading_view)
 
         # View 3: Stopped state (analysis stopped before completion)
-        self._stopped_view = StoppedStateWidget(on_resume=self._on_resume_analysis)
+        self._stopped_view = StoppedStateWidget(
+            on_resume=self._on_resume_analysis,
+            on_view_partial=self._on_view_partial_results)
         self._stack.addWidget(self._stopped_view)
 
         # View 4: Dashboard — inner stack: Overview (default) + Map
@@ -6126,7 +6271,13 @@ class FindingsDashboard(QWidget):
 
         # Priority: stopped > loading > dashboard > empty
         if phase == "stopped":
-            self._show_stopped()
+            # The one exception: once the user has asked to see what was
+            # collected, a stopped phase opens on the results with the notice
+            # rather than sending them back through the door they just used.
+            if self._viewing_partial and self._partial_count() > 0:
+                self._show_dashboard()
+            else:
+                self._show_stopped()
         # Show loading ONLY during filesystem scan or entity detection
         # Once entities are ready, switch to dashboard even if AI is running
         elif phase in ("filesystem", "entity_detection") or (is_active and not has_entities):
@@ -6142,6 +6293,7 @@ class FindingsDashboard(QWidget):
     def _show_empty(self):
         self._stack.setCurrentWidget(self._empty_view)
         self._current_view = "empty"
+        self._sync_partial_notice()
 
     def _show_loading(self, phase: str = ""):
         """Show loading state with current phase."""
@@ -6149,14 +6301,79 @@ class FindingsDashboard(QWidget):
             self._loading_view.set_phase(phase)
         self._stack.setCurrentWidget(self._loading_view)
         self._current_view = "loading"
+        self._sync_partial_notice()
 
     def _show_stopped(self):
         """Show stopped state."""
+        self._stopped_view.set_partial_results(self._partial_count(),
+                                               self._partial_size_str())
         self._stack.setCurrentWidget(self._stopped_view)
         self._current_view = "stopped"
+        self._sync_partial_notice()
+
+    def _partial_count(self) -> int:
+        """What a stopped run left behind, if anything.
+
+        display_count() already prefers entities and falls back to findings,
+        which is exactly right here: entity detection is cancelled on stop, so
+        a stopped run usually has findings and no entities at all.
+        """
+        if not self._scan_state:
+            return 0
+        try:
+            return int(self._scan_state.display_count())
+        except Exception:
+            return 0
+
+    def _partial_size_str(self) -> str:
+        if not self._scan_state:
+            return ""
+        try:
+            return _format_size(self._scan_state.total_size)
+        except Exception:
+            return ""
+
+    def _sync_partial_notice(self):
+        """The notice is shown exactly while incomplete results are on screen.
+
+        Driven from state rather than set at the point of the click, so
+        finishing a resumed scan, starting a new one, or landing here from
+        anywhere else all take the notice away without a second code path.
+        """
+        notice = getattr(self, "_partial_notice", None)
+        if notice is None:
+            return
+        stopped = bool(self._scan_state
+                       and self._scan_state.current_phase == "stopped")
+        showing_results = self._current_view in ("dashboard", "category", "tree")
+        show = stopped and self._viewing_partial and showing_results
+        if show:
+            notice.set_counts(self._partial_count(), self._partial_size_str())
+        notice.setVisible(show)
+
+    def _on_view_partial_results(self):
+        """Open the ordinary Findings views over what the stopped run found."""
+        if self._partial_count() <= 0:
+            return
+        self._viewing_partial = True
+        self._show_dashboard()
 
     def _on_resume_analysis(self):
-        """Navigate to analyze screen to resume analysis."""
+        """Continue the stopped walk, from the stopped screen or the notice.
+
+        Falls back to plain navigation when there is no unfinished session on
+        disk to continue from — a stop large enough to be saved in the
+        background may not have landed yet, and sending the user to Analyze is
+        still better than a button that does nothing.
+        """
+        try:
+            from app.state.session_store import load_session_summary
+            data = load_session_summary()
+        except Exception:
+            data = None
+        if data and data.get("status") in ("stopped", "running"):
+            self.resume_requested.emit(data)
+            return
         self.navigate_to_analyze.emit()
 
     def _on_skipped_updated(self):
@@ -6202,6 +6419,15 @@ class FindingsDashboard(QWidget):
     def _on_entities_ready(self):
         """Handle entities ready — switch from loading to dashboard."""
         try:
+            # A stopped run now commits the grouping it managed to finish, so
+            # this fires for partial maps too. Those must land on the stopped
+            # screen and its offer, not be shown as a finished scan.
+            if (self._scan_state
+                    and self._scan_state.current_phase == "stopped"
+                    and self._current_view not in ("category", "tree")):
+                self._last_category_data = None
+                self._update_for_current_state()
+                return
             entity_count = self._scan_state.entity_count if self._scan_state else 0
             if entity_count == 0:
                 # Restore mode: show findings-based dashboard even without entities
@@ -6229,6 +6455,7 @@ class FindingsDashboard(QWidget):
         self._refresh_dashboard()
         self._stack.setCurrentWidget(self._dashboard_container)
         self._current_view = "dashboard"
+        self._sync_partial_notice()
 
     def _show_tree(self):
         """Open the by-folder view over everything the scan found."""
@@ -6239,6 +6466,7 @@ class FindingsDashboard(QWidget):
         self._tree_view.set_entities(items)
         self._stack.setCurrentWidget(self._tree_view)
         self._current_view = "tree"
+        self._sync_partial_notice()
 
     def _show_detail_for_entity(self, entity: dict):
         """A folder picked in the tree opens in its category's list, selected —
@@ -6258,6 +6486,7 @@ class FindingsDashboard(QWidget):
         self._current_view = "category"
         self._current_category = category
         self._viewed_categories.add(category)
+        self._sync_partial_notice()
 
     def open_category(self, category_name: str) -> bool:
         """Open Findings directly to a specific category (called from Analyze category click)."""
@@ -6295,6 +6524,9 @@ class FindingsDashboard(QWidget):
 
     def _on_scan_started(self, target: str):
         """Scan started - show loading state (entities not ready yet)."""
+        # A new or resumed run makes the previous partial view irrelevant: it
+        # either completes, or stops again and gets asked for afresh.
+        self._viewing_partial = False
         self._show_loading("filesystem")
 
     def _on_scan_finished(self):
