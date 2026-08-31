@@ -11,12 +11,13 @@ Bin and can be restored".
 import pytest
 from PySide6.QtWidgets import QCheckBox, QLabel
 
-from app.screens.settings import SettingsScreen, _SCAN_VALUE_WIDTH
+from app.screens.settings import (SettingsScreen, _LABEL_COL_WIDTH,
+                                  _SCAN_VALUE_WIDTH)
 from app.services import keep_list
 from app.themes import theme_manager as tm
 
-_VALUE_COL_X = 259
 _LABEL_COL_X = 37
+_VALUE_COL_X = _LABEL_COL_X + _LABEL_COL_WIDTH + 14     # _setting_row spacing
 
 
 @pytest.fixture

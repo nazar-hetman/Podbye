@@ -426,11 +426,19 @@ class CleanupConfirmDialog(QDialog):
                 # does not say which copy or where it lives. Elided in the
                 # middle so the drive and the leaf both stay visible, with the
                 # whole thing in the tooltip.
-                row_lbl = ElidedLabel(
+                row_line = (
                     f"{tr(normalize_risk(f.get('risk')))}   {path}"
-                    f"   ·   {_format_size(f.get('size_bytes', 0))}",
-                    mode=Qt.ElideMiddle,
+                    f"   ·   {_format_size(f.get('size_bytes', 0))}"
                 )
+                row_lbl = ElidedLabel(row_line, mode=Qt.ElideMiddle)
+                # Stated explicitly, so it is there whether or not the line was
+                # cut. Elsewhere a label offers its text on hover only when it
+                # is too narrow to show it — repeating something already
+                # readable is noise. This is the list you confirm a deletion
+                # from, and being able to check the exact path of every row the
+                # same way, without judging first whether it looks truncated,
+                # is worth the redundancy.
+                row_lbl.setToolTip(row_line)
                 row_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 10px;")
                 c_layout.addWidget(row_lbl)
 

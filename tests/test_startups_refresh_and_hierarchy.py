@@ -7,6 +7,7 @@ disabled row was tinted rgba(138, 155, 143, 9): alpha 9 of 255, a fixed
 forest-ish colour, invisible on every theme and wrong on three of them.
 """
 import pytest
+from PySide6.QtWidgets import QLabel
 
 import app.screens.startups as st
 import app.services.startup_detector as det
@@ -73,12 +74,16 @@ def test_opening_the_page_re_reads_the_machine(screen, qapp, monkeypatch):
     assert calls["n"] >= 1, "the page did not refresh on open"
 
 
-def test_an_unanalysed_page_does_not_walk_the_registry_on_its_own(screen, qapp, monkeypatch):
-    """The first read stays the explicit action the idle page already offers.
+def test_an_unanalysed_page_walks_the_registry_for_itself(screen, qapp, monkeypatch):
+    """Reversed deliberately. This used to assert the opposite — that the first
+    read stays an explicit click — on the grounds that a third of a second is
+    too much to spend for a user who has not asked for anything.
 
-    Otherwise merely opening the tab spends a third of a second in the
-    registry and the Startup folders for a user who has not asked for
-    anything yet.
+    It buys nothing: the click has no decision behind it, because the page has
+    nothing to show until it is pressed, so the only possible answer is yes.
+    The cost that argument was protecting is 275ms, measured over three runs.
+    What must stay behind a decision is the model, which costs minutes and
+    sometimes money — see the test below.
     """
     calls = {"n": 0}
 
@@ -89,8 +94,27 @@ def test_an_unanalysed_page_does_not_walk_the_registry_on_its_own(screen, qapp, 
     monkeypatch.setattr(det, "detect_startup_entries", _detect)
     assert not screen._entries
     screen.show()
-    qapp.processEvents()
-    assert calls["n"] == 0
+    for _ in range(10):
+        qapp.processEvents()
+    assert calls["n"] == 1
+    assert [e.name for e in screen._entries] == ["Alpha"]
+
+
+def test_opening_the_page_twice_reads_the_machine_once_per_visit(screen, qapp, monkeypatch):
+    """The auto-detect is a first-visit path, not a second refresh on top of
+    the one showEvent already did."""
+    calls = {"n": 0}
+
+    def _detect():
+        calls["n"] += 1
+        return [_entry("Alpha")]
+
+    monkeypatch.setattr(det, "detect_startup_entries", _detect)
+    screen.show()
+    for _ in range(10):
+        qapp.processEvents()
+
+    assert calls["n"] == 1, "detected twice on one open"
 
 
 def test_a_refresh_keeps_the_rows_that_are_still_there(screen, qapp, monkeypatch):
@@ -225,14 +249,24 @@ def _contrast(a, b):
 
 @pytest.mark.parametrize("theme", _THEMES)
 def test_a_disabled_row_is_visibly_recessed(qapp, theme):
-    """alpha 9 of 255 was not a state, it was a rounding error."""
+    """alpha 9 of 255 was not a state, it was a rounding error.
+
+    Measured against PanelAlt, which is the surface the list actually draws on
+    — this compared against Panel, one step off, and the value that comfortably
+    cleared the old bar was bg_deep, reported from a screenshot as an odd black
+    shape sitting in the list. bg is the step between: 1.148 forest, 1.145
+    amber, 1.188 mono, 1.076 paper.
+    """
     tm._current_theme_key = theme
     qapp.setStyleSheet(build_qss(theme))
     row = st.StartupListRow(_entry("Off", enabled=False))
     bg = row.styleSheet().split("background:")[1].split(";")[0].strip()
     assert bg != "transparent"
     p = tm.PALETTES[theme]
-    assert _contrast(bg, p["panel"]) >= 1.08, theme + ": disabled row is not distinguishable"
+    assert _contrast(bg, p["panel_alt"]) >= 1.07, (
+        theme + ": disabled row is not distinguishable from the list")
+    assert _contrast(bg, p["panel_alt"]) < _contrast(p["bg_deep"], p["panel_alt"]), (
+        theme + ": as dark as the black-puck value it replaced")
 
 
 @pytest.mark.parametrize("theme", _THEMES)
@@ -264,40 +298,80 @@ def test_selection_separates_from_an_ordinary_row_in_every_theme(theme):
 
 
 # -- the conclusion outranks the explanation ----------------------
+#
+# It has done this three ways now. The reasoning was the only boxed section,
+# which put the frame around the explanation and left the verdict looking like
+# a caption above it; the box then moved to the verdict, tinted in the accent,
+# with a rule left behind to fence off the reasoning. That made the verdict the
+# loudest thing on the screen — louder than the entry's own name — and unlike
+# anything in Findings, which states the same kind of verdict as plain prose
+# with the severity on a small outlined chip.
+#
+# So neither is boxed. The verdict leads by position and weight, the chip
+# carries the colour, and the reasoning follows it as the last section of the
+# same column.
+
 
 @pytest.mark.parametrize("theme", _THEMES)
-def test_the_recommendation_carries_the_container(qapp, theme):
-    """It had none while contextual reasoning sat in a bordered box, which put
-    the frame around the explanation and left the verdict looking like a
-    caption above it."""
+def test_the_verdict_is_not_a_box(qapp, theme):
     tm._current_theme_key = theme
     qapp.setStyleSheet(build_qss(theme))
     panel = st.StartupInspectorPanel()
     try:
         qss = panel._recommendation_frame.styleSheet()
-        assert "border: 1px solid" in qss, theme + ": recommendation has no frame"
-        assert "background: rgba" in qss, theme + ": recommendation has no tint"
+        assert "border: none" in qss, theme + ": the verdict is boxed again"
+        assert "rgba" not in qss, theme + ": the verdict is tinted again"
     finally:
         panel.deleteLater()
 
 
 @pytest.mark.parametrize("theme", _THEMES)
-def test_contextual_reasoning_steps_back(qapp, theme):
-    """Supporting material: a left rule keeps it as one passage without
-    boxing it like a conclusion."""
+def test_the_assessment_is_grouped_not_fenced(qapp, theme):
+    """Reported: with every section drawn as a heading over prose, the
+    assessment blended into IMPACT, RECOMMENDATION and the metadata above it.
+
+    A left rule was the wrong answer — it fenced the block off as though it
+    came from somewhere else. It takes the same box the Findings inspector
+    gives its generated lists, which is what the rest of the app already means
+    by "this part was produced for you".
+    """
     tm._current_theme_key = theme
     qapp.setStyleSheet(build_qss(theme))
     panel = st.StartupInspectorPanel()
     try:
         qss = panel._explanation_host.styleSheet()
-        assert "border: none" in qss, theme + ": reasoning is still boxed"
-        assert "border-left" in qss, theme + ": reasoning lost its grouping rule"
+        assert "1px solid" in qss, theme + ": the assessment has no container"
+        assert "border-left" not in qss, theme + ": fenced rather than grouped"
+        assert "rgba" not in qss, theme + ": tinted like the old verdict box"
     finally:
         panel.deleteLater()
 
 
-def test_the_recommendation_tint_follows_the_verdict(qapp):
-    """A risky entry and a safe one should not carry the same weight."""
+def test_only_the_assessment_is_boxed(qapp):
+    """One box is a grouping; four is the wallpaper this panel started with."""
+    panel = st.StartupInspectorPanel()
+    try:
+        for frame in (panel._impact_frame, panel._recommendation_frame,
+                      panel._action_frame):
+            assert "border: none" in frame.styleSheet()
+    finally:
+        panel.deleteLater()
+
+
+def test_the_verdict_still_outranks_the_prose_that_supports_it(qapp):
+    """Position and weight do it now, in place of a container."""
+    panel = st.StartupInspectorPanel()
+    try:
+        assert "font-weight: 650" in panel._rec_text_lbl.styleSheet()
+        assert "font-weight" not in panel._explanation_lbl.styleSheet()
+    finally:
+        panel.deleteLater()
+
+
+def test_the_verdict_colour_follows_the_verdict(qapp):
+    """A risky entry and a safe one must not read the same. The colour moved
+    from a tinted panel to the chip that states the verdict, which was already
+    the thing saying BOOT IMPACT or NEEDS REVIEW in that exact colour."""
     from PySide6.QtGui import QColor
 
     tm._current_theme_key = "forest"
@@ -306,8 +380,100 @@ def test_the_recommendation_tint_follows_the_verdict(qapp):
     try:
         for accent in (tm.PALETTES["forest"]["safe"], tm.PALETTES["forest"]["risk"]):
             panel._apply_recommendation_style(accent)
+            assert accent in panel._rec_status_lbl.styleSheet()
             q = QColor(accent)
-            channels = str(q.red()) + ", " + str(q.green()) + ", " + str(q.blue())
-            assert channels in panel._recommendation_frame.styleSheet()
+            channels = f"{q.red()}, {q.green()}, {q.blue()}"
+            assert channels in panel._rec_status_lbl.styleSheet(), "chip lost its border"
     finally:
         panel.deleteLater()
+
+
+# -- the panel says who is talking ---------------------------------
+
+def test_the_recommendation_is_not_attributed_to_the_model(qapp):
+    """_startup_recommendation() reads the entry's risk, whether the publisher
+    could be verified, and whether the role works at login. Rules, all of it,
+    and it answers whether AI ran or not.
+
+    Headed "AI RECOMMENDATIONS" the panel said two contradictory things on the
+    same screen: a recommendation credited to AI, above a line reading "AI
+    disabled for this entry".
+    """
+    panel = st.StartupInspectorPanel()
+    try:
+        headings = [w.text() for w in panel.findChildren(QLabel)]
+        assert "RECOMMENDATION" in headings
+        assert not any("AI RECOMMENDATION" in h for h in headings)
+    finally:
+        panel.deleteLater()
+
+
+def test_the_rules_still_speak_when_ai_is_off(qapp):
+    """Which is the point of them: the verdict does not depend on the model."""
+    entry = _entry("Grammarly", risk="Optional", ai="disabled")
+    panel = st.StartupInspectorPanel()
+    try:
+        panel.set_entry(entry)
+
+        assert "Recommendation" in panel._rec_text_lbl.text()
+        assert panel._rec_status_lbl.text()
+    finally:
+        panel.deleteLater()
+
+
+def test_the_assessment_section_is_named_like_findings(qapp):
+    """Both screens hold the same kind of text there — the model's when it ran,
+    the rules' when it did not — so both say PODBYE ASSESSMENT and let the
+    state beside the heading name the author."""
+    panel = st.StartupInspectorPanel()
+    try:
+        headings = [w.text() for w in panel.findChildren(QLabel)]
+        assert "PODBYE ASSESSMENT" in headings
+    finally:
+        panel.deleteLater()
+
+
+# -- asking again ---------------------------------------------------
+
+def test_a_startup_with_an_answer_can_be_asked_again(qapp):
+    """It used to hide the button the moment an answer arrived, so the point
+    at which re-asking becomes useful was the point the control went away."""
+    entry = _entry("Grammarly", ai="ready")
+    panel = st.StartupInspectorPanel(ask_ai_cb=lambda e: "")
+    try:
+        panel.set_entry(entry)
+
+        assert panel._ask_ai_btn.isVisible() or panel._ask_ai_visible_for(entry)
+        assert panel._ask_ai_btn.text() == "Ask again"
+        assert "replace" in panel._ask_ai_btn.toolTip().lower()
+    finally:
+        panel.deleteLater()
+
+
+def test_an_unexplained_startup_is_asked_not_re_asked(qapp):
+    entry = _entry("Grammarly", ai="none")
+    panel = st.StartupInspectorPanel(ask_ai_cb=lambda e: "")
+    try:
+        panel.set_entry(entry)
+
+        assert panel._ask_ai_btn.text() == "Ask AI"
+    finally:
+        panel.deleteLater()
+
+
+def test_nothing_is_offered_while_it_is_already_running(qapp):
+    panel = st.StartupInspectorPanel(ask_ai_cb=lambda e: "")
+    try:
+        for state in ("analyzing", "pending"):
+            assert not panel._ask_ai_visible_for(_entry("X", ai=state))
+    finally:
+        panel.deleteLater()
+
+
+def test_re_asking_regenerates_rather_than_reusing(qapp):
+    """The startup worker has no cache to bypass — it calls the model every
+    time — so the guarantee is that the entry is cleared and re-run."""
+    import inspect
+    src = inspect.getsource(st.StartupAIWorker.run)
+
+    assert "_load_cached" not in src and "cached" not in src

@@ -102,7 +102,7 @@ from app.services.cleanup_result_classifier import (
 )
 from app.themes.theme_manager import rgba as _rgba
 from app.widgets.panels import apply_tactical_label
-from app.widgets.controls import ElidedLabel
+from app.widgets.controls import ElidedLabel, style_container
 
 
 # ── Helpers ───────────────────────────────────────────────────────
@@ -482,7 +482,11 @@ class CleanupRecordDetail(QFrame):
         failed = record.get("failed_count", 0)
         skipped = record.get("skipped_protected_count", 0)
         freed = int(record.get("total_bytes_freed", 0) or 0)
-        total_exceptions = in_use + failed + skipped
+        # Protected items are not exceptions: refusing to touch them is Podbye
+        # working, and counting them here made a clean run report "ATTENTION 12"
+        # for twelve files it had correctly declined to delete. What is worth a
+        # second look is what was *meant* to go and did not.
+        total_exceptions = in_use + failed
         assessment = assess_cleanup_counts(
             succeeded_count=succeeded,
             in_use_count=in_use,
@@ -508,7 +512,7 @@ class CleanupRecordDetail(QFrame):
         for lbl, val, col in [
             (tr("CLEANED"), _format_size(freed), p.get("safe", "#7aa88a")),
             (tr("ITEMS"), f"{succeeded:,}", ""),
-            (tr("ATTENTION"), f"{total_exceptions:,}" if total_exceptions else tr("None"),
+            (tr("NOT REMOVED"), f"{total_exceptions:,}" if total_exceptions else tr("None"),
              p.get("review", "#c7a66c") if total_exceptions else ""),
         ]:
             stats.addLayout(_kv(lbl, val, p, val_size=11,
@@ -966,7 +970,7 @@ class HistoryScreen(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setStyleSheet("border: none;")
+        style_container(scroll, "border: none;")
         scroll.setWidget(content)
         self._outer.addWidget(scroll)
 
@@ -1200,7 +1204,7 @@ class HistoryScreen(QWidget):
     def _badge_cell(self, badge: QWidget) -> QWidget:
         """Center a badge widget within its table cell."""
         holder = QWidget()
-        holder.setStyleSheet("background: transparent;")
+        style_container(holder, "background: transparent;")
         # Let mouse events fall through to the viewport so _RowHoverFilter
         # can detect the row correctly even when the cursor is over the badge.
         holder.setAttribute(Qt.WA_TransparentForMouseEvents, True)

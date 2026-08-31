@@ -201,20 +201,31 @@ def assess_cleanup_counts(
         if in_use_count:
             value = tr("{locked:,} in use · {failed:,} need attention",
                        locked=in_use_count, failed=failed_count)
+        # A run that moved nothing failed. A run that moved most of a category
+        # and hit an error on the rest did not — it is partial, the same as one
+        # blocked by locked files, and calling it "Attention" in red put a
+        # cleanup that freed 40 GB in the same bucket as one that freed none.
+        #
+        # The difference from the in-use case is the *reason*, not the outcome,
+        # and every word below still says so: the summary counts the unexpected
+        # issues and the explanation is about them. Only the verdict changes.
+        state = STATE_PARTIAL if succeeded_count > 0 else STATE_FAILED
         return CleanupAssessment(
-            state=STATE_FAILED,
+            state=state,
             succeeded_count=succeeded_count,
             in_use_count=in_use_count,
             failed_count=failed_count,
             skipped_count=skipped_count,
-            short_label=tr("needs attention"),
+            short_label=(tr("partly cleaned") if succeeded_count
+                         else tr("needs attention")),
             item_label=(
                 tr("✓  {moved:,} moved · {failed:,} unexpected",
                    moved=succeeded_count, failed=failed_count)
                 if succeeded_count
                 else tr("{n:,} could not be cleaned", n=failed_count)
             ),
-            breakdown_label=tr("needs attention"),
+            breakdown_label=(tr("partly cleaned") if succeeded_count
+                             else tr("needs attention")),
             summary_key_label=tr("Failed") if not in_use_count else tr("Status"),
             summary_value=value,
             explanation_text=(

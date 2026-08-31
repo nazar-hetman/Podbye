@@ -13,7 +13,7 @@ from PySide6.QtCore import Qt, Signal, QObject, QTimer
 
 from app.widgets.panels import Panel, apply_tactical_label
 from app.widgets.controls import (ElidedLabel, TacticalCheckBox,
-                                  TacticalComboBox)
+                                  TacticalComboBox, style_container)
 from app.themes.theme_manager import THEME_NAMES, THEME_KEYS, get_palette, theme_signaller
 from app.i18n import tr, available_languages, explanation_languages
 from app.services.ollama_client import LOCAL_ENDPOINT
@@ -27,8 +27,22 @@ def _contains_widget_type(widget: QWidget, widget_types: tuple[type, ...]) -> bo
     return any(isinstance(child, widget_types) for child in widget.findChildren(QWidget))
 
 
+# The label and its description share one column. 208px was narrow enough to
+# wrap "Local finds a model server already running on this machine — Ollama, LM
+# Studio or llama.cpp — on its usual port" onto five lines while the page had
+# 1919px to work with and used a third of it. 320px is still a column — the
+# fields stay where they are and nothing grows to fill the window — but the
+# prose reads in half as many lines, and it fits the app's 1100px minimum
+# window with room to spare.
+_LABEL_COL_WIDTH = 320
+
+# Helper text under a field is the same kind of prose and was in the same
+# state, wrapped to whatever width the control above it happened to have.
+_HELPER_MAX_WIDTH = 460
+
+
 def _setting_row(label_text: str, desc: str, widget: QWidget) -> QVBoxLayout:
-    """A setting row: label col (220px) + widget col, with optional description."""
+    """A setting row: label col + widget col, with optional description."""
     p = get_palette()
     outer = QVBoxLayout()
     outer.setSpacing(0)
@@ -42,14 +56,14 @@ def _setting_row(label_text: str, desc: str, widget: QWidget) -> QVBoxLayout:
     label_col.setSpacing(4)
     lbl = QLabel(label_text)
     lbl.setStyleSheet("font-size: 12px;")
-    lbl.setFixedWidth(208)
+    lbl.setFixedWidth(_LABEL_COL_WIDTH)
     label_col.addWidget(lbl)
     if desc:
         d = QLabel(desc)
         d.setObjectName("Dim")
         d.setStyleSheet("font-size: 11px;")
         d.setWordWrap(True)
-        d.setFixedWidth(208)
+        d.setFixedWidth(_LABEL_COL_WIDTH)
         label_col.addWidget(d)
     row.addLayout(label_col)
 
@@ -104,6 +118,11 @@ _PATH_VALUE_WIDTH = 560
 # so the theme has the last word on the rendered height. What this buys is that
 # both buttons reach it the same way, instead of one carrying an inline
 # min-height that overrode #Ghost's padding while the other did not.
+# A floor, never a ceiling. setFixedHeight() here set the maximum too, and the
+# theme's own padding (7px top and bottom, plus the font) puts a styled button's
+# minimum at 44 — so Qt raised the minimum above the maximum and the widget
+# painted 44px in a slot the layout had reserved 32 for. The bottom 6px of Test
+# and Refresh were clipped, which is what "buttons partially visible" was.
 _ACTION_HEIGHT = 32
 
 
@@ -594,7 +613,7 @@ class SettingsScreen(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("border: none;")
+        style_container(scroll, "border: none;")
 
         content = QWidget()
         lay = QVBoxLayout(content)
@@ -648,7 +667,7 @@ class SettingsScreen(QWidget):
         self._btn_apply_lang = QPushButton(tr("Apply"))
         self._btn_apply_lang.setCursor(Qt.PointingHandCursor)
         self._btn_apply_lang.setEnabled(False)
-        self._btn_apply_lang.setFixedHeight(30)
+        self._btn_apply_lang.setMinimumHeight(30)
         self._btn_apply_lang.setMinimumWidth(80)
         self._restyle_apply_button()
         self._btn_apply_lang.clicked.connect(self._apply_language)
@@ -698,7 +717,7 @@ class SettingsScreen(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("border: none;")
+        style_container(scroll, "border: none;")
 
         content = QWidget()
         lay = QVBoxLayout(content)
@@ -753,7 +772,7 @@ class SettingsScreen(QWidget):
         # and leave the button invisible on a panel_alt panel. Test rendered
         # 12px tall beside a 32px Refresh — two Ghost buttons, one panel.
         self._btn_test.setFixedWidth(_ACTION_COL_WIDTH)
-        self._btn_test.setFixedHeight(_ACTION_HEIGHT)
+        self._btn_test.setMinimumHeight(_ACTION_HEIGHT)
         self._btn_test.clicked.connect(self._test_connection)
         ep_h.addWidget(self._btn_test)
         srv_lay.addLayout(_setting_row(tr("Endpoint"), tr("Ollama-compatible HTTP server. Podbye never reaches the public network."), ep_w))
@@ -782,7 +801,7 @@ class SettingsScreen(QWidget):
         self._btn_start_ollama = QPushButton(tr("Start Ollama"))
         self._btn_start_ollama.setObjectName("Ghost")
         self._btn_start_ollama.setCursor(Qt.PointingHandCursor)
-        self._btn_start_ollama.setFixedHeight(_ACTION_HEIGHT)
+        self._btn_start_ollama.setMinimumHeight(_ACTION_HEIGHT)
         self._btn_start_ollama.setVisible(False)
         self._btn_start_ollama.clicked.connect(self._start_ollama)
         conn_top.addWidget(self._btn_start_ollama)
@@ -812,7 +831,7 @@ class SettingsScreen(QWidget):
         self._btn_refresh_models.setObjectName("Ghost")
         self._btn_refresh_models.setCursor(Qt.PointingHandCursor)
         self._btn_refresh_models.setFixedWidth(_ACTION_COL_WIDTH)
-        self._btn_refresh_models.setFixedHeight(_ACTION_HEIGHT)
+        self._btn_refresh_models.setMinimumHeight(_ACTION_HEIGHT)
         self._btn_refresh_models.clicked.connect(self._test_connection)
         lib_h.addWidget(self._btn_refresh_models)
         lib_h.addStretch()
@@ -826,6 +845,7 @@ class SettingsScreen(QWidget):
         disc.setObjectName("Dim")
         disc.setStyleSheet("font-size: 11px; padding: 2px 0px;")
         disc.setWordWrap(True)
+        disc.setMaximumWidth(_HELPER_MAX_WIDTH)
         srv_lay.addWidget(disc)
 
         lay.addWidget(server_panel)
@@ -857,11 +877,13 @@ class SettingsScreen(QWidget):
         model_hint1.setObjectName("Dim")
         model_hint1.setStyleSheet(self._helper_style())
         model_hint1.setWordWrap(True)
+        model_hint1.setMaximumWidth(_HELPER_MAX_WIDTH)
         model_v.addWidget(model_hint1)
         model_hint2 = QLabel(tr("A model trained before an app existed may not identify it correctly."))
         model_hint2.setObjectName("Dim")
         model_hint2.setStyleSheet(self._helper_style())
         model_hint2.setWordWrap(True)
+        model_hint2.setMaximumWidth(_HELPER_MAX_WIDTH)
         model_v.addWidget(model_hint2)
         mod_lay.addLayout(_setting_row(tr("Active model"), tr("Choose the local model used for explanations."), model_w))
         self._show_no_models()
@@ -912,11 +934,13 @@ class SettingsScreen(QWidget):
         ai_lang_hint1.setObjectName("Dim")
         ai_lang_hint1.setStyleSheet(self._helper_style())
         ai_lang_hint1.setWordWrap(True)
+        ai_lang_hint1.setMaximumWidth(_HELPER_MAX_WIDTH)
         ai_lang_lay.addWidget(ai_lang_hint1)
         ai_lang_hint2 = QLabel(tr("Smaller local models may produce lower quality explanations in some languages."))
         ai_lang_hint2.setObjectName("Dim")
         ai_lang_hint2.setStyleSheet(self._helper_style())
         ai_lang_hint2.setWordWrap(True)
+        ai_lang_hint2.setMaximumWidth(_HELPER_MAX_WIDTH)
         ai_lang_lay.addWidget(ai_lang_hint2)
         expl_lay.addLayout(_setting_row(
             tr("AI explanation language"),
@@ -1022,7 +1046,7 @@ class SettingsScreen(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("border: none;")
+        style_container(scroll, "border: none;")
 
         content = QWidget()
         lay = QVBoxLayout(content)
@@ -1141,6 +1165,7 @@ class SettingsScreen(QWidget):
         method_note.setObjectName("Dim")
         method_note.setStyleSheet("font-size: 11px;")
         method_note.setWordWrap(True)
+        method_note.setMaximumWidth(_HELPER_MAX_WIDTH)
         # Fixed, not a maximum. A word-wrapping QLabel reports a narrow size
         # hint, and the container sizes to it — the note wrapped at 165px and
         # stood eight lines tall instead of three. Wrapping never clips, so
@@ -1208,7 +1233,7 @@ class SettingsScreen(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("border: none;")
+        style_container(scroll, "border: none;")
 
         content = QWidget()
         lay = QVBoxLayout(content)
@@ -1341,6 +1366,7 @@ class SettingsScreen(QWidget):
         disc.setObjectName("Dim")
         disc.setStyleSheet(f"{self._helper_style()} line-height: 1.4;")
         disc.setWordWrap(True)
+        disc.setMaximumWidth(_HELPER_MAX_WIDTH)
         dg_lay.addWidget(disc)
 
         credit = QLabel(tr("Built with Qt for Python (PySide6), used under the LGPL v3."))

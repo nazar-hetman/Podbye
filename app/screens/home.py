@@ -30,6 +30,7 @@ from app.state.session_store import (
 )
 from app.models.finding import _format_size, split_size
 from app.models.risk import normalize_risk, normalized_risk_totals
+from app.widgets.controls import style_container
 from app.themes.theme_manager import get_palette, theme_signaller
 from app.i18n import tr
 
@@ -186,7 +187,7 @@ class HomeScreen(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("border: none;")
+        style_container(scroll, "border: none;")
 
         content = QWidget()
         self._content_layout = QVBoxLayout(content)

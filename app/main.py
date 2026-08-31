@@ -199,6 +199,9 @@ class PodbyeWindow(QMainWindow):
 
         quick_cleanup.navigate_to.connect(self._navigate)
         findings.navigate_to_analyze.connect(lambda: self._navigate("Analyze"))
+        # Same handler as the Home screen's Resume Scan: one resume flow,
+        # reached from wherever a stopped run is visible.
+        findings.resume_requested.connect(self._on_resume_requested)
 
         analyze_screen = self._screens["Analyze"]
         analyze_screen.category_clicked.connect(

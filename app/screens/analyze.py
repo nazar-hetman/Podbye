@@ -15,7 +15,7 @@ from PySide6.QtGui import QColor
 
 from app.widgets.panels import Panel
 from app.widgets.panels import apply_tactical_label
-from app.widgets.controls import TacticalComboBox
+from app.widgets.controls import style_container, TacticalComboBox
 from app.widgets.tables import create_table, set_row, RowHighlightDelegate
 from app.widgets.feeds import OperatorFeed
 from app.models.finding import _format_size
@@ -338,7 +338,7 @@ class AnalyzeScreen(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("border: none;")
+        style_container(scroll, "border: none;")
 
         content = QWidget()
         layout = QVBoxLayout(content)
@@ -380,7 +380,7 @@ class AnalyzeScreen(QWidget):
         self._btn_folder = QPushButton()
         self._btn_folder.setObjectName("TargetFolderBtn")
         self._btn_folder.setCursor(Qt.PointingHandCursor)
-        self._btn_folder.setFixedHeight(30)
+        self._btn_folder.setMinimumHeight(30)
         self._btn_folder.clicked.connect(self._pick_folder)
         tf_lay.addWidget(self._btn_folder, stretch=1)
 
@@ -403,7 +403,7 @@ class AnalyzeScreen(QWidget):
         self._mode_combo.addItem(tr("All files"), "all")
         self._mode_combo.setCurrentIndex(0)
         self._mode_combo.setFixedWidth(188)
-        self._mode_combo.setFixedHeight(32)
+        self._mode_combo.setMinimumHeight(32)
         self._apply_mode_combo_style()
         self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         header.addWidget(self._mode_combo, alignment=Qt.AlignVCenter)
@@ -413,7 +413,7 @@ class AnalyzeScreen(QWidget):
         self._btn_scan.setCursor(Qt.PointingHandCursor)
         self._btn_scan.setEnabled(False)
         self._btn_scan.setFixedWidth(120)
-        self._btn_scan.setFixedHeight(32)
+        self._btn_scan.setMinimumHeight(32)
         self._btn_scan.clicked.connect(self._on_scan_btn)
         self._scan_active = False  # tracks whether we are currently scanning
         self._resuming = False     # set True by resume_scan to skip clear()
@@ -628,9 +628,7 @@ class AnalyzeScreen(QWidget):
         from app.themes.theme_manager import get_palette
         border = get_palette().get("border", "#213028")
         for frame in (self._pf_hdr_frame, self._of_hdr_frame):
-            frame.setStyleSheet(
-                "background: transparent; border: none;"
-            )
+            style_container(frame, "background: transparent; border: none;")
         sep_qss = f"background: {border}; border: none;"
         self._pf_hdr_sep.setStyleSheet(sep_qss)
         self._of_hdr_sep.setStyleSheet(sep_qss)
@@ -1469,12 +1467,14 @@ class AnalyzeScreen(QWidget):
             return
 
         entity_count = self._scan_state.entity_count
+        stopped = self._scan_state.current_phase == "stopped"
 
         self._grouping_complete = True
-        self._pipeline_state = "ai_classifying"
+        self._pipeline_state = "stopped" if stopped else "ai_classifying"
         self._chips[2].set_state("done", f"{entity_count} entities")
-        _set_determinate(self._scan_bar, 100, "#7cc596")
-        self._scan_prog_lbl.setText("100%")
+        if not stopped:
+            _set_determinate(self._scan_bar, 100, "#7cc596")
+            self._scan_prog_lbl.setText("100%")
         self._update_partial_table()
         self._feed.add_line(f"[smart] {entity_count} semantic entities ready")
 
@@ -1483,6 +1483,18 @@ class AnalyzeScreen(QWidget):
             self._scan_state.entity_progress.disconnect(self._on_entity_progress)
         except RuntimeError:
             pass
+
+        if stopped:
+            # A stopped run now commits the grouping it finished, so this slot
+            # fires for it too. Everything below assumes a whole scan: it would
+            # bar the progress at 100%, badge the run Complete, start duplicate
+            # detection over a partial file list, and — worst — call
+            # save_session_final("completed"), overwriting the preserved
+            # "stopped" session that Resume needs to continue from.
+            self._feed.add_line(
+                f"[smart] stopped · {entity_count} entities from a partial scan")
+            self._reset_scan_button()
+            return
 
         ai = self._scan_state.ai_explainer
         self._wire_ai_signals()
@@ -1682,7 +1694,12 @@ class AnalyzeScreen(QWidget):
                 "{entities} entities · {raw:,} raw items · {size}",
                 entities=entity_count, raw=self._scan_state.total_count,
                 size=self._scan_state.total_size_str))
-            self._pf_sub.setText(tr("// Semantic grouping complete"))
+            # A stopped run reaches here too now that its grouping is kept.
+            # These are the categories of what was visited, not of the drive.
+            self._pf_sub.setText(
+                tr("// Partial — analysis was stopped")
+                if self._scan_state.current_phase == "stopped"
+                else tr("// Semantic grouping complete"))
         else:
             self._pf_count.setText(f"{self._scan_state.total_count:,} items · {self._scan_state.total_size_str}")
             self._pf_sub.setText(tr("// Raw file mode"))

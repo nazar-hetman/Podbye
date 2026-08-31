@@ -30,6 +30,8 @@ from pathlib import Path
 
 import pytest
 
+from PySide6.QtWidgets import QApplication
+
 import app.screens.findings_dashboard as fd
 from app.models.entity_contents import items_summary
 from app.themes.theme_manager import build_qss
@@ -157,15 +159,41 @@ def _section_rows(view):
     return [r.label for r in (contents.rows if contents else [])]
 
 
-def test_the_parts_panel_is_what_the_inspector_reads(shallow):
-    assert len(shallow._visible_part_paths()) == 3
+def test_the_inspector_knows_the_parts_it_is_listing(shallow):
+    """It reads them off itself now — they are a section of its own page."""
+    assert len(shallow._detail_widget._shown_as_parts()) == 3
 
 
-def test_a_container_does_not_relist_its_own_parts(shallow):
-    """The reported duplication: the two projects are already above."""
-    assert shallow._detail_widget._current_entity["name"] == "Vendor App"
+def _select_part(view, name):
+    """Pick a part by name. Opening a thing inspects the thing itself, so a
+    test about a part has to say which part."""
+    for row in view._detail_widget._part_row_pool:
+        if not row.isHidden() and row.entity().get("name") == name:
+            row.clicked.emit(row.source_row())
+            _settle(QApplication.instance())
+            return row
+    raise AssertionError(f"no part named {name!r}")
+
+
+def test_a_page_does_not_list_the_same_rows_twice(shallow):
+    """The reported duplication, in the one place it can still happen: a page
+    that lists parts must not repeat them further down as contents."""
+    panel = shallow._detail_widget
+    assert panel._current_entity.get("is_group"), "the page is the thing"
+    listed = {e.get("name") for _sr, e in panel._parts}
+    assert {"ProjectA", "ProjectB"} <= listed
+
     assert "ProjectA" not in _section_rows(shallow)
     assert "ProjectB" not in _section_rows(shallow)
+
+
+def test_a_part_still_lists_what_is_inside_it(shallow):
+    """On its own page there is no parts list to repeat, so its children are
+    not a duplicate of anything - they are the only place they appear."""
+    _select_part(shallow, "Vendor App")
+
+    assert shallow._detail_widget._parts == []
+    assert "ProjectA" in _section_rows(shallow)
 
 
 def test_the_section_goes_away_rather_than_lying_about_the_size(shallow):
@@ -182,31 +210,26 @@ def test_a_breakdown_that_says_something_new_still_appears(deep):
                                            "target-windows-x64"]
 
 
-def test_with_no_panel_above_nothing_is_suppressed(qapp):
-    """The inspector is not always under a parts list, and must not behave as
-    though it were."""
+def test_a_page_with_no_parts_suppresses_nothing(qapp):
+    """A part's own page lists no parts, and its contents are all it has to
+    say — nothing there is a repeat of anything."""
     panel = fd._PreallocDetailPanel(open_cb=lambda p: None,
                                     copy_cb=lambda p: None)
 
     assert panel._shown_as_parts() == ()
 
 
-def test_a_broken_callback_does_not_take_the_inspector_down(qapp):
-    def _boom():
-        raise RuntimeError("the panel went away mid-populate")
-
-    panel = fd._PreallocDetailPanel(open_cb=lambda p: None,
-                                    copy_cb=lambda p: None, parts_cb=_boom)
-
-    assert panel._shown_as_parts() == ()
-
-
 # -- the headings no longer ask the same question ------------------
 
-def test_the_two_headings_are_different_questions(shallow):
-    """WHAT IS INSIDE X over CONTENTS read as one question asked twice."""
-    assert shallow._parts_title_lbl.text() == "PARTS OF"
-    assert shallow._detail_widget._contents_title.text() != "PARTS OF"
+def test_the_two_sections_are_different_questions(shallow):
+    """PARTS and CONTENTS are both lists on one page now, so they have to be
+    plainly different things: what this is made of that you can act on, and
+    what it is made of that you cannot."""
+    panel = shallow._detail_widget
+
+    assert panel._parts_title.text() == "PARTS"
+    assert panel._contents_title.text() != "PARTS"
+    assert panel._name_lbl.text() == "Vendor", "the page is about the thing"
 
 
 def test_the_selected_part_still_gets_its_own_breakdown(deep):

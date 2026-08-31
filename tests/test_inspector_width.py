@@ -271,7 +271,10 @@ def test_the_full_text_stays_in_the_tooltip(qapp):
         panel.set_entry(entry)
 
         assert panel._explanation_lbl.toolTip() == THREE_SENTENCES
-        assert len(panel._explanation_lbl.text()) < len(THREE_SENTENCES)
+        # A text document now, not a label: generated prose can hold a
+        # token no line break fits, and a wrapping QLabel demands its
+        # width. toPlainText() is the same string text() used to give.
+        assert len(panel._explanation_lbl.toPlainText()) < len(THREE_SENTENCES)
     finally:
         panel.deleteLater()
         qapp.processEvents()

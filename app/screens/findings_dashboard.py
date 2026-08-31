@@ -55,7 +55,7 @@ from app.i18n import tr
 from app.widgets.panels import apply_tactical_label
 from app.widgets.controls import (
     ElidedLabel, TacticalCheckBox, TacticalComboBox, ask_ai_button_qss,
-)
+    restyle_needed, style_container)
 
 
 # ── Performance Constants ───────────────────────────────────────────
@@ -744,6 +744,30 @@ def _part_reason_text(entity: dict) -> str:
     return reason or contains
 
 
+def _part_scale_text(entity: dict) -> str:
+    """The short half of a part's subtitle: what differs from its siblings.
+
+    Every part of one group carries the same kind and the same location — "Node
+    .js Dependencies · in Local · Known directory: node_modules" four times
+    down the pane — and the counts in front of it are the only words that are
+    not a repeat. The full sentence is still on the row's tooltip, and it is
+    said once, properly, in the inspector for whichever part is selected.
+
+    A kept path keeps its own sentence: that one is not a repeat, and it is the
+    reason the row offers no checkbox.
+    """
+    if is_kept(entity.get("path", "")):
+        return _part_reason_text(entity)
+    file_count = int(entity.get("file_count", 0) or 0)
+    folder_count = int(entity.get("folder_count", 0) or 0)
+    bits = []
+    if file_count:
+        bits.append(tr("{n:,} files", n=file_count))
+    if folder_count:
+        bits.append(tr("{n:,} folders", n=folder_count))
+    return " · ".join(bits) or _part_reason_text(entity)
+
+
 def _finding_for_path(path: str, measured_bytes: int = 0):
     """Build a Finding for *path* from disk, or None if it is not there.
 
@@ -1387,7 +1411,7 @@ class CategoryCardWidget(QFrame):
 
         # Category name
         name_wrap = QWidget()
-        name_wrap.setStyleSheet("background: transparent; border: none;")
+        style_container(name_wrap, "background: transparent; border: none;")
         name_row = QHBoxLayout(name_wrap)
         name_row.setContentsMargins(0, 0, 0, 0)
         name_row.setSpacing(0)
@@ -2031,6 +2055,8 @@ class ContentRowWidget(QFrame):
 
     def apply_style(self, named: bool = False):
         p = get_palette()
+        if not restyle_needed(self, (bool(named), self._drillable, id(p))):
+            return
         colour = p.get("text" if named else "text_dim", "#d6e2da")
         self._name.setStyleSheet(f"font-size: 12px; color: {colour};")
         self._chevron.setStyleSheet(
@@ -2107,6 +2133,15 @@ class _PreallocDetailPanel(QWidget):
     click in the old _clear_detail_panel() + _build_detail_content() approach.
     """
 
+    part_clicked = Signal(int)          # source row — open that part
+    part_toggled = Signal(int, bool)    # source row, checked — arm it
+    parts_select_all = Signal()
+
+    # How many parts the section draws before folding the rest away. More than
+    # CONTENTS shows, because each of these is an armable decision rather than
+    # a line of evidence.
+    _PART_ROWS_SHOWN = 8
+
     # Never let the key column swallow the panel, however long a translation
     # gets — the value is what the user came to read.
     _KEY_COLUMN_MAX = 190
@@ -2146,7 +2181,6 @@ class _PreallocDetailPanel(QWidget):
         entities_cb: Callable | None = None,
         drill_cb: Callable | None = None,
         back_cb: Callable | None = None,
-        parts_cb: Callable | None = None,
         parent=None,
         compact: bool = False,
     ):
@@ -2165,10 +2199,6 @@ class _PreallocDetailPanel(QWidget):
         self._entities_cb = entities_cb
         self._drill_cb = drill_cb
         self._back_cb = back_cb
-        # The paths the panel above is listing right now. This section is not
-        # the only thing on the right-hand side, and it used to behave as
-        # though it were.
-        self._parts_cb = parts_cb
         self._compact = compact
         self._current_path: str = ""
         self._current_entity: dict = {}
@@ -2227,11 +2257,18 @@ class _PreallocDetailPanel(QWidget):
         self._check_btn.setToolTip(tr("Include this in the cleanup selection"))
         hdr.addWidget(self._check_btn, alignment=Qt.AlignVCenter)
 
-        self._name_lbl = QLabel()
+        # Elided, not wrapped. A wrapping QLabel reports its longest
+        # unbreakable word as its *minimum* width, and an entity name is often
+        # one token — "OneDrive Startup Task-S-1-5-21-3897710897-…" asks for
+        # 405px. The panel's minimum went to 567px inside a 533px viewport with
+        # horizontal scrolling off, so every line in the inspector was cut at
+        # the right edge. Elided in the middle keeps the head and the tail,
+        # which is what identifies these names, and the whole string is on the
+        # tooltip.
+        self._name_lbl = ElidedLabel("", mode=Qt.ElideMiddle)
         self._name_lbl.setStyleSheet(
             "font-family: 'JetBrains Mono'; font-size: 15px; font-weight: bold;"
         )
-        self._name_lbl.setWordWrap(True)
         hdr.addWidget(self._name_lbl, stretch=1)
 
         self._risk_badge = Badge("REVIEW", "review")
@@ -2351,6 +2388,63 @@ class _PreallocDetailPanel(QWidget):
         contents_l.addWidget(self._consequence_lbl)
         self._contents_section.setVisible(False)
 
+        # ── Parts: what this thing is made of, each its own decision ──
+        #
+        # A section of the page rather than a pane beside it. The weight is
+        # deliberately between the two lists it sits between: heavier than a
+        # CONTENTS row, because every one of these is separately armable and
+        # carries its own risk; lighter than a row in the findings list on the
+        # left, because it is not a place to navigate to — it is a thing to
+        # tick, or to open by clicking.
+        self._parts_section = QFrame()
+        self._parts_section.setObjectName("PartsBlock")
+        parts_l = QVBoxLayout(self._parts_section)
+        parts_l.setContentsMargins(0, 0, 0, 0)
+        parts_l.setSpacing(5)
+
+        parts_hdr = QHBoxLayout()
+        parts_hdr.setSpacing(8)
+        self._parts_title = QLabel(tr("PARTS"))
+        apply_tactical_label(self._parts_title, font_size=8, letter_spacing=2)
+        parts_hdr.addWidget(self._parts_title)
+        self._parts_meta = QLabel("")
+        self._parts_meta.setObjectName("Muted")
+        self._parts_meta.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 10px;")
+        parts_hdr.addWidget(self._parts_meta)
+        parts_hdr.addStretch()
+        # Scoped, and it says its scope. The old "Select all visible" armed
+        # every entity behind every collapsed header without showing it.
+        self._btn_select_parts = QPushButton(tr("Select all parts"))
+        self._btn_select_parts.setObjectName("Subtle")
+        self._btn_select_parts.setStyleSheet("font-size: 10px; padding: 1px 7px;")
+        self._btn_select_parts.setCursor(Qt.PointingHandCursor)
+        self._btn_select_parts.clicked.connect(self.parts_select_all.emit)
+        parts_hdr.addWidget(self._btn_select_parts)
+        # Same tail-folding CONTENTS uses. NVIDIA Corporation has 57 parts, and
+        # 57 rows between the identity and the classification would bury both.
+        self._btn_parts_more = QPushButton("")
+        self._btn_parts_more.setObjectName("Subtle")
+        self._btn_parts_more.setStyleSheet("font-size: 10px; padding: 1px 7px;")
+        self._btn_parts_more.setCursor(Qt.PointingHandCursor)
+        self._btn_parts_more.clicked.connect(self._on_parts_more)
+        self._btn_parts_more.setVisible(False)
+        parts_hdr.addWidget(self._btn_parts_more)
+        parts_l.addLayout(parts_hdr)
+
+        self._parts_rows_host = QWidget()
+        self._parts_rows = QVBoxLayout(self._parts_rows_host)
+        self._parts_rows.setContentsMargins(0, 0, 0, 0)
+        self._parts_rows.setSpacing(2)
+        parts_l.addWidget(self._parts_rows_host)
+        self._part_row_pool: list = []
+        self._parts: list = []
+        self._parts_expanded = False
+        self._parts_checked_cb = None
+        self._selected_part_path = ""
+        self._parts_section.setVisible(False)
+        root.addWidget(self._parts_section)
+
         root.addWidget(self._contents_section)
         root.addWidget(self._recommendation_frame)
 
@@ -2385,7 +2479,7 @@ class _PreallocDetailPanel(QWidget):
         self._dup_text.setFrameShape(QFrame.NoFrame)
         self._dup_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._dup_text.document().documentLayout().documentSizeChanged.connect(
-            lambda _size: self._fit_dup_text_height())
+            self._fit_dup_text_height)
         dup_l.addWidget(self._dup_text)
         self._dup_section.setVisible(False)
         root.addWidget(self._dup_section)
@@ -2480,8 +2574,10 @@ class _PreallocDetailPanel(QWidget):
         self._ai_text.setVisible(False)
         # Re-fit whenever the document reflows — on new text and on every panel
         # width change, since wrapping decides how tall the answer is.
+        # Bound method rather than a lambda, so Qt drops the connection with
+        # the panel instead of calling into a destroyed widget.
         self._ai_text.document().documentLayout().documentSizeChanged.connect(
-            lambda _size: self._fit_ai_text_height())
+            self._fit_ai_text_height)
         ai_layout.addWidget(self._ai_text)
 
         self._ai_body.setVisible(False)
@@ -2577,11 +2673,11 @@ class _PreallocDetailPanel(QWidget):
         if self._ai_has_long_reasoning:
             self._fit_ai_text_height()
 
-    def _fit_ai_text_height(self):
+    def _fit_ai_text_height(self, _size=None):
         """Size the answer box to its text so the panel is the only scroller."""
         self._fit_text_height(self._ai_text)
 
-    def _fit_dup_text_height(self):
+    def _fit_dup_text_height(self, _size=None):
         self._fit_text_height(self._dup_text)
 
     @staticmethod
@@ -2729,18 +2825,121 @@ class _PreallocDetailPanel(QWidget):
         elif entity.get("path"):
             self._start_contents_walk(entity["path"])
 
-    def _shown_as_parts(self) -> tuple:
-        """Paths the parts panel is displaying, or () when it is not on screen.
+    # ── Parts ─────────────────────────────────────────────────────────
 
-        A panel that is hidden is not saying anything, so nothing it would have
-        said is suppressed here.
+    def set_parts(self, parts: list, checked_cb=None, selected_path: str = ""):
+        """The entities inside this one, or [] when it has none.
+
+        *parts* is [(source row, entity)] — the row index travels with the
+        entity because arming happens against the model, and the section is a
+        view of it rather than an owner of it.
         """
-        if not self._parts_cb:
-            return ()
-        try:
-            return tuple(self._parts_cb() or ())
-        except Exception:
-            return ()
+        self._parts = list(parts or [])
+        self._parts_checked_cb = checked_cb
+        self._selected_part_path = selected_path or ""
+        self._parts_expanded = False
+        self._render_parts()
+
+    def part_rows(self) -> dict:
+        """path -> row, for the callers that update one row in place."""
+        rows = {}
+        for row in self._part_row_pool:
+            if not row.isHidden():
+                rows[row.entity().get("path", "") or f"row:{row.source_row()}"] = row
+        return rows
+
+    def set_selected_part(self, path: str):
+        self._selected_part_path = path or ""
+        for row in self._part_row_pool:
+            if row.isHidden():
+                continue
+            row_path = row.entity().get("path", "")
+            row.set_selected(bool(path) and row_path == path)
+
+    def _set_parts_meta(self):
+        """Scale, count, and how much of it is armed — the line that has to
+        stay true while someone ticks their way down the list."""
+        total_bytes = sum(int(e.get("size_bytes", 0) or 0) for _sr, e in self._parts)
+        bits = [_format_size(total_bytes),
+                tr("{n} parts", n=len(self._parts)) if len(self._parts) != 1
+                else tr("1 part")]
+        kept = sum(1 for _sr, e in self._parts
+                   if _entity_actionability(e) == "kept")
+        if kept:
+            # Said here because it is why those rows offer no checkbox, and
+            # why Select all parts will not reach them.
+            bits.append(tr("{n} kept", n=kept))
+        armed = sum(1 for source_row, _e in self._parts
+                    if self._parts_checked_cb and self._parts_checked_cb(source_row))
+        if armed:
+            bits.append(tr("{n} selected", n=armed))
+        self._parts_meta.setText(" · ".join(bits))
+
+    def refresh_parts_state(self):
+        """Re-read every box from the model, and restate the count.
+
+        Arming happens against the model — from these rows, from the row the
+        inspector is showing, from Select all parts — and each of those has to
+        leave the section saying the same thing.
+        """
+        for row in self._part_row_pool:
+            if row.isHidden():
+                continue
+            row.set_checked(bool(self._parts_checked_cb
+                                 and self._parts_checked_cb(row.source_row())))
+        if self._parts:
+            self._set_parts_meta()
+
+    def _on_parts_more(self):
+        self._parts_expanded = not self._parts_expanded
+        self._render_parts()
+
+    def _render_parts(self):
+        if not self._parts:
+            for spare in self._part_row_pool:
+                spare.setVisible(False)
+            self._parts_section.setVisible(False)
+            return
+
+        shown = (self._parts if self._parts_expanded
+                 else self._parts[:self._PART_ROWS_SHOWN])
+        hidden = len(self._parts) - len(shown)
+        self._set_parts_meta()
+
+        for index, (source_row, entity) in enumerate(shown):
+            checked = bool(self._parts_checked_cb
+                           and self._parts_checked_cb(source_row))
+            if index < len(self._part_row_pool):
+                row = self._part_row_pool[index]
+                row.bind(source_row, entity, checked)
+            else:
+                row = PartRow(source_row, entity, checked)
+                row.clicked.connect(self.part_clicked.emit)
+                row.check_toggled.connect(self.part_toggled.emit)
+                self._part_row_pool.append(row)
+                self._parts_rows.addWidget(row)
+            row.set_selected(bool(self._selected_part_path)
+                             and entity.get("path", "") == self._selected_part_path)
+            row.setVisible(True)
+        for spare in self._part_row_pool[len(shown):]:
+            spare.setVisible(False)
+
+        self._btn_parts_more.setVisible(bool(hidden) or self._parts_expanded)
+        self._btn_parts_more.setText(
+            tr("Show less") if self._parts_expanded else tr("+{n} more", n=hidden))
+        # Nothing to arm in bulk when there is one row, and the row has its own
+        # box either way.
+        self._btn_select_parts.setVisible(len(self._parts) > 1)
+        self._parts_section.setVisible(True)
+        self._apply_block_styles()
+
+    def _shown_as_parts(self) -> tuple:
+        """The paths this page is already listing as parts.
+
+        Read by the contents section so it does not repeat them a second time
+        further down the same page.
+        """
+        return tuple(e.get("path", "") for _sr, e in self._parts if e.get("path"))
 
     def _start_contents_walk(self, path: str, file_paths=None):
         """Start measuring, with the thread deliberately unparented.
@@ -3051,6 +3250,20 @@ class _PreallocDetailPanel(QWidget):
         )
         if self._contents_section.layout():
             self._contents_section.layout().setContentsMargins(10, 9, 10, 9)
+        # A rung above CONTENTS and well below the findings list: the brighter
+        # of the two borders, because every row in here is a decision with its
+        # own checkbox and its own risk, and the reader has to see at a glance
+        # that this list is not the passive one.
+        self._parts_section.setStyleSheet(
+            f"QFrame#PartsBlock {{ background: transparent; "
+            f"border: 1px solid {p.get('border_alt', '#2b3d33')}; "
+            f"border-radius: 2px; }}"
+        )
+        if self._parts_section.layout():
+            self._parts_section.layout().setContentsMargins(10, 9, 10, 9)
+        self._parts_meta.setStyleSheet(
+            f"font-family: 'JetBrains Mono'; font-size: 10px; "
+            f"color: {p.get('text_dim', '#8a9b8f')};")
         self._apply_contents_style()
         self._ai_content_lbl.setStyleSheet(
             f"font-family: 'JetBrains Mono'; font-size: 12px; color: {p.get('text', '#d6e2da')};"
@@ -3425,8 +3638,15 @@ class _PreallocDetailPanel(QWidget):
         is_app = _is_application_action_target(entity)
         has_uninstaller = _has_uninstaller(entity)
         actionability = _entity_actionability(entity)
+        # A group stands for its parts, and its path is the folder they happen
+        # to share — for Discord's four npm folders that is the whole Discord
+        # installation, hundreds of megabytes of application under a header
+        # reading "4 MB". Nothing here may act on that path. Removal is what
+        # the parts' own checkboxes are for, and the parts are on screen.
+        is_group = bool(entity.get("is_group"))
         allow_recycle = (
             has_path and self._recycle_cb is not None
+            and not is_group
             and actionability not in ("protected", "kept")
         )
         # For an application, Deep Uninstall (the app's own uninstaller) is the
@@ -3459,7 +3679,10 @@ class _PreallocDetailPanel(QWidget):
         # Protected is Podbye's refusal, Keep is the user's; neither can be
         # armed. The checked state itself comes from the model, through
         # set_armed().
-        armable = has_path and actionability not in ("protected", "kept")
+        # A group has no row of its own to arm — its parts each have one, and
+        # they are listed directly above with their own boxes.
+        armable = (has_path and not is_group
+                   and actionability not in ("protected", "kept"))
         self._check_btn.setEnabled(armable)
         self._check_btn.setVisible(armable)
 
@@ -3468,7 +3691,7 @@ class _PreallocDetailPanel(QWidget):
         # several folders. On something already kept the button is the way
         # back out, so it says so.
         kept_now = actionability == "kept"
-        can_offer = (self._keep_cb is not None and has_path
+        can_offer = (self._keep_cb is not None and has_path and not is_group
                      and actionability != "protected"
                      and (kept_now or can_keep(path)))
         self._btn_keep.setVisible(can_offer)
@@ -3501,13 +3724,19 @@ class RightSidebar(QFrame):
         entities_cb: Callable | None = None,
         drill_cb: Callable | None = None,
         back_cb: Callable | None = None,
-        parts_cb: Callable | None = None,
+        scrolls: bool = True,
         parent=None,
     ):
         super().__init__(parent)
         self.setObjectName("RightSidebar")
         self.setMinimumWidth(280)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # *scrolls* False means something outside is the scroller and this grows
+        # to its content instead — the entity-first arrangement, where the whole
+        # right pane is one scroll and a viewport of its own here would be the
+        # nested scrolling that arrangement exists to remove.
+        self._scrolls = bool(scrolls)
+        self.setSizePolicy(QSizePolicy.Expanding,
+                           QSizePolicy.Expanding if scrolls else QSizePolicy.Minimum)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 10, 12, 12)
@@ -3530,7 +3759,9 @@ class RightSidebar(QFrame):
         layout.addWidget(self._sep)
 
         self._stack = QStackedWidget()
-        self._stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._stack.setSizePolicy(
+            QSizePolicy.Expanding,
+            QSizePolicy.Expanding if scrolls else QSizePolicy.Minimum)
 
         self._empty = QLabel(tr("Select a finding to inspect its metadata, risk, and AI reasoning."))
         self._empty.setAlignment(Qt.AlignCenter)
@@ -3539,11 +3770,13 @@ class RightSidebar(QFrame):
         self._empty.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 12px; padding: 22px;")
         self._stack.addWidget(self._empty)
 
-        self._scroll = QScrollArea()
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._scroll.setFrameShape(QFrame.NoFrame)
-        self._scroll.setStyleSheet("border: none; background: transparent;")
+        self._scroll = None
+        if self._scrolls:
+            self._scroll = QScrollArea()
+            self._scroll.setWidgetResizable(True)
+            self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self._scroll.setFrameShape(QFrame.NoFrame)
+            style_container(self._scroll, "border: none; background: transparent;")
 
         self.detail_widget = _PreallocDetailPanel(
             open_cb=open_cb,
@@ -3558,13 +3791,19 @@ class RightSidebar(QFrame):
             entities_cb=entities_cb,
             drill_cb=drill_cb,
             back_cb=back_cb,
-            parts_cb=parts_cb,
             compact=True,
         )
-        self.detail_widget.setStyleSheet("background: transparent; border: none;")
+        style_container(self.detail_widget, "background: transparent; border: none;")
         self.detail_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        self._scroll.setWidget(self.detail_widget)
-        self._stack.addWidget(self._scroll)
+        # The page the stack shows when there is something to inspect: the
+        # scroll area, or the panel itself when the scrolling is somebody
+        # else's job.
+        if self._scroll is not None:
+            self._scroll.setWidget(self.detail_widget)
+            self._content_page = self._scroll
+        else:
+            self._content_page = self.detail_widget
+        self._stack.addWidget(self._content_page)
 
         layout.addWidget(self._stack, stretch=1)
         self.apply_style()
@@ -3577,25 +3816,38 @@ class RightSidebar(QFrame):
         line = QColor(p.get("border", "#213028"))
         line.setAlpha(58)
         line_rgba = f"rgba({line.red()}, {line.green()}, {line.blue()}, {line.alpha()})"
-        # No card here. This is the lower section of the inspector shell, not
-        # a window beside it, and the shell paints the surface both sections
-        # stand on — see CategoryDetailView._apply_inspector_shell_style.
+        # The card is back here, because there is only one pane to draw it
+        # around: the parts, the thing they belong to and the part currently
+        # open are all sections of this one page now.
         self.setStyleSheet(
-            "QFrame#RightSidebar { background: transparent; border: none; }"
+            f"QFrame#RightSidebar {{ background: {detail_bg}; "
+            f"border: 1px solid {p.get('border_alt', '#2b3d33')}; "
+            f"border-radius: 2px; }}"
         )
         self._sep.setStyleSheet(f"background: {line_rgba}; border: none;")
         self._empty.setStyleSheet(
             f"font-family: 'JetBrains Mono'; font-size: 12px; "
             f"color: {faint}; padding: 22px;"
         )
-        self.detail_widget.setStyleSheet(f"background: {detail_bg}; border: none;")
+        style_container(self.detail_widget, f"background: {detail_bg}; border: none;")
         self.detail_widget._apply_block_styles()
 
-    def populate(self, entity: dict, trail: list | None = None):
+    def populate(self, entity: dict, trail: list | None = None,
+                 parent_name: str = ""):
         self.detail_widget.populate(entity)
         self.detail_widget.set_trail(trail or [])
-        self._meta.setText(tr("// inside") if trail else tr("// selected"))
-        self._stack.setCurrentWidget(self._scroll)
+        # Name the parent when there is one. "// selected" says this is the
+        # selection; "// part of Discord" says what it is a selection *in*,
+        # which is the sentence the pane was missing.
+        if parent_name:
+            # Set only when this is a part of something and nothing has been
+            # drilled into, so it outranks the generic "inside".
+            self._meta.setText(tr("// part of {name}", name=parent_name))
+        elif trail:
+            self._meta.setText(tr("// inside"))
+        else:
+            self._meta.setText(tr("// selected"))
+        self._stack.setCurrentWidget(self._content_page)
 
     def clear(self):
         self.detail_widget._current_path = ""
@@ -3770,6 +4022,11 @@ class ThingRow(QFrame):
 
     def _apply_style(self):
         p = get_palette()
+        # The armed count below is text and must always be refreshed; the
+        # sheets above it are the expensive part, and only change with these.
+        if not restyle_needed(self, (self._selected, self._hovered, id(p))):
+            self.refresh_armed()
+            return
         primary = p.get("text", "#d6e2da")
         if self._selected:
             accent = p.get("accent", "#7cc596")
@@ -3815,7 +4072,13 @@ class PartRow(QFrame):
         self.setObjectName("PartRow")
         self.setCursor(Qt.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        self.setMinimumHeight(50)
+        # One line. It was two, and the second carried the whole reason —
+        # "617 files · 31 folders · Node.js Dependencies · in Local · Known
+        # directory: node_modules" — of which only the counts differ between
+        # the siblings in a list. The rest is the same sentence repeated down
+        # the pane, and it is said properly in the inspector below, on the part
+        # you actually picked. The tooltip keeps it for the pointer.
+        self.setMinimumHeight(34)
 
         self._source_row = source_row
         self._entity = entity
@@ -3823,7 +4086,7 @@ class PartRow(QFrame):
         self._hovered = False
 
         outer = QHBoxLayout(self)
-        outer.setContentsMargins(12, 7, 12, 7)
+        outer.setContentsMargins(12, 4, 12, 4)
         outer.setSpacing(10)
 
         self._check_btn = _FindingSelectionCheckBox()
@@ -3831,23 +4094,21 @@ class PartRow(QFrame):
             lambda checked_: self.check_toggled.emit(self._source_row, checked_))
         outer.addWidget(self._check_btn, alignment=Qt.AlignVCenter)
 
-        center = QVBoxLayout()
-        center.setSpacing(2)
-        title_row = QHBoxLayout()
-        title_row.setSpacing(6)
         self._name_lbl = ElidedLabel("")
         self._name_lbl.setStyleSheet("font-size: 13px; font-weight: 650;")
-        title_row.addWidget(self._name_lbl, stretch=1)
-        self._risk_badge = Badge(tr("Review"), "review")
-        title_row.addWidget(self._risk_badge, alignment=Qt.AlignVCenter)
-        center.addLayout(title_row)
+        outer.addWidget(self._name_lbl, stretch=3)
 
+        # What differs between one part and the next, on the same line as the
+        # name: how much is in it. Everything the siblings share went to the
+        # tooltip and to the inspector.
         self._why_lbl = ElidedLabel("")
         self._why_lbl.setObjectName("Muted")
         self._why_lbl.setStyleSheet(
             "font-family: 'JetBrains Mono'; font-size: 10px;")
-        center.addWidget(self._why_lbl)
-        outer.addLayout(center, stretch=1)
+        outer.addWidget(self._why_lbl, stretch=2)
+
+        self._risk_badge = Badge(tr("Review"), "review")
+        outer.addWidget(self._risk_badge, alignment=Qt.AlignVCenter)
 
         self._size_lbl = QLabel("")
         self._size_lbl.setStyleSheet(
@@ -3865,7 +4126,8 @@ class PartRow(QFrame):
         self._name_lbl.setText(_duplicate_title(entity) if is_duplicate
                                else entity.get("name", tr("Unknown")))
         self._size_lbl.setText(entity.get("size", "\u2014"))
-        self._why_lbl.setText(_part_reason_text(entity))
+        self._why_lbl.setText(_part_scale_text(entity))
+        self.setToolTip(_part_reason_text(entity))
 
         action = _entity_actionability(entity)
         if action == "kept":
@@ -3919,6 +4181,9 @@ class PartRow(QFrame):
 
     def _apply_style(self):
         p = get_palette()
+        if not restyle_needed(self, (self._selected, self._hovered, id(p))):
+            self._check_btn.update()
+            return
         primary = p.get("text", "#d6e2da")
         if self._selected:
             self.setStyleSheet(
@@ -3931,14 +4196,21 @@ class PartRow(QFrame):
         else:
             self.setStyleSheet(
                 "QFrame#PartRow { background: transparent; border: none; }")
+        # transparent, explicitly. A label carrying its own stylesheet fills
+        # its rect with the inherited window colour, and that colour is the
+        # panel's — so a row highlight showed only in the gaps between the
+        # labels, which is the partial band that was reported. Measured on a
+        # hovered row: the gaps painted #1f2c24 while every label area stayed
+        # #19231c.
         self._name_lbl.setStyleSheet(
-            f"font-size: 13px; font-weight: 650; color: {primary};")
+            f"background: transparent; font-size: 13px; font-weight: 650; "
+            f"color: {primary};")
         self._why_lbl.setStyleSheet(
-            f"font-family: 'JetBrains Mono'; font-size: 10px; "
-            f"color: {p.get('text_dim', '#8a9b8f')};")
+            f"background: transparent; font-family: 'JetBrains Mono'; "
+            f"font-size: 10px; color: {p.get('text_dim', '#8a9b8f')};")
         self._size_lbl.setStyleSheet(
-            f"font-family: 'JetBrains Mono'; font-size: 12px; "
-            f"font-weight: 600; color: {primary};")
+            f"background: transparent; font-family: 'JetBrains Mono'; "
+            f"font-size: 12px; font-weight: 600; color: {primary};")
         self._check_btn.update()
 
 
@@ -4120,7 +4392,6 @@ class CategoryDetailView(QFrame):
         # _row_widgets maps a part's path to its row so a single entity update
         # can find it without a rebuild.
         self._row_pool: list[ThingRow] = []
-        self._part_pool: list[PartRow] = []
         self._row_widgets: dict[str, PartRow] = {}
         self._things_by_key: dict[str, dict] = {}
         self._selected_thing_key: str = ""
@@ -4335,7 +4606,7 @@ class CategoryDetailView(QFrame):
         self._list_scroll.setWidgetResizable(True)
         self._list_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._list_scroll.setFrameShape(QFrame.NoFrame)
-        self._list_scroll.setStyleSheet("border: none; background: transparent;")
+        style_container(self._list_scroll, "border: none; background: transparent;")
 
         self._list_host = QWidget()
         self._list_layout = QVBoxLayout(self._list_host)
@@ -4354,71 +4625,7 @@ class CategoryDetailView(QFrame):
         list_outer.addWidget(self._list_scroll, stretch=1)
         self._results_stack_layout.addWidget(self._list_panel, stretch=1)
 
-        # ── Right pane: what is inside the selected thing ────────
-        self._parts_panel = QFrame()
-        self._parts_panel.setObjectName("InspectorSection")
-        self._parts_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        parts_outer = QVBoxLayout(self._parts_panel)
-        parts_outer.setContentsMargins(0, 0, 0, 0)
-        parts_outer.setSpacing(0)
-
-        parts_hdr = QHBoxLayout()
-        parts_hdr.setContentsMargins(14, 12, 14, 6)
-        parts_hdr.setSpacing(8)
-        # "WHAT IS INSIDE X" over a list of parts, above an inspector whose own
-        # section is headed CONTENTS, read as one question asked twice. They
-        # are different questions: this is what the *group* is made of, each
-        # part its own decision with its own checkbox; CONTENTS below is what
-        # the *selected part* is made of, and none of it is separately
-        # removable. The heading now names the relationship instead of
-        # describing a direction.
-        self._parts_title_lbl = QLabel(tr("PARTS OF"))
-        apply_tactical_label(self._parts_title_lbl, font_size=9, letter_spacing=2)
-        parts_hdr.addWidget(self._parts_title_lbl)
-        self._parts_name_lbl = ElidedLabel("")
-        self._parts_name_lbl.setStyleSheet(
-            "font-family: 'JetBrains Mono'; font-size: 11px; font-weight: 700;")
-        parts_hdr.addWidget(self._parts_name_lbl, stretch=1)
-        # Scoped, and it says its scope. The old "Select all visible" armed
-        # every entity behind every collapsed header without showing it.
-        self._btn_select_parts = QPushButton(tr("Select all parts"))
-        self._btn_select_parts.setObjectName("Subtle")
-        self._btn_select_parts.setStyleSheet("font-size: 10px; padding: 2px 8px;")
-        self._btn_select_parts.setCursor(Qt.PointingHandCursor)
-        self._btn_select_parts.clicked.connect(self._select_all_parts)
-        self._btn_select_parts.setVisible(False)
-        parts_hdr.addWidget(self._btn_select_parts)
-        parts_outer.addLayout(parts_hdr)
-
-        self._parts_summary_lbl = ElidedLabel("")
-        self._parts_summary_lbl.setObjectName("Muted")
-        self._parts_summary_lbl.setStyleSheet(
-            "font-family: 'JetBrains Mono'; font-size: 10px; padding: 0 14px 8px 14px;")
-        parts_outer.addWidget(self._parts_summary_lbl)
-
-        self._parts_sep = QFrame()
-        self._parts_sep.setFixedHeight(1)
-        parts_outer.addWidget(self._parts_sep)
-
-        self._parts_scroll = QScrollArea()
-        self._parts_scroll.setWidgetResizable(True)
-        self._parts_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._parts_scroll.setFrameShape(QFrame.NoFrame)
-        self._parts_scroll.setStyleSheet("border: none; background: transparent;")
-        self._parts_host = QWidget()
-        self._parts_layout = QVBoxLayout(self._parts_host)
-        self._parts_layout.setContentsMargins(6, 6, 14, 6)
-        self._parts_layout.setSpacing(4)
-        self._parts_empty_lbl = QLabel(
-            tr("Pick an app or folder on the left to see what is inside it."))
-        self._parts_empty_lbl.setAlignment(Qt.AlignCenter)
-        self._parts_empty_lbl.setObjectName("Muted")
-        self._parts_empty_lbl.setStyleSheet("font-size: 12px; padding: 24px 0px;")
-        self._parts_layout.addWidget(self._parts_empty_lbl)
-        self._parts_layout.addStretch()
-        self._parts_scroll.setWidget(self._parts_host)
-        parts_outer.addWidget(self._parts_scroll, stretch=1)
-
+        # ── Right pane: one inspector, one scrollbar ────────────
         self._right_sidebar = RightSidebar(
             open_cb=self._open_in_explorer,
             copy_cb=self._copy_path,
@@ -4432,44 +4639,14 @@ class CategoryDetailView(QFrame):
             entities_cb=self._all_entities,
             drill_cb=self._drill_into,
             back_cb=self._drill_back,
-            parts_cb=self._visible_part_paths,
         )
         self._detail_widget = self._right_sidebar.detail_widget
-
-        # The parts list and the detail share the right pane, and the user
-        # decides how much of each they want.
-        self._right_split = QSplitter(Qt.Vertical)
-        self._right_split.setObjectName("InspectorSplit")
-        self._right_split.setChildrenCollapsible(False)
-        # Room for a hairline with air around it, rather than a 1px handle
-        # wedged between two panel edges.
-        self._right_split.setHandleWidth(11)
-        self._right_split.addWidget(self._parts_panel)
-        self._right_split.addWidget(self._right_sidebar)
-        # Sized to its contents, not to a fixed share — see _fit_parts_pane.
-        self._parts_panel.setMinimumHeight(96)
-        self._right_split.setStretchFactor(0, 0)
-        self._right_split.setStretchFactor(1, 1)
-
-        # One inspector with two sections in it, not two windows that happen to
-        # be stacked. Each pane used to carry its own border, so the seam
-        # between them was panel edge, splitter handle, panel edge — three
-        # lines saying "separate tool" about a group and the part of it
-        # currently selected. The card is out here now and the panes are drawn
-        # on its surface, so the eye reads one hierarchy: the group, its parts,
-        # the selected part, what that part is made of.
-        #
-        # It is still a splitter. The handle is drawn as the rule between the
-        # two sections and lights up on hover, so the drag stays discoverable
-        # while it is doing double duty as the separator.
-        self._inspector_shell = QFrame()
-        self._inspector_shell.setObjectName("InspectorShell")
-        shell_layout = QVBoxLayout(self._inspector_shell)
-        shell_layout.setContentsMargins(0, 0, 0, 0)
-        shell_layout.setSpacing(0)
-        shell_layout.addWidget(self._right_split)
-        results_shell_layout.addWidget(self._inspector_shell, stretch=7)
-        self._apply_inspector_shell_style()
+        # Arming and opening both come from rows the inspector owns now, so
+        # they arrive as signals from it rather than from a pane of our own.
+        self._detail_widget.part_clicked.connect(self._select_source_row)
+        self._detail_widget.part_toggled.connect(self._set_checked_state)
+        self._detail_widget.parts_select_all.connect(self._select_all_parts)
+        results_shell_layout.addWidget(self._right_sidebar, stretch=7)
 
         soft_line = QColor(get_palette().get("border", "#213028"))
         soft_line.setAlpha(58)
@@ -4478,7 +4655,6 @@ class CategoryDetailView(QFrame):
             f"{soft_line.blue()}, {soft_line.alpha()})"
         )
         self._list_sep.setStyleSheet(f"background: {line_rgba}; border: none;")
-        self._parts_sep.setStyleSheet(f"background: {line_rgba}; border: none;")
         self._right_sidebar.apply_style()
 
         layout.addWidget(self._results_shell, stretch=1)
@@ -4571,8 +4747,11 @@ class CategoryDetailView(QFrame):
         # never re-render the whole list. This is what keeps toggling (and
         # bulk select-all) responsive.
         self._update_selection_display()
-        if not self._row_widgets:
-            return
+        # Only the rows that changed, and only if any are on screen — but the
+        # counters below run either way. That guard used to cover them too, so
+        # whether the left pane could state what was armed depended on whether
+        # the *right* pane happened to be listing parts: select-all on a
+        # single-part thing left every count at zero.
         for src in range(top_left.row(), bottom_right.row() + 1):
             entity = self._model.get_entity(src)
             if not entity:
@@ -4589,7 +4768,7 @@ class CategoryDetailView(QFrame):
         if thing is not None:
             thing["armed"] = sum(1 for r in thing["rows"]
                                  if r >= 0 and self._model.is_checked(r))
-            self._parts_summary_lbl.setText(self._thing_summary(thing))
+        self._detail_widget.refresh_parts_state()
 
     def _on_search_text_changed(self, text: str):
         if not text:
@@ -4765,6 +4944,12 @@ class CategoryDetailView(QFrame):
     def _drill_back(self):
         """Up one level, to whatever we drilled in from."""
         if not self._inspect_trail:
+            # Not drilled into anything, so the crumb is the one over a part:
+            # it points at the thing the part belongs to.
+            if self._opened_thing_name():
+                self._selected_path = ""
+                self._sync_row_selection()
+                self._inspect_parent()
             return
         path = self._inspect_trail.pop()
         for entity in self._all_entities():
@@ -4792,8 +4977,31 @@ class CategoryDetailView(QFrame):
             # A fresh click in either pane leaves wherever you had drilled to.
             self._inspect_trail = []
         self._inspected_path = entity.get("path", "")
+        # Two different crumbs, and only one at a time. Drilling into contents
+        # keeps its own trail; a part with no trail gets a crumb back to the
+        # thing it belongs to, which is what makes the parts a way *into*
+        # something rather than a list beside it. A group is nobody's part, so
+        # it gets neither.
+        drill = self._trail_names()
+        parent = ("" if drill or entity.get("is_group")
+                  else self._opened_thing_name())
+        trail = drill or ([parent] if parent else [])
+        # A page shows the parts of the thing it is about. The thing has them;
+        # a part of it does not, and its own contents take that place instead.
+        thing = self._current_thing()
+        parts = []
+        if entity.get("is_group") and thing is not None and len(thing["parts"]) > 1:
+            parts = list(zip(thing["rows"], thing["parts"]))
         try:
-            self._right_sidebar.populate(entity, self._trail_names())
+            # Parts first: the contents section asks the page what it is
+            # already listing, so it has to be listing it by then. Populated
+            # the other way round, a group repeated its own parts underneath
+            # itself — the duplication this order exists to prevent.
+            self._detail_widget.set_parts(
+                parts, checked_cb=lambda row: row >= 0 and self._model.is_checked(row),
+                selected_path=self._selected_path)
+            self._row_widgets = self._detail_widget.part_rows()
+            self._right_sidebar.populate(entity, trail, parent_name=parent)
             self._sync_inspector_arm()
             QTimer.singleShot(0, self, self._ensure_selected_row_visible)
         except Exception as exc:
@@ -5127,30 +5335,6 @@ class CategoryDetailView(QFrame):
 
     # ── Things: the left pane ─────────────────────────────────────
 
-    def _apply_inspector_shell_style(self):
-        """The one card, and the rule dividing the two sections inside it."""
-        p = get_palette()
-        line = QColor(p.get("border", "#213028"))
-        line.setAlpha(58)
-        rule = (f"rgba({line.red()}, {line.green()}, {line.blue()}, "
-                f"{line.alpha()})")
-        self._inspector_shell.setStyleSheet(
-            f"QFrame#InspectorShell {{ background: {p.get('panel_alt', '#18241e')}; "
-            f"border: 1px solid {p.get('border_alt', '#2b3d33')}; "
-            f"border-radius: 2px; }}"
-        )
-        # Both sections sit on the shell's surface. The same colour they each
-        # painted for themselves before, minus the borders that made two of it.
-        self._parts_panel.setStyleSheet(
-            "QFrame#InspectorSection { background: transparent; border: none; }"
-        )
-        self._right_split.setStyleSheet(
-            f"QSplitter#InspectorSplit::handle:vertical {{ background: {rule}; "
-            f"height: 1px; margin: 5px 14px; }}"
-            f"QSplitter#InspectorSplit::handle:vertical:hover {{ "
-            f"background: {p.get('border_hover', '#3a5648')}; }}"
-        )
-
     def _app_index(self):
         """Registry install-location -> display name, read once per screen."""
         if getattr(self, "_app_index_cache", None) is None:
@@ -5333,111 +5517,62 @@ class CategoryDetailView(QFrame):
     def _current_thing(self) -> dict | None:
         return self._things_by_key.get(self._selected_thing_key)
 
-    def _visible_part_paths(self) -> tuple:
-        """What the parts panel is listing right now, or () when it lists nothing.
+    def _inspect_parent(self, thing: dict | None = None):
+        """Show the thing itself in the inspector.
 
-        Read by the inspector so its own section does not repeat rows the user
-        can already see above it. Derived on each call rather than cached:
-        _rebuild_parts sets the panel's rows and its visibility in the same
-        pass that then populates the inspector, so a cached copy would be one
-        selection behind exactly when it mattered.
+        A group is described by the same display dict the left-hand row is
+        drawn from — name, where it lives, its total size, how many files and
+        folders, its category and risk — which was assembled for that row and
+        never shown anywhere a person could read it properly.
+        """
+        thing = thing or self._current_thing()
+        if thing is None:
+            return
+        group = thing.get("group")
+        entity = (self._group_header_entity(group, len(thing["parts"]))
+                  if group else thing["parts"][0])
+        self._show_detail_sidebar(entity)
 
-        The single-part case returns nothing because the panel is hidden there
-        — a hidden panel is not saying anything, so nothing it would have said
-        should be suppressed.
+    def _opened_thing_name(self) -> str:
+        """The thing whose parts the inspector is listing, or "".
+
+        Said in the crumb and the caption over a part, so a part reads as part
+        of what you opened rather than as an unrelated selection.
         """
         thing = self._current_thing()
         if thing is None or len(thing["parts"]) <= 1:
-            return ()
-        if not self._parts_panel.isVisibleTo(self):
-            return ()
-        return tuple(e.get("path", "") for e in thing["parts"] if e.get("path"))
+            return ""
+        return thing.get("name", "")
 
     def _rebuild_parts(self):
-        """List the selected thing's parts — the only place arming happens."""
+        """Hand the selected thing's parts to the inspector.
+
+        They are a section of the page now, not a pane above it. The list, the
+        thing it belongs to and the part currently open are one column with one
+        scrollbar, which is what stops the right side reading as two tables
+        that happen to be stacked.
+        """
         thing = self._current_thing()
         self._row_widgets.clear()
         if thing is None:
-            for row in self._part_pool:
-                row.setVisible(False)
-            self._parts_name_lbl.setText("")
-            self._parts_summary_lbl.setText("")
-            self._parts_empty_lbl.setVisible(True)
-            self._btn_select_parts.setVisible(False)
-            self._parts_panel.setVisible(True)
+            self._detail_widget.set_parts([])
             self._clear_detail_sidebar()
             return
 
-        self._parts_name_lbl.setText(thing["name"])
-        self._parts_summary_lbl.setText(self._thing_summary(thing))
-        self._parts_empty_lbl.setVisible(False)
-        eligible = [r for r, e in zip(thing["rows"], thing["parts"])
-                    if r >= 0 and _entity_actionability(e)
-                    not in ("protected", "kept")]
-        self._btn_select_parts.setVisible(len(eligible) > 1)
-
-        for idx, (sr, entity) in enumerate(zip(thing["rows"], thing["parts"])):
-            checked = self._model.is_checked(sr) if sr >= 0 else False
-            if idx < len(self._part_pool):
-                row = self._part_pool[idx]
-                row.bind(sr, entity, checked)
-                row.setVisible(True)
-            else:
-                row = PartRow(sr, entity, checked)
-                row.clicked.connect(self._select_source_row)
-                row.check_toggled.connect(self._set_checked_state)
-                self._part_pool.append(row)
-                self._parts_layout.insertWidget(
-                    self._parts_layout.count() - 1, row)
-                row.setVisible(True)
-            path = entity.get("path", "")
-            row.set_selected(bool(path) and path == self._selected_path)
-            self._row_widgets[path or f"row:{sr}"] = row
-        for j in range(len(thing["parts"]), len(self._part_pool)):
-            self._part_pool[j].setVisible(False)
-
-        # One part is not a decomposition — it is the thing restating its own
-        # name and size ("WHAT IS INSIDE Models / Models 90.6 GB"). Shrinking
-        # that pane was not enough; there is nothing in it worth a pane. The
-        # inspector below carries the checkbox, so nothing is lost.
-        self._parts_panel.setVisible(len(thing["parts"]) > 1)
-        self._fit_parts_pane(len(thing["parts"]))
-
-        # Open on a part, always. The inspector is the evidence for the row
-        # the user is about to tick, so it must never be empty while a thing
-        # is on screen.
+        # Open on the thing itself, not on the biggest piece of it. Opening
+        # Discord used to select discord_spellcheck and describe that, so
+        # Discord's own location, scale and risk appeared nowhere. The thing
+        # you opened is the subject; its parts are how you go deeper, and
+        # picking one puts a crumb back to here.
         paths = [e.get("path", "") for e in thing["parts"]]
         if self._selected_path not in paths:
-            self._select_source_row(thing["rows"][0])
-        elif self._selected_path:
+            self._selected_path = ""
+            self._inspect_parent(thing)
+        else:
             entity = next((e for e in thing["parts"]
                            if e.get("path", "") == self._selected_path), None)
             if entity is not None:
                 self._show_detail_sidebar(entity)
-
-    _PART_ROW_PX = 54
-    _PARTS_CHROME_PX = 74
-    _PARTS_MAX_SHARE = 0.55
-
-    def _fit_parts_pane(self, part_count: int):
-        """Give the parts list the height its rows need and no more.
-
-        A thing with one part was drawing a half-height pane to say "Models
-        contains Models" — the redundancy that made the old "What is inside"
-        panel feel like wasted space, reproduced faithfully. A thing with 28
-        parts still gets its half; a thing with one gets a strip.
-
-        It stays a splitter, so a user who wants a different balance can drag
-        it; this only sets where it starts.
-        """
-        available = max(self._right_split.height(), 320)
-        if part_count <= 1:
-            self._right_split.setSizes([0, available])
-            return
-        wanted = self._PARTS_CHROME_PX + part_count * self._PART_ROW_PX
-        wanted = int(min(wanted, available * self._PARTS_MAX_SHARE))
-        wanted = max(wanted, self._parts_panel.minimumHeight())
-        self._right_split.setSizes([wanted, max(available - wanted, 200)])
 
     def _thing_summary(self, thing: dict) -> str:
         """The line under a thing's name: its size, its parts, its state."""
@@ -5526,6 +5661,16 @@ class CategoryDetailView(QFrame):
             row.set_selected(path == self._selected_path and bool(self._selected_path))
         if path and path == self._inspected_path:
             self._show_detail_sidebar(entity, keep_trail=True)
+
+    def _part_trail(self) -> list:
+        """The crumb over a selected part: the thing it belongs to.
+
+        Reuses the trail the contents drill-down already draws, because it is
+        the same statement — you are one level inside something, and here is
+        the way back to it.
+        """
+        name = self._opened_thing_name()
+        return [name] if name else []
 
     def _select_source_row(self, source_row: int):
         entity = self._model.get_entity(source_row)
@@ -5738,12 +5883,89 @@ class LoadingStateWidget(QFrame):
         self._stat_coverage.setText(f"{coverage_pct}%")
 
 
-class StoppedStateWidget(QFrame):
-    """Stopped state shown when analysis was stopped before completion."""
+class PartialResultsNotice(QFrame):
+    """A persistent line saying the map on screen is incomplete.
+
+    Findings has no separate "partial" results mode and must not grow one: the
+    dashboard, the category lists and the folder tree all read the same scan
+    state whether the walk finished or was stopped. What is missing without
+    this strip is not a different UI, it is the one fact that distinguishes the
+    two — that some files were never visited, so an absence here is not
+    evidence of absence on disk.
+
+    It sits above the view stack rather than inside any one view, so drilling
+    into a category or the folder tree cannot leave it behind.
+    """
 
     def __init__(self, parent=None, on_resume: Callable = None):
         super().__init__(parent)
         self.on_resume = on_resume
+        self.setObjectName("PanelAlt")
+        self._build_ui()
+
+    def _build_ui(self):
+        row = QHBoxLayout(self)
+        row.setContentsMargins(22, 8, 22, 8)
+        row.setSpacing(10)
+
+        self._badge = Badge(tr("PARTIAL RESULTS"), "partial_halted")
+        row.addWidget(self._badge)
+
+        self._text = QLabel("")
+        self._text.setObjectName("Dim")
+        self._text.setWordWrap(True)
+        self._text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        row.addWidget(self._text, stretch=1)
+
+        self._resume_btn = QPushButton(tr("Resume analysis"))
+        self._resume_btn.setObjectName("Subtle")
+        self._resume_btn.setCursor(Qt.PointingHandCursor)
+        self._resume_btn.setMinimumHeight(26)
+        if self.on_resume:
+            self._resume_btn.clicked.connect(self.on_resume)
+        row.addWidget(self._resume_btn)
+
+        self.set_counts(0, "")
+        self.apply_style()
+
+    def apply_style(self):
+        p = get_palette()
+        # Scoped: a bare rule here would reach the badge and the button and
+        # strip the chrome that makes them readable as what they are.
+        style_container(self, (
+            f"background: {p.get('panel_alt', '#1b241e')}; "
+            f"border: none; "
+            f"border-bottom: 1px solid {p.get('border_alt', '#2a3830')};"
+        ))
+        self._text.setStyleSheet(f"font-size: 11px; color: {p.get('text_dim', '#8a9b8f')};")
+        self._badge.refresh_style()
+
+    def set_counts(self, count: int, size_str: str = ""):
+        """State what is on screen, so the gap is a size rather than a mood."""
+        if count > 0 and size_str:
+            self._text.setText(tr(
+                "Analysis was stopped. Showing {count:,} items found so far "
+                "({size}) — some files were never scanned and are missing here.",
+                count=count, size=size_str))
+        elif count > 0:
+            self._text.setText(tr(
+                "Analysis was stopped. Showing {count:,} items found so far — "
+                "some files were never scanned and are missing here.",
+                count=count))
+        else:
+            self._text.setText(tr(
+                "Analysis was stopped — some files were never scanned and are "
+                "missing here."))
+
+
+class StoppedStateWidget(QFrame):
+    """Stopped state shown when analysis was stopped before completion."""
+
+    def __init__(self, parent=None, on_resume: Callable = None,
+                 on_view_partial: Callable = None):
+        super().__init__(parent)
+        self.on_resume = on_resume
+        self.on_view_partial = on_view_partial
         self.setObjectName("Panel")
         self._build_ui()
 
@@ -5780,19 +6002,63 @@ class StoppedStateWidget(QFrame):
         desc.setAlignment(Qt.AlignCenter)
         desc.setWordWrap(True)
         layout.addWidget(desc)
+        self._desc = desc
 
         layout.addSpacing(20)
 
-        # Resume button
+        # Actions. Resume stays primary — finishing the walk is what this
+        # screen is for. Looking at what was already found is the lesser
+        # thing, and is only offered when there is something to look at: a
+        # button leading to an empty dashboard is worse than no button.
+        actions = QHBoxLayout()
+        actions.setSpacing(10)
+        actions.addStretch()
+
         if self.on_resume:
             resume_btn = QPushButton(tr("Resume Analysis →"))
             resume_btn.setObjectName("Primary")
             resume_btn.setStyleSheet("padding: 10px 24px; font-size: 13px;")
             resume_btn.setCursor(Qt.PointingHandCursor)
             resume_btn.clicked.connect(self.on_resume)
-            layout.addWidget(resume_btn, alignment=Qt.AlignCenter)
+            actions.addWidget(resume_btn)
+            self._resume_btn = resume_btn
+
+        self._partial_btn = QPushButton(tr("View partial results"))
+        self._partial_btn.setObjectName("Subtle")
+        self._partial_btn.setStyleSheet("padding: 10px 24px; font-size: 13px;")
+        self._partial_btn.setCursor(Qt.PointingHandCursor)
+        self._partial_btn.setVisible(False)
+        if self.on_view_partial:
+            self._partial_btn.clicked.connect(self.on_view_partial)
+        actions.addWidget(self._partial_btn)
+
+        actions.addStretch()
+        layout.addLayout(actions)
 
         layout.addStretch()
+
+    def set_partial_results(self, count: int, size_str: str = ""):
+        """Offer the partial view only when something was actually preserved.
+
+        Entity detection is cancelled on stop, so "preserved" here is the
+        findings the walk had already collected — not a finished storage map.
+        A stop in the first seconds of a scan leaves nothing behind, and then
+        there is no second action to offer.
+        """
+        self._partial_btn.setVisible(count > 0 and bool(self.on_view_partial))
+        if count > 0:
+            found = (tr("{count:,} items ({size}) were found before it stopped.",
+                        count=count, size=size_str) if size_str
+                     else tr("{count:,} items were found before it stopped.",
+                             count=count))
+            self._desc.setText(
+                tr("The analysis was stopped before the storage map was fully "
+                   "ready.") + "\n" + found)
+        else:
+            self._desc.setText(
+                tr("The analysis was stopped before the storage map was fully "
+                   "ready.") + "\n"
+                + tr("Nothing was found before it stopped."))
 
 
 class FindingsDashboard(QWidget):
@@ -5811,6 +6077,13 @@ class FindingsDashboard(QWidget):
     # Signal emitted when "Start Analysis" button clicked in empty state
     navigate_to_analyze = Signal()
 
+    # Emitted with the preserved session when Resume is chosen. main.py wires
+    # it to the same handler as the Home screen's Resume Scan, which is the
+    # only path that actually continues a stopped walk — navigating to Analyze
+    # alone lands on "Start scan", and starting one discards the very partial
+    # data this screen is offering to keep.
+    resume_requested = Signal(dict)
+
     def __init__(self, scan_state=None, parent=None):
         super().__init__(parent)
         self._scan_state = scan_state
@@ -5818,6 +6091,10 @@ class FindingsDashboard(QWidget):
 
         # View state machine
         self._current_view = "dashboard"  # dashboard | category | entity
+        # Set when the user chooses to look at what a stopped run collected.
+        # Not a results mode: the views below read the same scan state either
+        # way, and this only decides which of them a stopped phase opens on.
+        self._viewing_partial = False
         self._current_category: Optional[str] = None
         
         # Performance: debounced refresh
@@ -5839,6 +6116,9 @@ class FindingsDashboard(QWidget):
 
     def _on_theme_changed(self, _key: str = ""):
         try:
+            notice = getattr(self, "_partial_notice", None)
+            if notice is not None:
+                notice.apply_style()
             if hasattr(self, "_overview_view") and self._overview_view is not None:
                 self._overview_view._apply_panel_colors()
                 if hasattr(self._overview_view, "_donut"):
@@ -5848,10 +6128,6 @@ class FindingsDashboard(QWidget):
                 # The category heading bakes its hue into a stylesheet too.
                 if getattr(cv, "category", ""):
                     cv._apply_title_color()
-                # The shell's card and the rule between its two sections bake
-                # the palette in, the same way the blocks below them do.
-                if getattr(cv, "_inspector_shell", None) is not None:
-                    cv._apply_inspector_shell_style()
                 if hasattr(cv, "_detail_widget") and cv._detail_widget is not None:
                     cv._detail_widget._apply_block_styles()
                     # Built with the palette that was live at construction, so
@@ -5891,6 +6167,14 @@ class FindingsDashboard(QWidget):
         page_header.addStretch()
         self._main_layout.addLayout(page_header)
 
+        # Above the stack on purpose: the dashboard, the category lists and
+        # the folder tree are all reached from here, and a notice that lived
+        # inside one of them would vanish on the first drill-down.
+        self._partial_notice = PartialResultsNotice(
+            on_resume=self._on_resume_analysis)
+        self._partial_notice.setVisible(False)
+        self._main_layout.addWidget(self._partial_notice)
+
         # Stacked widget for view switching
         self._stack = QStackedWidget()
 
@@ -5903,7 +6187,9 @@ class FindingsDashboard(QWidget):
         self._stack.addWidget(self._loading_view)
 
         # View 3: Stopped state (analysis stopped before completion)
-        self._stopped_view = StoppedStateWidget(on_resume=self._on_resume_analysis)
+        self._stopped_view = StoppedStateWidget(
+            on_resume=self._on_resume_analysis,
+            on_view_partial=self._on_view_partial_results)
         self._stack.addWidget(self._stopped_view)
 
         # View 4: Dashboard — inner stack: Overview (default) + Map
@@ -5985,7 +6271,13 @@ class FindingsDashboard(QWidget):
 
         # Priority: stopped > loading > dashboard > empty
         if phase == "stopped":
-            self._show_stopped()
+            # The one exception: once the user has asked to see what was
+            # collected, a stopped phase opens on the results with the notice
+            # rather than sending them back through the door they just used.
+            if self._viewing_partial and self._partial_count() > 0:
+                self._show_dashboard()
+            else:
+                self._show_stopped()
         # Show loading ONLY during filesystem scan or entity detection
         # Once entities are ready, switch to dashboard even if AI is running
         elif phase in ("filesystem", "entity_detection") or (is_active and not has_entities):
@@ -6001,6 +6293,7 @@ class FindingsDashboard(QWidget):
     def _show_empty(self):
         self._stack.setCurrentWidget(self._empty_view)
         self._current_view = "empty"
+        self._sync_partial_notice()
 
     def _show_loading(self, phase: str = ""):
         """Show loading state with current phase."""
@@ -6008,14 +6301,79 @@ class FindingsDashboard(QWidget):
             self._loading_view.set_phase(phase)
         self._stack.setCurrentWidget(self._loading_view)
         self._current_view = "loading"
+        self._sync_partial_notice()
 
     def _show_stopped(self):
         """Show stopped state."""
+        self._stopped_view.set_partial_results(self._partial_count(),
+                                               self._partial_size_str())
         self._stack.setCurrentWidget(self._stopped_view)
         self._current_view = "stopped"
+        self._sync_partial_notice()
+
+    def _partial_count(self) -> int:
+        """What a stopped run left behind, if anything.
+
+        display_count() already prefers entities and falls back to findings,
+        which is exactly right here: entity detection is cancelled on stop, so
+        a stopped run usually has findings and no entities at all.
+        """
+        if not self._scan_state:
+            return 0
+        try:
+            return int(self._scan_state.display_count())
+        except Exception:
+            return 0
+
+    def _partial_size_str(self) -> str:
+        if not self._scan_state:
+            return ""
+        try:
+            return _format_size(self._scan_state.total_size)
+        except Exception:
+            return ""
+
+    def _sync_partial_notice(self):
+        """The notice is shown exactly while incomplete results are on screen.
+
+        Driven from state rather than set at the point of the click, so
+        finishing a resumed scan, starting a new one, or landing here from
+        anywhere else all take the notice away without a second code path.
+        """
+        notice = getattr(self, "_partial_notice", None)
+        if notice is None:
+            return
+        stopped = bool(self._scan_state
+                       and self._scan_state.current_phase == "stopped")
+        showing_results = self._current_view in ("dashboard", "category", "tree")
+        show = stopped and self._viewing_partial and showing_results
+        if show:
+            notice.set_counts(self._partial_count(), self._partial_size_str())
+        notice.setVisible(show)
+
+    def _on_view_partial_results(self):
+        """Open the ordinary Findings views over what the stopped run found."""
+        if self._partial_count() <= 0:
+            return
+        self._viewing_partial = True
+        self._show_dashboard()
 
     def _on_resume_analysis(self):
-        """Navigate to analyze screen to resume analysis."""
+        """Continue the stopped walk, from the stopped screen or the notice.
+
+        Falls back to plain navigation when there is no unfinished session on
+        disk to continue from — a stop large enough to be saved in the
+        background may not have landed yet, and sending the user to Analyze is
+        still better than a button that does nothing.
+        """
+        try:
+            from app.state.session_store import load_session_summary
+            data = load_session_summary()
+        except Exception:
+            data = None
+        if data and data.get("status") in ("stopped", "running"):
+            self.resume_requested.emit(data)
+            return
         self.navigate_to_analyze.emit()
 
     def _on_skipped_updated(self):
@@ -6061,6 +6419,15 @@ class FindingsDashboard(QWidget):
     def _on_entities_ready(self):
         """Handle entities ready — switch from loading to dashboard."""
         try:
+            # A stopped run now commits the grouping it managed to finish, so
+            # this fires for partial maps too. Those must land on the stopped
+            # screen and its offer, not be shown as a finished scan.
+            if (self._scan_state
+                    and self._scan_state.current_phase == "stopped"
+                    and self._current_view not in ("category", "tree")):
+                self._last_category_data = None
+                self._update_for_current_state()
+                return
             entity_count = self._scan_state.entity_count if self._scan_state else 0
             if entity_count == 0:
                 # Restore mode: show findings-based dashboard even without entities
@@ -6088,6 +6455,7 @@ class FindingsDashboard(QWidget):
         self._refresh_dashboard()
         self._stack.setCurrentWidget(self._dashboard_container)
         self._current_view = "dashboard"
+        self._sync_partial_notice()
 
     def _show_tree(self):
         """Open the by-folder view over everything the scan found."""
@@ -6098,6 +6466,7 @@ class FindingsDashboard(QWidget):
         self._tree_view.set_entities(items)
         self._stack.setCurrentWidget(self._tree_view)
         self._current_view = "tree"
+        self._sync_partial_notice()
 
     def _show_detail_for_entity(self, entity: dict):
         """A folder picked in the tree opens in its category's list, selected —
@@ -6117,6 +6486,7 @@ class FindingsDashboard(QWidget):
         self._current_view = "category"
         self._current_category = category
         self._viewed_categories.add(category)
+        self._sync_partial_notice()
 
     def open_category(self, category_name: str) -> bool:
         """Open Findings directly to a specific category (called from Analyze category click)."""
@@ -6154,6 +6524,9 @@ class FindingsDashboard(QWidget):
 
     def _on_scan_started(self, target: str):
         """Scan started - show loading state (entities not ready yet)."""
+        # A new or resumed run makes the previous partial view irrelevant: it
+        # either completes, or stops again and gets asked for afresh.
+        self._viewing_partial = False
         self._show_loading("filesystem")
 
     def _on_scan_finished(self):

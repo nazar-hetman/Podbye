@@ -65,6 +65,12 @@ def _live(pool):
     return [r for r in pool if not r.isHidden()]
 
 
+def _parts_pool(view):
+    """The part rows, which the inspector owns: they are a section of the page
+    it draws, not a pane of the screen's own."""
+    return view._detail_widget._part_row_pool
+
+
 def _thing(view, name):
     return next(t for t in view._things_by_key.values() if t["name"] == name)
 
@@ -86,8 +92,11 @@ def test_a_lone_folder_is_a_thing_with_one_part(view):
 def test_nothing_on_the_left_can_be_armed(view):
     """The left pane carries no checkbox at all — that is the redesign."""
     view.set_category("Cache & Temp", APP_PARTS + [LONE])
+    view._select_thing(_thing(view, "Contoso")["key"])
+    box = type(_live(_parts_pool(view))[0]._check_btn)
+
     for row in _live(view._row_pool):
-        assert not row.findChildren(type(_live(view._part_pool)[0]._check_btn))
+        assert not row.findChildren(box)
 
 
 # ── the right pane is where deciding happens ──────────────────────
@@ -95,7 +104,7 @@ def test_nothing_on_the_left_can_be_armed(view):
 def test_opening_a_thing_lists_its_parts(view):
     view.set_category("Cache & Temp", APP_PARTS + [LONE])
     view._select_thing(_thing(view, "Contoso")["key"])
-    names = [r._name_lbl.text() for r in _live(view._part_pool)]
+    names = [r._name_lbl.text() for r in _live(_parts_pool(view))]
     assert names == ["Contoso (Roaming)", "Cache", "Contoso (Local)"]
 
 
@@ -103,14 +112,14 @@ def test_a_part_row_states_its_own_reason(view):
     """A checkbox beside a bare name is not something you can decide on."""
     view.set_category("Cache & Temp", APP_PARTS + [LONE])
     view._select_thing(_thing(view, "Contoso")["key"])
-    assert all(r._why_lbl.text() for r in _live(view._part_pool))
+    assert all(r._why_lbl.text() for r in _live(_parts_pool(view)))
 
 
 def test_the_right_pane_explains_the_whole_thing(view):
     """"roll up can't explain entire group" — the summary does."""
     view.set_category("Cache & Temp", APP_PARTS + [LONE])
     view._select_thing(_thing(view, "Contoso")["key"])
-    summary = view._parts_summary_lbl.text()
+    summary = view._detail_widget._parts_meta.text()
     assert "3 parts" in summary and "900 B" in summary
 
 
@@ -164,21 +173,54 @@ def test_the_button_says_how_many_it_will_arm(view):
 
 # ── switching things keeps the panes in step ──────────────────────
 
-def test_choosing_a_thing_opens_a_part_in_the_inspector(view):
+def test_choosing_a_thing_opens_that_thing_in_the_inspector(view):
+    """It used to open the thing's largest *part* and describe that, so
+    choosing Contoso put Contoso's name over a panel about one of its folders
+    and Contoso's own location and scale appeared nowhere. The guarantee this
+    test was written for still holds - the inspector is never empty while a
+    thing is on screen - but what it holds is now the thing you chose.
+    """
     view.set_category("Cache & Temp", APP_PARTS + [LONE])
     view._select_thing(_thing(view, "Contoso")["key"])
     panel = view._right_sidebar.detail_widget
+
+    assert panel._current_entity.get("name") == "Contoso"
+    assert panel._current_entity.get("is_group")
+
+
+def test_a_part_is_one_click_away_and_says_what_it_belongs_to(view):
+    view.set_category("Cache & Temp", APP_PARTS + [LONE])
+    view._select_thing(_thing(view, "Contoso")["key"])
+    row = _live(_parts_pool(view))[0]
+    row.clicked.emit(row.source_row())
+    QCoreApplication.processEvents()
+    panel = view._right_sidebar.detail_widget
+
     assert panel._current_entity.get("path") in {p["path"] for p in APP_PARTS}
+    assert "Contoso" in view._right_sidebar._meta.text()
+
+
+def test_a_thing_that_is_only_itself_still_opens_itself(view):
+    """A lone entity is a thing with one part, and the two are the same row."""
+    view.set_category("Cache & Temp", APP_PARTS + [LONE])
+    view._select_thing(_thing(view, "holiday-photos")["key"])
+    panel = view._right_sidebar.detail_widget
+
+    assert panel._current_entity.get("path") == LONE["path"]
 
 
 def test_parts_are_rebound_not_leaked_when_things_change(view):
-    """The pool is reused; a smaller thing must hide the surplus rows."""
+    """The pool is reused; a smaller thing must hide the surplus rows.
+
+    A thing with one part lists none: the part and the thing are the same
+    object, and it is already the subject of the page.
+    """
     view.set_category("Cache & Temp", APP_PARTS + [LONE])
     view._select_thing(_thing(view, "Contoso")["key"])
-    assert len(_live(view._part_pool)) == 3
+    assert len(_live(_parts_pool(view))) == 3
     view._select_thing(_thing(view, "holiday-photos")["key"])
-    assert len(_live(view._part_pool)) == 1
-    assert all(isinstance(r, PartRow) for r in view._part_pool)
+    assert len(_live(_parts_pool(view))) == 0
+    assert all(isinstance(r, PartRow) for r in _parts_pool(view))
 
 
 # ── Keep, on the screen it is used from ───────────────────────
@@ -198,7 +240,7 @@ def test_a_kept_part_cannot_be_armed(view, kept):
     view.set_category("Cache & Temp", APP_PARTS + [LONE])
     view._select_thing(_thing(view, "Contoso")["key"])
 
-    row = next(r for r in _live(view._part_pool)
+    row = next(r for r in _live(_parts_pool(view))
                if r.entity()["path"] == LOCAL)
     assert row._check_btn.isEnabled() is False
     # KEPT, not KEEP: the badge reports a state and the button beside it
@@ -211,7 +253,7 @@ def test_a_kept_part_says_which_folder_the_mark_is_on(view, kept):
     view.set_category("Cache & Temp", APP_PARTS + [LONE])
     view._select_thing(_thing(view, "Contoso")["key"])
 
-    row = next(r for r in _live(view._part_pool)
+    row = next(r for r in _live(_parts_pool(view))
                if r.entity()["path"] == ROAMING + r"\Cache")
     assert "contoso" in row._why_lbl.text().lower()
 
@@ -242,17 +284,26 @@ def test_the_thing_says_how_much_of_it_is_kept(view, kept):
     view.set_category("Cache & Temp", APP_PARTS + [LONE])
     assert _thing(view, "Contoso")["kept"] == 1
     view._select_thing(_thing(view, "Contoso")["key"])
-    assert "kept" in view._parts_summary_lbl.text()
+    assert "kept" in view._detail_widget._parts_meta.text()
 
 
 def test_marking_keep_from_the_inspector(view, kept):
+    """Keep is offered on a part's own page, so the walk is: open the part,
+    mark it, come back, and find the row saying the same thing."""
     view.set_category("Cache & Temp", APP_PARTS + [LONE])
-    view._select_thing(_thing(view, "holiday-photos")["key"])
-    view._toggle_keep(LONE["path"])
+    view._select_thing(_thing(view, "Contoso")["key"])
+    row = next(r for r in _live(_parts_pool(view))
+               if r.entity()["path"] == LOCAL)
+    row.clicked.emit(row.source_row())
+    QCoreApplication.processEvents()
 
-    assert kept.is_kept(LONE["path"]) is True
-    row = next(r for r in _live(view._part_pool)
-               if r.entity()["path"] == LONE["path"])
+    view._toggle_keep(LOCAL)
+    assert kept.is_kept(LOCAL) is True
+
+    view._drill_back()
+    QCoreApplication.processEvents()
+    row = next(r for r in _live(_parts_pool(view))
+               if r.entity()["path"] == LOCAL)
     assert row._check_btn.isEnabled() is False
 
 
@@ -276,12 +327,14 @@ def test_the_mark_can_be_taken_back_from_the_same_button(view, kept):
 
 def test_the_inspector_agrees_with_the_row(view, kept):
     """Two badges disagreeing about one path is what makes a screen untrusted."""
-    kept.keep(LONE["path"])
+    kept.keep(LOCAL)
     view.set_category("Cache & Temp", APP_PARTS + [LONE])
-    view._select_thing(_thing(view, "holiday-photos")["key"])
+    view._select_thing(_thing(view, "Contoso")["key"])
+    row = next(r for r in _live(_parts_pool(view))
+               if r.entity()["path"] == LOCAL)
+    row.clicked.emit(row.source_row())
+    QCoreApplication.processEvents()
 
-    row = next(r for r in _live(view._part_pool)
-               if r.entity()["path"] == LONE["path"])
     panel = view._right_sidebar.detail_widget
     assert row._risk_badge.text() == "KEPT"
     assert panel._risk_badge.text() == "KEPT"

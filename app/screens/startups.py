@@ -8,14 +8,15 @@ import time
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QScrollArea, QLineEdit, QSizePolicy,
+    QFrame, QScrollArea, QLineEdit, QSizePolicy, QTextEdit,
 )
 from PySide6.QtCore import Qt, Signal, QThread, QTimer
 from PySide6.QtGui import QColor
 
 from app.models.risk import RISK_ORDER
 from app.models.startup_entry import StartupEntry
-from app.widgets.controls import ask_ai_button_qss, ElidedLabel
+from app.widgets.controls import (ask_ai_button_qss, ElidedLabel,
+                                  restyle_needed, style_container)
 from app.widgets.panels import Panel, apply_tactical_label
 from app.widgets.pills import Badge
 from app.themes.theme_manager import get_palette, theme_signaller
@@ -113,16 +114,24 @@ def _target_is_stale(entry: StartupEntry) -> bool:
 
 
 def _rail_text(entry: StartupEntry) -> str:
-    """The date the startup target was last touched — the row's right column.
+    """What the row has to say under its action, which is usually nothing.
 
-    Just the date. The role moved into the meta line beside the publisher and
-    source, because a fixed-width column cannot hold "Remote access service ·
-    updated 2026-08-04" without being wide enough to make every other row's
-    column look empty. Empty when unknown rather than padded with a dash: a
-    scheduled task whose executable has moved legitimately has no date, and a
-    column of placeholder dashes reads as broken data.
+    It was the date the startup target was last touched, on every row: a dim
+    number sitting under the Enable/Disable button, aligned to nothing else on
+    the screen and reading as though it belonged to the button. The date is a
+    fact about the executable, and it now has a proper place — the inspector's
+    meta line, beside where the entry is registered.
+
+    Staleness — a program not updated in years, which is how something left
+    over from software you no longer use announces itself — was kept here for
+    one round and still read as a stray number under a button. It is a fact
+    about the executable, so it says so in words, on the meta line with the
+    publisher and the source, where the rest of the row's prose lives.
+
+    The rail is not dead: a running AI pass takes it over to say so, which is
+    transient and belongs beside the controls rather than in the prose.
     """
-    return entry.target_modified_display
+    return ""
 
 
 def _rail_style(entry: StartupEntry) -> str:
@@ -463,16 +472,11 @@ class StartupListRow(QFrame):
         # column. A startup entry has no size, so it carries what it does have:
         # the role it plays at login, and how old the binary behind it is.
         #
-        # Exactly one line, always. AI status shares it rather than adding a
-        # third — the row is sized for two, and a third silently overlapped the
-        # buttons above it.
-        self._rail_lbl = QLabel()
-        self._rail_lbl.setObjectName("Dim")
-        self._rail_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        # Exactly as wide as the two columns above it, so the date's right edge
-        # lines up with the action's.
-        self._rail_lbl.setFixedWidth(self._BADGE_W + _RAIL_GAP + self._ACTION_W)
-        right.addWidget(self._rail_lbl)
+        # Nothing else goes in this column. It held the target date, then only
+        # a stale date, then AI status — three attempts at putting prose under
+        # a button, each of which read as a caption for the button. The row now
+        # has two places and one rule: prose on the left, controls on the
+        # right, and a status is prose.
         layout.addLayout(right)
 
         self.update_entry(entry)
@@ -492,19 +496,26 @@ class StartupListRow(QFrame):
         self._toggle_btn.setText(tr("Disable") if entry.enabled else tr("Enable"))
         self._risk_badge.set_badge(tr(entry.risk), _RISK_VARIANT.get(entry.risk, "info"))
         parts = [entry.publisher_display, entry.source_label, entry.impact]
-        self._meta_lbl.setText("  ·  ".join(p for p in parts if p))
-        # Only surface AI status in the row when it's actually doing something.
-        # "AI disabled"/no-AI on every row is just noise — the inspector shows
-        # per-entry AI state and offers the Ask AI action there. While it is
-        # working it takes over the rail line rather than adding one.
-        ai_text = {
+        # Only while it is actually doing something. "AI disabled" on every row
+        # is noise; the inspector states per-entry AI state and offers the
+        # action. It goes on the prose line with everything else the row says,
+        # not under the button: a status appearing in the column reserved for
+        # controls reads as a caption for the control above it, which is what
+        # the date under Disable did before it moved here too.
+        working = {
             "pending": tr("Queued"),
             "analyzing": tr("Analyzing"),
-            "failed": tr("Fallback"),
+            "failed": tr("Fallback explanation"),
         }.get(entry.ai_status, "")
-        self._rail_lbl.setText(ai_text or _rail_text(entry))
-        self._rail_lbl.setStyleSheet(_rail_style(entry))
-        self._rail_lbl.setToolTip(_rail_tooltip(entry))
+        if working:
+            parts.append(working)
+        # The staleness signal, in words, on the line that already carries the
+        # row's prose — rather than as a bare date under the action button.
+        if _target_is_stale(entry):
+            parts.append(tr("not updated since {date}",
+                            date=entry.target_modified_display))
+        self._meta_lbl.setText("  ·  ".join(p for p in parts if p))
+        self._meta_lbl.setToolTip(_rail_tooltip(entry))
         self._apply_style()
 
     def set_selected(self, selected: bool):
@@ -531,14 +542,36 @@ class StartupListRow(QFrame):
 
     def _apply_style(self):
         p = get_palette()
+        # Restyle only when something visible actually changed.
+        #
+        # setStyleSheet is the most expensive call on this screen: Qt reparses
+        # the sheet and repolishes the widget subtree each time. Profiled while
+        # typing in the search box with 25 entries — 2,255 calls in five
+        # keystrokes, 92% of the 355 ms spent. Each row was styled three times
+        # per keystroke (rebind, select in the loop, then the selection sync)
+        # and each pass set six sheets.
+        #
+        # The palette object is part of the signature because a theme switch
+        # changes it, and every colour below comes from it.
+        if not restyle_needed(self, (self._selected, self._hovered,
+                                     self._entry.enabled, self._entry.risk,
+                                     id(p))):
+            return
         primary = p.get("text", "#d6e2da") if self._entry.enabled else p.get("text_dim", "#8a9b8f")
         secondary = p.get("text_dim", "#8a9b8f") if self._entry.enabled else p.get("text_faint", "#57685e")
-        # A disabled entry is a different state, not a slightly quieter row.
-        # This was rgba(138, 155, 143, 9) — a fixed forest-ish tint at alpha 9
-        # of 255, invisible on any theme and wrong on three of them. It now
-        # takes a real recessed surface from the palette, so a disabled row
-        # reads as switched off at a glance rather than on close inspection.
-        idle_bg = "transparent" if self._entry.enabled else p.get("bg_deep", "#070c09")
+        # A disabled entry is a different state, not a slightly quieter row —
+        # but not a black rectangle either. This has been three values now: a
+        # tint at alpha 9 of 255 (invisible on every theme), then bg_deep, the
+        # darkest surface the palette has, which against the PanelAlt list
+        # reads as a hole punched through it. The same mistake is already
+        # recorded for the donut hole: "bg_deep is far darker than the panel on
+        # every dark theme, so the hole read as a black puck".
+        #
+        # bg is the step between. Measured against the list's own surface:
+        # forest 1.148, amber 1.145, mono 1.188, paper 1.076 — visible on all
+        # four, a hole on none. The dimmed name, the dimmed meta and the button
+        # reading "Enable" rather than "Disable" carry the rest of the signal.
+        idle_bg = "transparent" if self._entry.enabled else p.get("bg", "#0c1511")
         if self._selected:
             accent = p.get("accent", "#7cc596")
             bg = p.get("accent_soft", "#1b2e22")
@@ -570,7 +603,16 @@ class StartupListRow(QFrame):
             )
         else:
             bg = idle_bg
-            self.setStyleSheet(f"QFrame#StartupListRow {{ background: {bg}; border: none; }}")
+            # A hairline under each row. The Findings list can do without one —
+            # its rows are a name, a note and a size, and the eye groups them
+            # by their own spacing. Here every row carries its own buttons, so
+            # the question "which row does this Disable belong to?" is asked on
+            # every glance, and an unbroken column of text and controls answers
+            # it badly. Bottom only, at the alpha the panel's other rules use.
+            rule = _rgba(p.get("border", "#213028"), 90)
+            self.setStyleSheet(
+                f"QFrame#StartupListRow {{ background: {bg}; border: none; "
+                f"border-bottom: 1px solid {rule}; }}")
             self._name_lbl.setStyleSheet(
                 f"font-size: 14px; font-weight: 760; color: {primary};"
             )
@@ -613,7 +655,7 @@ class StartupInspectorPanel(QFrame):
         self._ask_ai_cb = ask_ai_cb
         self._current_entry = None
         self.setObjectName("Panel")
-        self.setStyleSheet("background: transparent; border: none;")
+        style_container(self, "background: transparent; border: none;")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 8, 12, 10)
@@ -635,12 +677,21 @@ class StartupInspectorPanel(QFrame):
         hdr.addStretch()
         layout.addWidget(self._header_row)
 
-        self._name_lbl = QLabel(tr("Select a startup entry"))
+        # Elided, not wrapped. Wrapping was the previous attempt at the same
+        # problem and could not work: a wrapping QLabel reports its longest
+        # unbreakable word as its *minimum* width, and these names are one
+        # token — "OneDrive Startup Task-S-1-5-21-3897710897-…" asks for 405px,
+        # which pushed the panel to 576px inside a 533px viewport and cut every
+        # line in it at the right edge.
+        self._name_lbl = ElidedLabel(tr("Select a startup entry"),
+                                     mode=Qt.ElideMiddle)
         self._name_lbl.setStyleSheet("font-size: 13px; font-weight: 700;")
-        # Long scheduled-task names (e.g. "OneDrive Startup Task-S-1-5-21-…")
-        # must wrap, or they push the whole inspection panel past the window.
-        self._name_lbl.setWordWrap(True)
-        layout.addWidget(self._name_lbl)
+        # The state and the risk sit beside the name, where the Findings
+        # inspector puts them, instead of on a row of their own underneath.
+        self._name_row = QHBoxLayout()
+        self._name_row.setSpacing(8)
+        self._name_row.addWidget(self._name_lbl, stretch=1)
+        layout.addLayout(self._name_row)
 
         self._publisher_lbl = QLabel(tr("Choose an entry on the left to inspect impact and recommendation."))
         self._publisher_lbl.setObjectName("Dim")
@@ -650,79 +701,112 @@ class StartupInspectorPanel(QFrame):
         )
         layout.addWidget(self._publisher_lbl)
 
+        # ── Identity: name, who ships it, where it launches from ──
+        #
+        # Four quiet lines, the way the Findings inspector opens. This was a
+        # two-column property table — SOURCE / IMPACT / LAUNCH PATH against a
+        # fixed 88px key column — which drew a phantom rule down the panel and
+        # never filled it, so it read as an unfinished table. The keys said
+        # nothing the values do not: "User startup registry" is obviously a
+        # source, a path is obviously a path.
         badge_row = QHBoxLayout()
         badge_row.setSpacing(5)
-
+        badge_row.addStretch()
         self._state_lbl = QLabel()
         self._state_lbl.setAlignment(Qt.AlignCenter)
         badge_row.addWidget(self._state_lbl)
-
         self._risk_badge = Badge("", "info")
         badge_row.addWidget(self._risk_badge)
-        badge_row.addStretch()
-        layout.addLayout(badge_row)
+        self._name_row.addLayout(badge_row)
 
+        # One unbreakable token, elided in the middle so the drive and the
+        # executable both survive. Wrapping it would make it the panel's
+        # minimum width — measured at 1056px against a ~500px sidebar.
+        self._path_lbl = ElidedLabel("—", mode=Qt.ElideMiddle)
+        layout.addWidget(self._path_lbl)
+
+        self._meta_lbl = ElidedLabel("")
+        layout.addWidget(self._meta_lbl)
+
+        # ── What it does at login ─────────────────────────────────
+        self._impact_frame = QFrame()
+        self._impact_frame.setObjectName("StartupDetailSection")
+        impact_l = QVBoxLayout(self._impact_frame)
+        impact_l.setContentsMargins(0, 6, 0, 0)
+        impact_l.setSpacing(3)
+        impact_hdr = QLabel(tr("IMPACT"))
+        apply_tactical_label(impact_hdr, font_size=8, letter_spacing=2)
+        impact_l.addWidget(impact_hdr)
+        self._impact_lbl = QLabel("—")
+        self._impact_lbl.setWordWrap(True)
+        impact_l.addWidget(self._impact_lbl)
+        self._reason_lbl = QLabel("")
+        self._reason_lbl.setWordWrap(True)
+        impact_l.addWidget(self._reason_lbl)
+        layout.addWidget(self._impact_frame)
+
+        # ── The verdict ───────────────────────────────────────────
         self._recommendation_frame = QFrame()
         self._recommendation_frame.setObjectName("StartupRecommendationSection")
         rec_layout = QVBoxLayout(self._recommendation_frame)
-        rec_layout.setContentsMargins(0, 4, 0, 2)
-        rec_layout.setSpacing(6)
+        rec_layout.setContentsMargins(0, 6, 0, 0)
+        rec_layout.setSpacing(3)
 
         rec_hdr = QHBoxLayout()
         rec_hdr.setSpacing(8)
-        rec_title = QLabel(tr("AI RECOMMENDATIONS"))
+        # Not the model's. _startup_recommendation() reads the entry's risk,
+        # whether the publisher could be verified, and whether the role does
+        # work at login — rules, every one of them, and they answer whether AI
+        # ran or not. Headed "AI RECOMMENDATIONS" it claimed otherwise, and on
+        # an entry with AI switched off the panel said both things at once: a
+        # recommendation attributed to AI, above a line reading "AI disabled
+        # for this entry".
+        rec_title = QLabel(tr("RECOMMENDATION"))
         apply_tactical_label(rec_title, font_size=8, letter_spacing=2)
         rec_hdr.addWidget(rec_title)
         self._rec_status_lbl = QLabel(tr("WAITING"))
-        self._rec_status_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 10px;")
         rec_hdr.addWidget(self._rec_status_lbl)
         rec_hdr.addStretch()
         rec_layout.addLayout(rec_hdr)
 
         self._rec_text_lbl = QLabel(tr("Select a startup entry to see Podbye's recommendation."))
         self._rec_text_lbl.setWordWrap(True)
-        self._rec_text_lbl.setStyleSheet("font-size: 12px; font-weight: 600;")
         rec_layout.addWidget(self._rec_text_lbl)
 
         self._rec_evidence_lbl = QLabel("")
         self._rec_evidence_lbl.setWordWrap(True)
-        self._rec_evidence_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 10px;")
         rec_layout.addWidget(self._rec_evidence_lbl)
 
-        self._inspection_frame = QFrame()
-        self._inspection_frame.setObjectName("StartupDetailSection")
-        inspection_frame_layout = QVBoxLayout(self._inspection_frame)
-        inspection_frame_layout.setContentsMargins(0, 0, 0, 0)
-        inspection_frame_layout.setSpacing(6)
-        meta_hdr = QLabel(tr("INSPECTION"))
-        apply_tactical_label(meta_hdr, font_size=8, letter_spacing=2)
-        meta_hdr.setVisible(False)
-
-        self._inspection_host = QWidget()
-        inspection_layout = QVBoxLayout(self._inspection_host)
-        inspection_layout.setContentsMargins(0, 0, 0, 0)
-        inspection_layout.setSpacing(4)
-        self._source_lbl = self._make_info_value(inspection_layout, tr("Source"))
-        self._impact_lbl = self._make_info_value(inspection_layout, tr("Impact"))
-        # Elided, not wrapped: a launch path is one unbreakable word, and a
-        # wrapping label reports it as the panel's minimum width — which clipped
-        # every other row in the inspector at the sidebar edge.
-        self._path_lbl = self._make_info_value(
-            inspection_layout, tr("Launch path"), mono=True, elide=True)
-        inspection_frame_layout.addWidget(self._inspection_host)
-        layout.addWidget(self._inspection_frame)
-
+        # ── What was read into it ─────────────────────────────────
+        #
+        # The same shape as the Findings inspector's reasoning block: a
+        # heading, a state beside it saying where the words came from, the
+        # on-demand button, and the prose. It used to be fenced off behind a
+        # left rule, which made it look like a component borrowed from another
+        # screen rather than the last section of this one.
         self._explanation_host = QFrame()
         self._explanation_host.setObjectName("StartupDetailReasoning")
         expl_layout = QVBoxLayout(self._explanation_host)
-        expl_layout.setContentsMargins(10, 9, 10, 9)
-        expl_layout.setSpacing(6)
+        expl_layout.setContentsMargins(0, 6, 0, 0)
+        expl_layout.setSpacing(3)
 
         expl_hdr_row = QHBoxLayout()
         expl_hdr_row.setSpacing(8)
-        expl_hdr = QLabel(tr("CONTEXTUAL REASONING"))
-        apply_tactical_label(expl_hdr, font_size=8, letter_spacing=1)
+        # The same heading Findings gives this section, for the same reason:
+        # what is under it may be the model's or may be the rules standing in
+        # for it, and the state beside it is what says which. "AI REASONING"
+        # would have been the mislabel above it in a smaller font.
+        expl_hdr = QLabel(tr("PODBYE ASSESSMENT"))
+        apply_tactical_label(expl_hdr, font_size=8, letter_spacing=2)
         expl_hdr_row.addWidget(expl_hdr)
+        # Says which of the two wrote what is below: the model, or the rules
+        # standing in for it. Elided, because "AI unavailable · using fallback
+        # explanation" is 156px of fixed text in a header that also holds a
+        # caption and a button — three fixed widths that together set the
+        # panel's minimum above the sidebar it lives in.
+        self._ai_status_lbl = ElidedLabel()
+        self._ai_status_lbl.setObjectName("Muted")
+        expl_hdr_row.addWidget(self._ai_status_lbl)
         expl_hdr_row.addStretch()
         # On-demand "Ask AI" — explain this one entry even when startup AI is
         # off. Shown only when there is no AI answer yet (set in set_entry()).
@@ -734,13 +818,30 @@ class StartupInspectorPanel(QFrame):
         expl_hdr_row.addWidget(self._ask_ai_btn)
         expl_layout.addLayout(expl_hdr_row)
 
-        self._ai_status_lbl = QLabel()
-        self._ai_status_lbl.setObjectName("Muted")
-        self._ai_status_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 9px;")
-        expl_layout.addWidget(self._ai_status_lbl)
+        # A QTextEdit, as the Findings inspector uses for the same kind of
+        # content, because generated prose can contain a token no line break
+        # fits: this text opens with the entry's own name, and a wrapping
+        # QLabel reports its longest unbreakable word — 315px for a scheduled
+        # task — as the minimum width it must be given. A text document wraps
+        # anywhere and asks for nothing.
+        #
+        # It does not scroll: it grows to its content and lets the panel
+        # scroll, so there is never a bar inside a bar.
+        self._explanation_lbl = QTextEdit()
+        self._explanation_lbl.setReadOnly(True)
+        self._explanation_lbl.setFrameShape(QFrame.NoFrame)
+        self._explanation_lbl.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._explanation_lbl.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._explanation_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._explanation_lbl.document().setDocumentMargin(2)
+        # A bound method, not a lambda: Qt drops the connection when this panel
+        # is destroyed, and a lambda would keep firing into a dead widget. The
+        # audit that builds and drops a screen per window width segfaulted on
+        # exactly that.
+        self._explanation_lbl.document().documentLayout().documentSizeChanged.connect(
+            self._fit_explanation_height)
+        expl_layout.addWidget(self._explanation_lbl)
 
-        self._reason_lbl = self._make_info_value(expl_layout, tr("Importance"), wrap=True)
-        self._explanation_lbl = self._make_info_value(expl_layout, tr("Reading"), wrap=True)
         layout.addWidget(self._recommendation_frame)
         layout.addWidget(self._explanation_host)
 
@@ -791,38 +892,6 @@ class StartupInspectorPanel(QFrame):
         self._apply_section_styles()
         self.set_entry(None)
 
-    def _make_info_value(self, layout, label: str, mono: bool = False,
-                         wrap: bool = False, elide: bool = False) -> QLabel:
-        row = QWidget()
-        row_l = QHBoxLayout(row)
-        row_l.setContentsMargins(0, 0, 0, 0)
-        row_l.setSpacing(8)
-
-        key = QLabel(label.upper())
-        key.setObjectName("Muted")
-        # Wraps rather than clips. The compact column is 88px and French turns
-        # "LAUNCH PATH" into "CHEMIN DE LANCEMENT", which needs 135px - a field
-        # name cut in half is worse than a field name on two lines, and the
-        # column cannot grow without taking the width from the value beside it.
-        key.setWordWrap(True)
-        key.setFixedWidth(88 if self._compact else 112)
-        key.setStyleSheet(
-            f"font-family: 'JetBrains Mono'; font-size: 11px; font-weight: 600; "
-            f"color: {get_palette().get('text_dim', '#8a9b8f')};"
-        )
-        row_l.addWidget(key, 0, Qt.AlignTop)
-
-        value = ElidedLabel("—", mode=Qt.ElideMiddle) if elide else QLabel("—")
-        value.setWordWrap(wrap)
-        style = "font-size: 12px;"
-        if mono:
-            style += " font-family: 'JetBrains Mono';"
-        style += f" color: {get_palette().get('text', '#d6e2da')};"
-        value.setStyleSheet(style)
-        row_l.addWidget(value, 1)
-        layout.addWidget(row)
-        return value
-
     def _entry_path(self) -> str:
         entry = self._current_entry
         if not entry:
@@ -860,63 +929,130 @@ class StartupInspectorPanel(QFrame):
         self._header_row.setVisible(visible)
 
     def _apply_section_styles(self):
+        """One grammar for the whole panel.
+
+        It carried four competing treatments at once: a two-column property
+        table with a phantom key column, a tinted bordered box around the
+        verdict, a left rule fencing off the reasoning, and plain rows for
+        everything else. Now every section is a tactical heading over its text,
+        and colour is the only thing that varies — carried by the risk badge
+        and the verdict chip, which is where Findings puts it too.
+        """
         p = get_palette()
-        section_qss = (
-            "QFrame#StartupDetailSection { background: transparent; border: none; }"
-        )
-        # Contextual reasoning is supporting material, so it reads as prose on
-        # the panel. It used to be the only boxed section here while the
-        # recommendation had no container at all, which put the frame around
-        # the explanation and left the conclusion looking like a caption above
-        # it. The box moved to the recommendation; this keeps a left rule so
-        # the block still reads as one passage.
-        reasoning_qss = (
-            f"QFrame#StartupDetailReasoning {{ background: transparent; "
-            f"border: none; border-left: 2px solid {p.get('border', '#213028')}; "
-            f"border-radius: 0px; }}"
-        )
-        self._explanation_host.setStyleSheet(reasoning_qss)
-        self._inspection_frame.setStyleSheet(section_qss)
-        self._action_frame.setStyleSheet(section_qss)
+        text = p.get("text", "#d6e2da")
+        dim = p.get("text_dim", "#8a9b8f")
+        faint = p.get("text_faint", "#57685e")
+        flat = "background: transparent; border: none;"
+        for frame in (self._impact_frame, self._recommendation_frame,
+                      self._action_frame):
+            frame.setStyleSheet(f"QFrame#{frame.objectName()} {{ {flat} }}")
+        # The assessment is the one block here whose text is generated rather
+        # than composed from the entry's own fields, and with every section
+        # drawn as a heading over prose it had nothing to separate it from the
+        # metadata above. It takes the box the Findings inspector gives its
+        # generated lists, which is the container the rest of the app already
+        # means by "this part was produced for you".
+        self._explanation_host.setStyleSheet(
+            f"QFrame#{self._explanation_host.objectName()} {{ "
+            f"background: transparent; border: 1px solid "
+            f"{p.get('border', '#213028')}; border-radius: 2px; }}")
+        if self._explanation_host.layout():
+            self._explanation_host.layout().setContentsMargins(10, 9, 10, 9)
         self._name_lbl.setStyleSheet(
-            f"font-family: 'JetBrains Mono'; font-size: 15px; font-weight: bold; "
-            f"color: {p.get('text', '#d6e2da')};"
-        )
+            f"{flat} font-family: 'JetBrains Mono'; font-size: 15px; "
+            f"font-weight: bold; color: {text};")
         self._publisher_lbl.setStyleSheet(
-            f"font-family: 'JetBrains Mono'; font-size: 12px; "
-            f"color: {p.get('text_dim', '#8a9b8f')};"
-        )
-        self._apply_recommendation_style(p.get("text_dim", "#8a9b8f"))
+            f"{flat} font-family: 'JetBrains Mono'; font-size: 12px; "
+            f"color: {dim};")
+        # The quiet pair under the name, exactly as the Findings identity block
+        # states a path and a scale.
+        for lbl in (self._path_lbl, self._meta_lbl):
+            lbl.setStyleSheet(
+                f"{flat} font-family: 'JetBrains Mono'; font-size: 11px; "
+                f"color: {faint};")
+        self._impact_lbl.setStyleSheet(
+            f"{flat} font-family: 'JetBrains Mono'; font-size: 12px; "
+            f"color: {text};")
+        for lbl in (self._reason_lbl, self._rec_evidence_lbl):
+            lbl.setStyleSheet(
+                f"{flat} font-family: 'JetBrains Mono'; font-size: 10px; "
+                f"color: {dim};")
+        # padding: 0 — the app-wide sheet gives every QTextEdit 12px of it for
+        # the input fields it was written for, and this is prose in a card.
+        self._explanation_lbl.setStyleSheet(
+            f"QTextEdit {{ {flat} padding: 0; font-family: 'JetBrains Mono'; "
+            f"font-size: 12px; color: {text}; }}")
+        self._ai_status_lbl.setStyleSheet(
+            f"{flat} font-family: 'JetBrains Mono'; font-size: 10px; "
+            f"color: {dim};")
+        self._apply_recommendation_style(dim)
+
+    def _fit_explanation_height(self, _size=None):
+        """Grow the assessment to its text, with a two-line floor.
+
+        The same rule the Findings answer card follows: no inner scrollbar, a
+        floor so the section does not resize under the reader when a shorter
+        answer replaces a longer one, and the chrome measured rather than
+        assumed.
+        """
+        edit = self._explanation_lbl
+        doc = edit.document()
+        doc.setTextWidth(max(1, edit.viewport().width()))
+        two_lines = int(edit.fontMetrics().lineSpacing() * 2)
+        chrome = edit.height() - edit.viewport().height()
+        if not 0 <= chrome <= 64:
+            chrome = 0
+        edit.setFixedHeight(max(int(doc.size().height()), two_lines) + chrome + 2)
 
     def _apply_recommendation_style(self, accent: str):
+        """The verdict's colour, on the chip that states it.
+
+        The section used to be a panel tinted in this accent with a border
+        around it — the only filled box on the screen, louder than the entry's
+        own name, and unlike anything in Findings, which carries the same
+        verdict on a small outlined chip and leaves the prose plain. Nothing is
+        lost by dropping the fill: the chip was already the thing saying
+        BOOT IMPACT or NEEDS REVIEW, in this exact colour.
+        """
         p = get_palette()
         border = _rgba(accent, 130)
-        # The conclusion gets the container. Tinted in the accent the verdict
-        # already carries, so the section's weight tracks its severity instead
-        # of being uniform.
-        self._recommendation_frame.setStyleSheet(
-            f"QFrame#StartupRecommendationSection {{ background: {_rgba(accent, 20)}; "
-            f"border: 1px solid {border}; border-radius: 2px; }}"
-        )
         self._rec_status_lbl.setStyleSheet(
             f"font-family: 'JetBrains Mono'; font-size: 10px; "
             f"color: {accent}; padding: 1px 6px; border: 1px solid {border}; "
             "border-radius: 2px; background: transparent;"
         )
         self._rec_text_lbl.setStyleSheet(
-            f"font-size: 12px; font-weight: 650; color: {p.get('text', '#d6e2da')};"
+            f"background: transparent; border: none; font-size: 12px; "
+            f"font-weight: 650; color: {p.get('text', '#d6e2da')};"
         )
-        self._rec_evidence_lbl.setStyleSheet(
-            f"font-family: 'JetBrains Mono'; font-size: 10px; "
-            f"color: {p.get('text_dim', '#8a9b8f')};"
-        )
+    @staticmethod
+    def _has_ai_answer(entry: StartupEntry | None) -> bool:
+        return bool(entry is not None
+                    and entry.ai_status in ("ready", "done")
+                    and entry.ai_explanation)
 
     def _ask_ai_visible_for(self, entry: StartupEntry | None) -> bool:
+        """Offered whether or not an answer exists.
+
+        It used to disappear the moment one arrived, so the point at which
+        re-asking becomes useful — after switching model, tone or language, or
+        simply on an answer you do not believe — was the point the control went
+        away. The same reasoning, and the same two labels, as the Findings
+        inspector.
+        """
         return (
             self._ask_ai_cb is not None
             and entry is not None
-            and entry.ai_status not in ("ready", "done", "analyzing", "pending")
+            and entry.ai_status not in ("analyzing", "pending")
         )
+
+    def _sync_ask_ai_button(self, entry: StartupEntry | None):
+        again = self._has_ai_answer(entry)
+        self._ask_ai_btn.setVisible(self._ask_ai_visible_for(entry))
+        self._ask_ai_btn.setText(tr("Ask again") if again else tr("Ask AI"))
+        self._ask_ai_btn.setToolTip(
+            tr("Generate a new explanation and replace the saved one")
+            if again else "")
 
     def _on_ask_ai_clicked(self):
         """Explain just the selected startup entry on demand."""
@@ -930,28 +1066,30 @@ class StartupInspectorPanel(QFrame):
 
     def set_entry(self, entry: StartupEntry | None):
         self._current_entry = entry
-        self._ask_ai_btn.setVisible(self._ask_ai_visible_for(entry))
+        self._sync_ask_ai_button(entry)
         if entry is None:
+            # The invitation, and nothing else. It used to draw the whole
+            # skeleton with nothing in it — IMPACT over a dash, a WAITING chip
+            # over "select an entry", an assessment heading over a placeholder
+            # — while quietly hiding the two buttons, so the panel looked both
+            # full and broken at once. A section with no subject is not shown.
             self._selection_lbl.setText(tr("// inspection"))
             self._name_lbl.setText(tr("Select a startup entry"))
             self._publisher_lbl.setText(tr("Choose an entry on the left to inspect impact and recommendation."))
             self._state_lbl.setText("")
             self._state_lbl.setStyleSheet("")
             self._risk_badge.setVisible(False)
-            self._ai_status_lbl.setText("")
-            self._explanation_lbl.setText(tr("Startup explanation will appear here once you select an entry."))
-            self._rec_status_lbl.setText(tr("WAITING"))
-            self._rec_text_lbl.setText(tr("Select a startup entry to see Podbye's recommendation."))
-            self._rec_evidence_lbl.setText("")
-            self._apply_recommendation_style(get_palette().get("text_dim", "#8a9b8f"))
-            self._source_lbl.setText("—")
-            self._impact_lbl.setText("—")
-            self._path_lbl.setText("—")
-            self._reason_lbl.setText("—")
-            self._action_frame.setVisible(False)
+            self._meta_lbl.setText("")
+            self._path_lbl.setText("")
+            for section in (self._impact_frame, self._recommendation_frame,
+                            self._explanation_host, self._action_frame):
+                section.setVisible(False)
             return
 
         self._selection_lbl.setText(tr("// selected"))
+        for section in (self._impact_frame, self._recommendation_frame,
+                        self._explanation_host):
+            section.setVisible(True)
         # Actions operate on the launch path, so they only make sense once
         # there is one to act on.
         self._action_frame.setVisible(bool(entry.path or entry.command))
@@ -976,10 +1114,17 @@ class StartupInspectorPanel(QFrame):
         self._explanation_lbl.setText(self._compact_text(explanation))
         # Shortening is a display choice; the whole answer stays reachable.
         self._explanation_lbl.setToolTip(explanation)
-        self._source_lbl.setText(entry.source_label)
-        self._impact_lbl.setText(entry.impact)
+        # Where it is registered and how old the binary is: the two facts that
+        # were a property row and a rail column, now one quiet line under the
+        # path, the way Findings states size, count and last-updated together.
+        meta = [entry.source_label]
+        if entry.target_modified_display:
+            meta.append(tr("updated {date}", date=entry.target_modified_display))
+        self._meta_lbl.setText("  ·  ".join(m for m in meta if m))
+        self._meta_lbl.setToolTip(_rail_tooltip(entry) if _target_is_stale(entry) else "")
+        self._impact_lbl.setText(entry.impact or "—")
         self._path_lbl.setText(entry.path or entry.command or "—")
-        self._reason_lbl.setText(entry.risk_reason or entry.recommendation or "—")
+        self._reason_lbl.setText(entry.risk_reason or entry.recommendation or "")
 
     def update_entry(self, entry: StartupEntry):
         self.set_entry(entry)
@@ -1053,10 +1198,10 @@ class StartupRightSidebar(QFrame):
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._scroll.setFrameShape(QFrame.NoFrame)
-        self._scroll.setStyleSheet("border: none; background: transparent;")
+        style_container(self._scroll, "border: none; background: transparent;")
 
         self.detail_widget = StartupInspectorPanel(compact=True, ask_ai_cb=ask_ai_cb)
-        self.detail_widget.setStyleSheet("background: transparent; border: none;")
+        style_container(self.detail_widget, "background: transparent; border: none;")
         self.detail_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         self.detail_widget.set_embedded_header_visible(False)
         self._scroll.setWidget(self.detail_widget)
@@ -1077,7 +1222,14 @@ class StartupRightSidebar(QFrame):
             f"border: 1px solid {border}; border-radius: 2px; }}"
         )
         self._sep.setStyleSheet(f"background: {line_rgba}; border: none;")
-        self.detail_widget.setStyleSheet(f"background: {detail_bg}; border: none;")
+        # Scoped, like the copy in __init__. Unscoped here it cascaded into the
+        # panel on every theme change and on construction — apply_style() runs
+        # from the constructor — and took the border off Open in Explorer and
+        # Copy path, which is the report this pass began with. The first sweep
+        # missed it because the audits built the panel directly and the screen
+        # in its empty state, and this sidebar is not built until results are.
+        style_container(self.detail_widget,
+                        f"background: {detail_bg}; border: none;")
         self.detail_widget._apply_section_styles()
 
     def set_entry(self, entry: StartupEntry):
@@ -1116,6 +1268,17 @@ class StartupsScreen(QWidget):
         self._count_lbl: QLabel | None = None
         self._list_layout: QVBoxLayout | None = None
         self._empty_lbl: QLabel | None = None
+        # Rows are rebound, not rebuilt — see _rebuild_entry_list. The pool
+        # outlives every filter change and every re-analysis.
+        self._row_pool: list = []
+        # Set the first time the page is opened, so a detection that finds
+        # nothing does not restart on every visit.
+        self._first_detection_started = False
+        # Typing is a burst; the list is rebuilt once at the end of it.
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(160)
+        self._search_timer.timeout.connect(self._reapply_filters)
         self._right_sidebar: StartupRightSidebar | None = None
 
         self._build_ui()
@@ -1147,7 +1310,7 @@ class StartupsScreen(QWidget):
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._scroll.setStyleSheet("border: none;")
+        style_container(self._scroll, "border: none;")
         outer.addWidget(self._scroll)
 
         self._show_idle()
@@ -1199,16 +1362,27 @@ class StartupsScreen(QWidget):
         parent_layout.addLayout(header)
 
     def _show_idle(self):
+        """The page while the first detection is running.
+
+        It used to be a button and a sentence asking for permission to look.
+        Reading the registry and the Startup folders takes 275ms on the
+        reporting machine — measured over three runs, 25 entries — which is
+        not a cost worth an extra click, and the screen had nothing else to
+        offer until it was paid. Opening the page is the request.
+
+        Re-analyze stays in the header for the deliberate re-run, and it is
+        still the only thing that re-asks the model.
+        """
         content = QWidget()
         layout = QVBoxLayout(content)
         layout.setContentsMargins(22, 16, 22, 22)
         layout.setSpacing(20)
 
-        self._make_header(layout, analyzing=False)
+        self._make_header(layout, analyzing=True)
 
         idle_frame = Panel()
         idle_lay = idle_frame.with_layout(vertical=True, margins=(24, 32, 24, 32), spacing=12)
-        idle_lbl = QLabel(tr("Click Analyze Startups to detect Windows startup programs."))
+        idle_lbl = QLabel(tr("Detecting Windows startup programs…"))
         idle_lbl.setAlignment(Qt.AlignCenter)
         idle_lbl.setObjectName("Muted")
         idle_lbl.setStyleSheet("font-size: 14px;")
@@ -1219,7 +1393,10 @@ class StartupsScreen(QWidget):
         self._scroll.setWidget(content)
 
     def _show_results(self):
+        # The page is rebuilt here, so the pooled rows go with it: they belong
+        # to the list layout that is about to be replaced.
         self._row_widgets = {}
+        self._row_pool = []
 
         content = QWidget()
         layout = QVBoxLayout(content)
@@ -1346,7 +1523,7 @@ class StartupsScreen(QWidget):
         self._list_scroll = QScrollArea()
         self._list_scroll.setWidgetResizable(True)
         self._list_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._list_scroll.setStyleSheet("border: none; background: transparent;")
+        style_container(self._list_scroll, "border: none; background: transparent;")
 
         list_host = QWidget()
         self._list_layout = QVBoxLayout(list_host)
@@ -1383,7 +1560,7 @@ class StartupsScreen(QWidget):
             f"border: 1px solid {get_palette().get('border_alt', '#2b3d33')}; "
             f"background: {get_palette().get('panel', '#141d18')};"
         )
-        self._search_input.textChanged.connect(self._on_search_changed)
+        self._search_input.textChanged.connect(self._on_search_typed)
         top.addWidget(self._search_input)
         top.addSpacing(4)
 
@@ -1456,6 +1633,20 @@ class StartupsScreen(QWidget):
             btn.setStyleSheet(self._btn_active_style() if lbl == self._status_filter else self._btn_inactive_style())
         self._reapply_filters()
 
+    def _on_search_typed(self, text: str):
+        """Filter after the typing stops, not on every character.
+
+        The same debounce the Findings search uses. Clearing the box is
+        immediate: that is a person asking to see everything again, and making
+        them wait for it reads as the screen being stuck.
+        """
+        self._search = text
+        if not text:
+            self._search_timer.stop()
+            self._reapply_filters()
+        else:
+            self._search_timer.start()
+
     def _on_search_changed(self, text: str):
         self._search = text
         self._reapply_filters()
@@ -1480,45 +1671,62 @@ class StartupsScreen(QWidget):
         self._rebuild_entry_list()
 
     def _rebuild_entry_list(self):
+        """Rebind the rows to the filtered entries. Never rebuild them.
+
+        This used to clear the layout and construct a StartupListRow per entry
+        on every keystroke in the search box. Measured on this screen: 73 ms
+        for 25 entries, 306 ms for 100, 1034 ms for 300 — a visible freeze on
+        every character typed, and identical whether or not an AI pass was
+        running (73.7 ms idle against 74.3 ms during). The analysis was never
+        the cause; it was just what people were doing when they noticed.
+
+        A pooled row costs a rebind instead of a construction, which is the
+        pattern the Findings list already uses for the same reason.
+        """
         if self._list_layout is None:
             return
-        _clear_layout(self._list_layout)
-        self._row_widgets = {}
 
         if self._count_lbl is not None:
             self._count_lbl.setText(tr("// {shown} of {total} shown",
                                        shown=len(self._filtered), total=len(self._entries)))
 
-        if not self._filtered:
-            empty = QLabel(tr("No startup entries match the current filters."))
-            empty.setAlignment(Qt.AlignCenter)
-            empty.setObjectName("Muted")
-            empty.setStyleSheet("font-size: 13px; padding: 24px 0px;")
-            self._list_layout.addWidget(empty)
-            self._list_layout.addStretch()
+        self._row_widgets = {}
+        empty = not self._filtered
+        if self._empty_lbl is not None:
+            self._empty_lbl.setVisible(empty)
+        if empty:
+            for spare in self._row_pool:
+                spare.setVisible(False)
             self._selected_key = None
             self._clear_detail_sidebar()
             return
 
         selected_visible = False
-        for entry in self._filtered:
-            row = StartupListRow(entry)
-            row.clicked.connect(self._select_entry)
-            row.toggle_requested.connect(self._set_entry_enabled)
+        for index, entry in enumerate(self._filtered):
+            if index < len(self._row_pool):
+                row = self._row_pool[index]
+                row.update_entry(entry)
+            else:
+                row = StartupListRow(entry)
+                row.clicked.connect(self._select_entry)
+                row.toggle_requested.connect(self._set_entry_enabled)
+                self._row_pool.append(row)
+                # Before the trailing stretch, so the list stays top-aligned.
+                self._list_layout.insertWidget(
+                    self._list_layout.count() - 1, row)
             is_selected = entry.key == self._selected_key and bool(self._selected_key)
             row.set_selected(is_selected)
-            if is_selected:
-                selected_visible = True
+            selected_visible = selected_visible or is_selected
             self._row_widgets[entry.key] = row
-            self._list_layout.addWidget(row)
-        self._list_layout.addStretch()
+            row.setVisible(True)
+        for spare in self._row_pool[len(self._filtered):]:
+            spare.setVisible(False)
 
+        # No _sync_row_selection() here: the loop above already set it on every
+        # row, and calling it again was a third full restyle of the list.
         if not selected_visible:
             self._selected_key = None
             self._clear_detail_sidebar()
-            self._sync_row_selection()
-        else:
-            self._sync_row_selection()
 
     def _select_entry(self, key: str):
         entry = next((e for e in self._filtered if e.key == key), None)
@@ -1574,6 +1782,17 @@ class StartupsScreen(QWidget):
         from app.services.workers import stop_worker
         return stop_worker(self._ai_worker, timeout_ms)
 
+    def closeEvent(self, event):
+        """Never let the widget tree be destroyed over a live thread.
+
+        Until the page detected on open, the only way to start the model was
+        to click Analyze, so a screen that was merely built never owned a
+        thread. It can now, which makes teardown a path that actually runs.
+        """
+        self.stop_background_work(500)
+        self._ai_worker = None
+        super().closeEvent(event)
+
     # Re-reading the registry and the Startup folders costs about a third of a
     # second, and a screen can be shown several times in a row while a window
     # settles. Collapse those into one read.
@@ -1594,6 +1813,15 @@ class StartupsScreen(QWidget):
         user expects it to be true.
         """
         super().showEvent(event)
+        if not self._entries and not self._first_detection_started:
+            # Paint the detecting state first, then read the machine on the
+            # next turn of the event loop — otherwise the 275ms walk happens
+            # before anything is drawn and the page arrives already finished,
+            # with no sign it did anything.
+            self._first_detection_started = True
+            self._show_idle()
+            QTimer.singleShot(0, self, self._analyze)
+            return
         self._refresh_entries()
 
     def _refresh_entries(self):
@@ -1646,10 +1874,12 @@ class StartupsScreen(QWidget):
             self._clear_detail_sidebar()
 
     def _analyze(self):
-        if self._ai_worker and self._ai_worker.isRunning():
-            self._ai_worker.cancel()
-            if not self._ai_worker.wait(500):
-                self._ai_worker = None
+        # retire_worker, not a bare wait(): a thread that will not stop in
+        # time is disowned there, so dropping this reference cannot destroy a
+        # QThread mid-run.
+        from app.services.workers import retire_worker
+        retire_worker(self._ai_worker, 500)
+        self._ai_worker = None
 
         from app.services.startup_detector import detect_startup_entries
         self._entries = detect_startup_entries()
@@ -1742,10 +1972,12 @@ class StartupsScreen(QWidget):
             entry.ai_error = ""
         if self._btn_retry_ai is not None:
             self._btn_retry_ai.setVisible(False)
-        if self._ai_worker and self._ai_worker.isRunning():
-            self._ai_worker.cancel()
-            if not self._ai_worker.wait(500):
-                self._ai_worker = None
+        # retire_worker, not a bare wait(): a thread that will not stop in
+        # time is disowned there, so dropping this reference cannot destroy a
+        # QThread mid-run.
+        from app.services.workers import retire_worker
+        retire_worker(self._ai_worker, 500)
+        self._ai_worker = None
         if not self._settings_store:
             return
         self._rebuild_entry_list()

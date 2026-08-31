@@ -1,16 +1,15 @@
 """The General settings page: one column for labels, one axis for controls.
 
 Reviewed for alignment. The column turned out to be consistent already — what
-was actually wrong was a description long enough to wrap eight times in a 208px
+was actually wrong was a description long enough to wrap eight times in a narrow
 column beside a single 42px dropdown, which is what made the row look adrift.
 These pin the axis so it stays put, and the Apply button's state machine.
 """
 import pytest
 from PySide6.QtWidgets import QComboBox, QLabel, QPushButton, QScrollArea
 
-from app.screens.settings import SettingsScreen, _setting_row
-
-_LABEL_COL_WIDTH = 208
+from app.screens.settings import (SettingsScreen, _LABEL_COL_WIDTH,
+                                  _setting_row)
 
 
 @pytest.fixture

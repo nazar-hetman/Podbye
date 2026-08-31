@@ -10,11 +10,14 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QLabel, QLineEdit,
                                QPushButton, QSlider)
 
 from app.screens.settings import (SettingsScreen, _ACTION_HEIGHT,
-                                  _VALUE_COL_WIDTH)
+                                  _LABEL_COL_WIDTH, _VALUE_COL_WIDTH)
 
+# Derived, not restated. These were three literals that all had to be edited
+# by hand when the label column widened, which said nothing about the axis
+# they exist to protect — that every control in a section starts at one x.
 _LABEL_COL_X = 37
-_VALUE_COL_X = 259
-_ACTION_COL_X = 547
+_VALUE_COL_X = _LABEL_COL_X + _LABEL_COL_WIDTH + 14     # _setting_row spacing
+_ACTION_COL_X = _VALUE_COL_X + _VALUE_COL_WIDTH + 8
 
 
 @pytest.fixture

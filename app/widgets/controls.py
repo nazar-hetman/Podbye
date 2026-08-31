@@ -15,6 +15,51 @@ from app.themes.theme_manager import get_palette
 # the other behind. Both live here now, beside the controls they style.
 
 
+def style_container(widget, rules: str) -> None:
+    """Apply *rules* to this container and to nothing inside it.
+
+    A widget stylesheet with no selector cascades to every descendant *and*
+    outranks the application stylesheet, so a panel that says "border: none"
+    silently flattens every button, checkbox and combo box it holds. Measured
+    on the Startups inspector: the same #Subtle button painted a border at
+    #3a4f42 standing alone and painted nothing at all — #000000, no border, no
+    fill — inside the panel, which is why "Open in Explorer" and "Copy path"
+    read as plain text rather than as actions.
+
+    Scoping the rules to the widget's own class and object name keeps them
+    where they were meant to be. The object name is generated when the widget
+    has none, because a selector needs something to bind to.
+    """
+    name = widget.objectName()
+    if not name:
+        name = f"scoped{id(widget):x}"
+        widget.setObjectName(name)
+    widget.setStyleSheet(
+        f"{widget.metaObject().className()}#{name} {{ {rules.strip()} }}")
+
+
+def restyle_needed(widget, signature) -> bool:
+    """Whether *widget* has to be restyled, given what its style depends on.
+
+    ``setStyleSheet`` is the most expensive call a list row makes: Qt reparses
+    the sheet and repolishes the widget and its children every time, measured
+    at ~0.145 ms a call. A row that restyles on every rebind pays that whether
+    or not anything about it changed, and a list pays it per row.
+
+    Profiled while typing one character into the Startups search box, 25
+    entries on screen: 451 setStyleSheet calls, 92% of the 73 ms the keystroke
+    took, because each row was styled three times over and each pass set six
+    sheets. With this guard the same keystroke costs 10 ms.
+
+    *signature* must name everything the caller's styling reads — its state,
+    and the palette, since a theme switch replaces that object.
+    """
+    if getattr(widget, "_style_signature", None) == signature:
+        return False
+    widget._style_signature = signature
+    return True
+
+
 def ask_ai_button_qss() -> str:
     """Accent-tinted style so an 'Ask AI' button reads clearly as an action,
     not as a run of plain text. Themed via the live palette, with a filled
@@ -158,16 +203,27 @@ class ElidedLabel(QLabel):
 
     Ignored horizontal size policy is what breaks that chain: the label accepts
     whatever width the layout gives it, and elides the text to fit. The full
-    value stays available as the tooltip.
+    value stays available as the tooltip — but *only* while the text is
+    actually cut short. It used to be the tooltip always, so hovering a name
+    that was fully readable popped a box repeating it, over the row beneath.
+
+    A caller that sets its own tooltip keeps it: the label only manages the
+    one it put there itself.
     """
 
     def __init__(self, text: str = "", parent=None, mode=Qt.ElideRight):
         super().__init__(parent)
         self._full = text
         self._mode = mode
+        self._tip_is_ours = True
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        self.setToolTip(text)
         super().setText(text)
+        self._elide()
+
+    def setToolTip(self, text: str):
+        """Someone else's tooltip, from here on — this label stops touching it."""
+        self._tip_is_ours = False
+        super().setToolTip(text)
 
     def setText(self, text: str):
         """Overridden so callers do not need to know the label elides."""
@@ -178,7 +234,8 @@ class ElidedLabel(QLabel):
 
     def set_full_text(self, text: str):
         self._full = text
-        self.setToolTip(text)
+        # New text, so the label owns the tooltip again until told otherwise.
+        self._tip_is_ours = True
         self._elide()
 
     def resizeEvent(self, event):
@@ -198,9 +255,31 @@ class ElidedLabel(QLabel):
         return QSize(self.fontMetrics().horizontalAdvance(self._full) + 4,
                      hint.height())
 
+    def minimumSizeHint(self):
+        """Any width will do: the text elides to whatever it is given.
+
+        QLabel's own minimum is the width of the *full* text, and a layout
+        honours that — so a label whose entire purpose is to shrink was
+        demanding the room it exists to avoid needing. Measured on the Startups
+        inspector with a scheduled-task name: the launch path asked for 511px
+        and the panel settled at 576px inside a 533px viewport, with horizontal
+        scrolling off. Every line in the panel was cut at the right edge, and
+        there was no bar to reach the rest of it.
+
+        The height is left alone — that is a real constraint.
+        """
+        fm = self.fontMetrics()
+        return QSize(fm.horizontalAdvance("\u2026") + 8,
+                     super().minimumSizeHint().height())
+
     def _elide(self):
         fm = self.fontMetrics()
-        super().setText(fm.elidedText(self._full, self._mode, max(1, self.width() - 2)))
+        shown = fm.elidedText(self._full, self._mode, max(1, self.width() - 2))
+        super().setText(shown)
+        if self._tip_is_ours:
+            # Only what the reader cannot see. Recomputed on every resize,
+            # because whether it fits is a question about the current width.
+            super().setToolTip(self._full if shown != self._full else "")
 
 
 class _DropdownArrow(QWidget):
