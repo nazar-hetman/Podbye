@@ -179,7 +179,10 @@ def test_the_inspector_lists_items_not_a_file_breakdown(view):
     view.select_by_path(WORKSPACE["path"])
     panel = _panel(view)
     assert panel._contents.mode == MODE_ITEMS
-    assert panel._contents_title.text() == "ITEMS"
+    # Renamed from "ITEMS": those rows are separate findings that live inside
+    # and are *kept* when this one is removed, so a title implying a breakdown
+    # of the header's figure was the Projects 255.4-vs-8.7 GB confusion.
+    assert panel._contents_title.text() == "FINDINGS INSIDE"
     assert [w._name.text() for w in _rows(panel)] == ["Focus", "Ansomatic"]
 
 

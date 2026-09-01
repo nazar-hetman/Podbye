@@ -25,7 +25,7 @@ def sessions_dir(tmp_path, monkeypatch):
 def _finding(i):
     return {
         "category": "Cache & Temp", "semantic_label": "", "owner_confidence": "none",
-        "path": f"C:/Users\\Nazar\\AppData\\Local\\Temp\\f{i}.tmp",
+        "path": f"C:/Users\\ExampleUser\\AppData\\Local\\Temp\\f{i}.tmp",
         "name": f"f{i}.tmp", "is_dir": False, "size": "1 KB", "size_bytes": 1024,
         "cloud_only": False, "reclaimable_bytes": 1024, "age": "3d",
         "modified": 1700000000.0, "risk": "Safe", "source_rule": "temp",
@@ -38,7 +38,7 @@ def _finding(i):
 
 def _entity(i):
     return {
-        "path": f"C:/Users\\Nazar\\AppData\\Local\\App{i}", "name": f"App{i}",
+        "path": f"C:/Users\\ExampleUser\\AppData\\Local\\App{i}", "name": f"App{i}",
         "entity_type": "application_data", "size_bytes": 5_000_000_000,
         "file_count": 120, "folder_count": 4, "risk": "Review",
         "is_entity": True, "category": "Application Data",

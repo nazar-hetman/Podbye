@@ -17,7 +17,7 @@ from app.models.risk import RISK_ORDER
 from app.models.startup_entry import StartupEntry
 from app.widgets.controls import (ask_ai_button_qss, ElidedLabel,
                                   restyle_needed, style_container)
-from app.widgets.panels import Panel, apply_tactical_label
+from app.widgets.panels import Panel, apply_tactical_label, meta_caption
 from app.widgets.pills import Badge
 from app.themes.theme_manager import get_palette, theme_signaller
 from app.i18n import tr
@@ -42,6 +42,27 @@ _IMPACT_COLOR = {
     "Light utility": "#7cc596",
     "Startup item": "#8a9b8f",
 }
+
+
+def _startup_source_text(label: str) -> str:
+    """Translate Podbye's source descriptors without touching task identifiers."""
+    text = str(label or "")
+    translated = tr(text)
+    if translated != text:
+        return translated
+    # Test and imported entries may carry extra descriptive qualifiers after a
+    # scheduled-task trigger. They are Podbye metadata, unlike the task path,
+    # so translate those words while preserving any unknown identifier verbatim.
+    replacements = {
+        "Scheduled task": tr("Scheduled task"),
+        "logon": tr("logon"),
+        "startup": tr("startup"),
+        "per-user": tr("per-user"),
+        "elevated": tr("elevated"),
+    }
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    return text
 
 
 def _separator() -> QFrame:
@@ -146,7 +167,7 @@ def _rail_tooltip(entry: StartupEntry) -> str:
         return tr("This program has not been updated since {date} — it may be "
                   "left over from software you no longer use.").format(
                       date=entry.target_modified_display)
-    return entry.impact or ""
+    return tr(entry.impact) if entry.impact else ""
 
 
 def _startup_recommendation(entry: StartupEntry) -> tuple[str, str, str, str]:
@@ -163,7 +184,7 @@ def _startup_recommendation(entry: StartupEntry) -> tuple[str, str, str, str]:
         return (
             tr("PROTECTED"),
             tr("Recommendation: keep this enabled unless you are deliberately changing a security, driver, or hardware workflow."),
-            entry.risk_reason or tr("This startup entry is tied to protected system or device behavior."),
+            tr(entry.risk_reason) or tr("This startup entry is tied to protected system or device behavior."),
             accent_risk,
         )
     if unknown and high_impact:
@@ -184,27 +205,29 @@ def _startup_recommendation(entry: StartupEntry) -> tuple[str, str, str, str]:
         return (
             tr("BOOT IMPACT"),
             tr("Recommendation: consider disabling this if you do not need it immediately after sign-in."),
-            tr("This role can add background work during login: {impact}.").format(impact=entry.impact),
+            tr("This role can add background work during login: {impact}.").format(
+                impact=tr(entry.impact)),
             accent_review,
         )
     if entry.risk == "Safe":
         return (
             tr("LOW CONCERN"),
             tr("Recommendation: safe to disable if automatic launch is just a convenience."),
-            entry.risk_reason or tr("This appears to be a non-critical convenience startup entry."),
+            tr(entry.risk_reason) or tr("This appears to be a non-critical convenience startup entry."),
             accent_safe,
         )
     if entry.risk == "Optional":
         return (
             tr("OPTIONAL"),
             tr("Recommendation: keep enabled only if you use this immediately after Windows starts."),
-            entry.recommendation or entry.risk_reason or tr("Manual launch is usually enough for this item."),
+            tr(entry.recommendation) or tr(entry.risk_reason)
+            or tr("Manual launch is usually enough for this item."),
             accent_info,
         )
     return (
         tr("NEEDS REVIEW"),
         tr("Recommendation: inspect the path and purpose before changing this startup entry."),
-        entry.risk_reason or tr("Podbye does not have enough confidence to mark this as safe."),
+        tr(entry.risk_reason) or tr("Podbye does not have enough confidence to mark this as safe."),
         accent_review,
     )
 
@@ -375,17 +398,21 @@ class StartupListRow(QFrame):
     clicked = Signal(str)
     toggle_requested = Signal(str, bool)
 
-    # Measured against the app's own font: "PROTECTED" wants 83 and "Disable"
-    # 42, so each column is the widest label it can ever hold plus a little
-    # breathing room. Too narrow and a fixed column clips its own text, which
-    # would be worse than the jitter it replaced.
-    _BADGE_W = 92
+    # Ukrainian "НЕОБОВ’ЯЗКОВО" is the widest shipped risk label (111px with
+    # the badge chrome). A fixed badge column keeps every row aligned, but it
+    # must be large enough for that legitimate state rather than clipping it.
+    # Polish "DO SPRAWDZENIA" is slightly wider than the English Review badge.
+    # Risk labels are product states, not terse action verbs.  The review
+    # state needs enough room for localized wording such as Spanish
+    # “Requiere revisión”; keep the column aligned and sized to its content.
+    _BADGE_W = 144
     # Wide enough for the toggle as a button, in every shipped language:
     # "Disable" needs 62px, Ukrainian 74px and French 80px once the border and
     # padding are counted. At 54 the styled button could not shrink to fit, so
     # it overflowed its column and squeezed the name and meta labels beside it
     # into ellipses - the button clipped, and took the row's text with it.
-    _ACTION_W = 84
+    # German "Deaktivieren" requires more room than the English action label.
+    _ACTION_W = 100
 
     def __init__(self, entry: StartupEntry, parent=None):
         super().__init__(parent)
@@ -495,7 +522,7 @@ class StartupListRow(QFrame):
         self._state_lbl.setStyleSheet(_state_pill_style(entry.enabled))
         self._toggle_btn.setText(tr("Disable") if entry.enabled else tr("Enable"))
         self._risk_badge.set_badge(tr(entry.risk), _RISK_VARIANT.get(entry.risk, "info"))
-        parts = [entry.publisher_display, entry.source_label, entry.impact]
+        parts = [entry.publisher_display, _startup_source_text(entry.source_label), tr(entry.impact)]
         # Only while it is actually doing something. "AI disabled" on every row
         # is noise; the inspector states per-entry AI state and offers the
         # action. It goes on the prose line with everything else the row says,
@@ -670,9 +697,7 @@ class StartupInspectorPanel(QFrame):
         apply_tactical_label(self._title_lbl, font_size=8, letter_spacing=1)
         hdr.addWidget(self._title_lbl)
 
-        self._selection_lbl = QLabel(tr("// inspection"))
-        self._selection_lbl.setObjectName("Muted")
-        self._selection_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 9px;")
+        self._selection_lbl = meta_caption(tr("// inspection"))
         hdr.addWidget(self._selection_lbl)
         hdr.addStretch()
         layout.addWidget(self._header_row)
@@ -1095,7 +1120,7 @@ class StartupInspectorPanel(QFrame):
         self._action_frame.setVisible(bool(entry.path or entry.command))
         self._name_lbl.setText(entry.name)
         self._publisher_lbl.setText(entry.publisher_display)
-        self._state_lbl.setText(entry.status_label.upper())
+        self._state_lbl.setText(tr(entry.status_label).upper())
         self._state_lbl.setStyleSheet(_state_pill_style(entry.enabled))
         self._risk_badge.setVisible(True)
         self._risk_badge.set_badge(tr(entry.risk), _RISK_VARIANT.get(entry.risk, "info"))
@@ -1117,14 +1142,15 @@ class StartupInspectorPanel(QFrame):
         # Where it is registered and how old the binary is: the two facts that
         # were a property row and a rail column, now one quiet line under the
         # path, the way Findings states size, count and last-updated together.
-        meta = [entry.source_label]
+        meta = [_startup_source_text(entry.source_label)]
         if entry.target_modified_display:
             meta.append(tr("updated {date}", date=entry.target_modified_display))
         self._meta_lbl.setText("  ·  ".join(m for m in meta if m))
         self._meta_lbl.setToolTip(_rail_tooltip(entry) if _target_is_stale(entry) else "")
-        self._impact_lbl.setText(entry.impact or "—")
+        self._impact_lbl.setText(tr(entry.impact) if entry.impact else "—")
         self._path_lbl.setText(entry.path or entry.command or "—")
-        self._reason_lbl.setText(entry.risk_reason or entry.recommendation or "")
+        self._reason_lbl.setText(
+            tr(entry.risk_reason) or tr(entry.recommendation) or "")
 
     def update_entry(self, entry: StartupEntry):
         self.set_entry(entry)
@@ -1183,9 +1209,7 @@ class StartupRightSidebar(QFrame):
         title = QLabel(tr("STARTUP INSPECTION"))
         apply_tactical_label(title, font_size=8, letter_spacing=1)
         hdr.addWidget(title)
-        self._meta = QLabel(tr("// details"))
-        self._meta.setObjectName("Muted")
-        self._meta.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 9px;")
+        self._meta = meta_caption(tr("// details"))
         hdr.addWidget(self._meta)
         hdr.addStretch()
         layout.addLayout(hdr)
@@ -1274,6 +1298,8 @@ class StartupsScreen(QWidget):
         # Set the first time the page is opened, so a detection that finds
         # nothing does not restart on every visit.
         self._first_detection_started = False
+        self._pending_adopt_render = False
+        self._adopt_selection = ""
         # Typing is a burst; the list is rebuilt once at the end of it.
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
@@ -1423,8 +1449,9 @@ class StartupsScreen(QWidget):
 
         for hdr, val, unit, color in [
             (tr("TOTAL ENTRIES"), str(total), tr("detected"), ""),
-            (tr("ENABLED"), str(enabled), f"of {total}", ""),
-            (tr("NEEDS REVIEW"), str(needs_review), tr("review + protected"), p.get("review", "#d8b46a")),
+            (tr("ENABLED"), str(enabled), tr("of {total}", total=total), ""),
+            (tr("NEEDS REVIEW"), str(needs_review),
+             tr("need review or are protected"), p.get("review", "#d8b46a")),
             (tr("OPTIONAL"), str(optional_count), tr("manual launch is fine"), p.get("accent", "#7ab8d4")),
         ]:
             card = Panel()
@@ -1773,14 +1800,33 @@ class StartupsScreen(QWidget):
 
     # ── Background work ───────────────────────────────────────────
 
+    def _live_workers(self) -> list:
+        """Every thread this screen owns — the bulk pass and each Ask AI.
+
+        The per-entry workers were invisible to both methods below. They are
+        parented to this screen, so a language switch (which rebuilds the
+        shell and deletes the outgoing widget tree) or closing the app while
+        one is thinking destroyed a running QThread: 0xC0000409, no traceback,
+        the crash app/services/workers.py exists to prevent. Reachable by
+        clicking Ask AI on a startup entry and then switching language — a
+        local model takes seconds to minutes to answer.
+        """
+        workers = [self._ai_worker]
+        workers.extend(getattr(self, "_ask_workers", []) or [])
+        return [w for w in workers if w is not None]
+
     def busy_reason(self) -> str:
-        if self._ai_worker is not None and self._ai_worker.isRunning():
-            return tr("startup entries are being analyzed")
+        for worker in self._live_workers():
+            try:
+                if worker.isRunning():
+                    return tr("startup entries are being analyzed")
+            except RuntimeError:
+                continue        # the C++ object is already gone
         return ""
 
     def stop_background_work(self, timeout_ms: int = 3000) -> bool:
-        from app.services.workers import stop_worker
-        return stop_worker(self._ai_worker, timeout_ms)
+        from app.services.workers import stop_all
+        return stop_all(*self._live_workers(), timeout_ms=timeout_ms)
 
     def closeEvent(self, event):
         """Never let the widget tree be destroyed over a live thread.
@@ -1791,6 +1837,7 @@ class StartupsScreen(QWidget):
         """
         self.stop_background_work(500)
         self._ai_worker = None
+        self._ask_workers = []
         super().closeEvent(event)
 
     # Re-reading the registry and the Startup folders costs about a third of a
@@ -1813,6 +1860,10 @@ class StartupsScreen(QWidget):
         user expects it to be true.
         """
         super().showEvent(event)
+        if getattr(self, "_pending_adopt_render", False):
+            # Entries were handed over while this screen was off-screen (a
+            # shell rebuild for a language change). Draw them now.
+            self._render_adopted()
         if not self._entries and not self._first_detection_started:
             # Paint the detecting state first, then read the machine on the
             # next turn of the event loop — otherwise the 275ms walk happens
@@ -1823,6 +1874,53 @@ class StartupsScreen(QWidget):
             QTimer.singleShot(0, self, self._analyze)
             return
         self._refresh_entries()
+
+    def adopt_entries(self, entries: list, selected_key: str = "",
+                      render_now: bool = False) -> None:
+        """Take over a previous screen's detection results.
+
+        Used when the shell is rebuilt for a language change. Without it the
+        new screen starts empty, re-walks the registry and the Startup folders
+        on the UI thread, and throws away every AI explanation those entries
+        were carrying — answers the model spent minutes on, written in
+        ai_explanation_language, which a UI language change does not touch.
+
+        The entries hold raw values (``source_label``, ``impact``,
+        ``risk_reason``); every one of them is passed through tr() at render
+        time, so they display in the new language without being re-detected.
+        """
+        if not entries:
+            return
+        self._entries = list(entries)
+        self._first_detection_started = True
+        # Held aside rather than assigned: _select_entry() is a *toggle*, so
+        # setting _selected_key first and then calling it deselects the row
+        # instead of restoring it.
+        self._adopt_selection = (selected_key
+                                 if selected_key
+                                 and any(e.key == selected_key for e in entries)
+                                 else "")
+        self._selected_key = None
+        self._reapply_filters()
+        # Rendering is deferred unless this screen is the one on screen. A
+        # language switch rebuilds every screen, and drawing rows for the five
+        # the user is not looking at is what turned a 2.4s switch into 3.9s.
+        # showEvent paints them on the way in, which is a cost they would pay
+        # then anyway.
+        if render_now or self.isVisible():
+            self._render_adopted()
+        else:
+            self._pending_adopt_render = True
+
+    def _render_adopted(self) -> None:
+        """Draw entries handed over by a previous screen, and reselect."""
+        self._pending_adopt_render = False
+        self._show_results()
+        key = getattr(self, "_adopt_selection", "")
+        self._adopt_selection = ""
+        if key:
+            self._selected_key = None
+            self._select_entry(key)
 
     def _refresh_entries(self):
         """Re-read the machine and merge into what is already on screen.

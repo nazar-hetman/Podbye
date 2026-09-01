@@ -126,23 +126,47 @@ def test_apply_is_disabled_when_nothing_has_changed(lang):
 
 
 def test_apply_wakes_up_for_an_unapplied_change(lang):
-    lang._lang_combo.setCurrentText("Ukrainian")
+    lang._lang_combo.setCurrentText("Українська")
     assert lang._btn_apply_lang.isEnabled()
 
 
 def test_apply_goes_back_to_sleep_when_the_change_is_undone(lang):
     """Picking a language and picking the saved one again leaves nothing to
     apply — the button must not stay lit on the strength of having been used."""
-    lang._lang_combo.setCurrentText("Ukrainian")
+    lang._lang_combo.setCurrentText("Українська")
     lang._lang_combo.setCurrentText("English")
     assert not lang._btn_apply_lang.isEnabled()
 
 
 def test_apply_disables_itself_once_the_change_lands(lang):
-    lang._lang_combo.setCurrentText("French")
+    lang._lang_combo.setCurrentText("Français")
     lang._apply_language()
     assert not lang._btn_apply_lang.isEnabled()
     assert lang._store.get("ui_language") == "French"
+
+
+def test_polish_can_be_selected_and_persisted(lang):
+    # "Polski" is what the picker shows; "Polish" is what gets stored. The
+    # list is written in endonyms so a speaker can find their own language
+    # whatever the UI is currently set to.
+    assert lang._lang_combo.findText("Polski") >= 0
+    lang._lang_combo.setCurrentText("Polski")
+    lang._apply_language()
+    assert lang._store.get("ui_language") == "Polish"
+
+
+def test_german_can_be_selected_and_persisted(lang):
+    assert lang._lang_combo.findText("Deutsch") >= 0
+    lang._lang_combo.setCurrentText("Deutsch")
+    lang._apply_language()
+    assert lang._store.get("ui_language") == "German"
+
+
+def test_spanish_can_be_selected_and_persisted(lang):
+    assert lang._lang_combo.findText("Español") >= 0
+    lang._lang_combo.setCurrentText("Español")
+    lang._apply_language()
+    assert lang._store.get("ui_language") == "Spanish"
 
 
 def test_applying_with_nothing_pending_writes_nothing(lang):

@@ -1,6 +1,6 @@
 # Podbye — Design Rules
 
-Extracted from the Claude Design handoff bundle (Podbye.html, May 2026).
+Design-system reference for the current PySide6 UI.
 
 ---
 

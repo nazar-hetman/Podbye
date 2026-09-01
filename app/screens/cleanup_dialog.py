@@ -24,7 +24,7 @@ from app.models.finding import _format_size
 from app.models.risk import (
     is_protected, normalize_risk, risk_fg as _risk_fg, risk_sort_index,
 )
-from app.i18n import tr
+from app.i18n import tr, tr_count
 from app.themes.theme_manager import get_palette
 from app.services.cleanup_engine import CleanupWorker
 from app.services.keep_list import is_kept
@@ -148,7 +148,34 @@ def _cleanup_targets_for_item(item: dict) -> list[dict]:
         # Safety net: never offer a drive root (C:/) or empty path as a target.
         if not path or _is_drive_root_path(path):
             return []
-        return [item]
+
+        # A folder that holds a separately listed finding does not own it. The
+        # whole folder used to be handed to the shell, which took that finding
+        # with it — bytes charged to another row, removed without being
+        # counted anywhere the user could see. Expanding here rather than in
+        # the engine keeps the engine a plain list of paths to delete, which
+        # is the property that makes it auditable.
+        from app.models.deletion_scope import excluded_paths, expand_targets
+
+        keep = excluded_paths(item)
+        if not keep:
+            return [item]
+
+        # One target, carrying the keep-out list. The expansion itself is a
+        # directory walk and this function runs in CleanupConfirmDialog's
+        # constructor, on the UI thread, from the click that opens it —
+        # measured at 2.8 s for a 23,052-file tree (C:/Windows/System32) and
+        # 0.6 s for 11,150 files. Expanding here froze the app between the
+        # click and the dialog appearing, once per selected item.
+        #
+        # Nothing is lost by deferring it. The size is already known exactly:
+        # own bytes are the folder minus the nested findings, which is
+        # precisely what the expansion adds up to, so no walk is needed to
+        # state the total. The paths are produced in the cleanup worker
+        # thread, just before they are needed.
+        target = dict(item)
+        target["cleanup_exclude_paths"] = list(keep)
+        return [target]
 
     paths = [p for p in item.get("removable_duplicate_paths") or [] if p]
     if not paths:
@@ -301,8 +328,8 @@ class CleanupConfirmDialog(QDialog):
             dot = QLabel("●")
             dot.setStyleSheet(f"color: {color}; font-size: 10px;")
             row.addWidget(dot)
-            lbl = QLabel(tr("{label} — {n} item(s) · {size}",
-                            label=label, n=len(bucket), size=_format_size(sz)))
+            lbl = QLabel(tr_count("{label} — {n} item(s) · {size}", len(bucket),
+                                  label=label, n=len(bucket), size=_format_size(sz)))
             lbl.setStyleSheet("font-size: 12px;")
             if label == "Protected":
                 lbl.setStyleSheet(
@@ -371,10 +398,10 @@ class CleanupConfirmDialog(QDialog):
                 f"font-size: 12px; font-weight: bold; color: {_cloud_color};")
             cloud_layout.addWidget(cloud_hdr)
 
-            cloud_warn = QLabel(tr(
+            cloud_warn = QLabel(tr_count(
                 "{n} item(s) are inside a cloud-sync folder. Deletion will "
                 "propagate to your cloud account and all synced devices.",
-                n=len(self._cloud)))
+                len(self._cloud), n=len(self._cloud)))
             cloud_warn.setStyleSheet(f"font-size: 11px; color: {_pal.get('text_dim', '#8a9b8f')};")
             cloud_warn.setWordWrap(True)
             cloud_layout.addWidget(cloud_warn)
@@ -668,6 +695,18 @@ class CleanupConfirmDialog(QDialog):
             self._issues.append((
                 reason, path,
                 tr("Too large for the Recycle Bin — this cannot be restored")))
+        # Right after the irreversible line, because it is the same hazard
+        # answered correctly: these are the items Podbye refused to destroy.
+        for path, why in (getattr(result, "skipped_not_recyclable", {}) or {}).items():
+            reason = tr("Kept on disk")
+            self._issue_colors[reason] = _risk_fg("Review")
+            self._issues.append((
+                reason, path,
+                tr("The Recycle Bin is turned off for this drive, so removing "
+                   "it would have been permanent")
+                if why == "bin_disabled" else
+                tr("Too large for the Recycle Bin, so removing it would have "
+                   "been permanent")))
         for path in result.failed:
             reason = tr("Failed")
             self._issue_colors[reason] = _risk_fg("Protected")
@@ -751,7 +790,7 @@ class CleanupConfirmDialog(QDialog):
     def _update_issues_button(self):
         self._btn_issues.setText(
             ("▼  " if self._issues_open else "▶  ")
-            + tr("{n} item(s) need attention", n=len(self._issues)))
+            + tr_count("{n} item(s) need attention", len(self._issues), n=len(self._issues)))
 
     def _toggle_issues(self):
         self._issues_open = not self._issues_open
@@ -781,16 +820,23 @@ class CleanupConfirmDialog(QDialog):
 
     def _update_sub_label(self):
         """Describe what the confirm button will actually remove right now."""
+        from app.models.deletion_scope import union_scope_bytes
+
         armed = self._armed_targets()
-        size = sum(t.get("size_bytes", 0) for t in armed)
+        # Not a plain sum of size_bytes. That is each entity's *exclusive*
+        # share — what it contributes to a category total — while recycling a
+        # folder takes the nested rows subtracted from it as well. This screen
+        # is the last thing shown before anything is destroyed, so it states
+        # the scope, and counts a nested selection once rather than twice.
+        size = union_scope_bytes(armed)
         if not armed:
             self._sub_lbl.setText(tr("Nothing to remove."))
             return
-        text = tr("{n} item(s) · {size} will be sent to the Recycle Bin").format(
-            n=len(armed), size=_format_size(size))
+        text = tr_count("{n} item(s) · {size} will be sent to the Recycle Bin",
+                        len(armed), n=len(armed), size=_format_size(size))
         if self._review_targets:
-            text += tr("  ·  includes {n} review/uncertain item(s)").format(
-                n=len(self._review_targets))
+            text += tr_count("  ·  includes {n} review/uncertain item(s)",
+                             len(self._review_targets), n=len(self._review_targets))
         self._sub_lbl.setText(text)
 
     def _update_confirm_btn(self):
@@ -846,10 +892,15 @@ class CleanupConfirmDialog(QDialog):
             else tr("Moving 0 / {total}…", total=total))
 
         paths = [f["path"] for f in self._armed]
+        # Folders that hold a separately listed finding are expanded inside
+        # the worker, off the UI thread — see _cleanup_targets_for_item.
+        excludes = {f["path"]: list(f.get("cleanup_exclude_paths") or [])
+                    for f in self._armed if f.get("cleanup_exclude_paths")}
 
         self._worker = CleanupWorker(
             paths=paths,
             mode=CleanupWorker.MODE_RECYCLE,
+            exclude_by_path=excludes,
             parent=self,
         )
         self._worker.progress.connect(self._on_progress)

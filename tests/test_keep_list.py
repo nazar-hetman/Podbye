@@ -1,6 +1,6 @@
 """Keep: the user's own standing instruction about their own files.
 
-Asked for: *"I need irizi focus — I'm adding it to protected state. If I click
+Asked for: *"I need example project — I'm adding it to protected state. If I click
 select all, it won't be selected."*
 
 Protected already existed, but it is Podbye's judgement about system locations
@@ -31,20 +31,20 @@ def fresh_store(tmp_path, monkeypatch):
 # ── what may be kept ──────────────────────────────────────────────
 
 def test_keeping_a_project_folder(tmp_path):
-    assert keep_list.keep(r"E:\Irizi Focus") is True
-    assert keep_list.is_kept(r"E:\Irizi Focus") is True
+    assert keep_list.keep(r"E:\Example Project") is True
+    assert keep_list.is_kept(r"E:\Example Project") is True
 
 
 def test_it_covers_everything_underneath():
     """People keep a project, not a file list."""
-    keep_list.keep(r"E:\Irizi Focus")
-    assert keep_list.is_kept(r"E:\Irizi Focus\build\out.exe") is True
-    assert keep_list.is_kept(r"E:\Irizi Focus\.venv") is True
+    keep_list.keep(r"E:\Example Project")
+    assert keep_list.is_kept(r"E:\Example Project\build\out.exe") is True
+    assert keep_list.is_kept(r"E:\Example Project\.venv") is True
 
 
 def test_a_sibling_is_not_kept():
-    keep_list.keep(r"E:\Irizi Focus")
-    assert keep_list.is_kept(r"E:\Irizi Focus Old") is False
+    keep_list.keep(r"E:\Example Project")
+    assert keep_list.is_kept(r"E:\Example Project Old") is False
     assert keep_list.is_kept(r"E:\Other") is False
 
 
@@ -57,56 +57,56 @@ def test_too_broad_to_keep(path):
 
 
 def test_marking_a_parent_supersedes_what_is_inside_it():
-    keep_list.keep(r"E:\Work\Irizi Focus")
+    keep_list.keep(r"E:\Work\Example Project")
     keep_list.keep(r"E:\Work")
     assert keep_list.kept_paths() == (r"E:\Work",)
 
 
 def test_a_path_is_listed_back_the_way_it_was_given():
     """Settings shows this list; a mangled path reads as Podbye's mistake."""
-    keep_list.keep(r"E:\Irizi Focus")
-    assert keep_list.kept_paths() == (r"E:\Irizi Focus",)
+    keep_list.keep(r"E:\Example Project")
+    assert keep_list.kept_paths() == (r"E:\Example Project",)
 
 
 def test_matching_ignores_case_and_separator():
-    keep_list.keep(r"E:\Irizi Focus")
-    assert keep_list.is_kept("e:/irizi focus/build") is True
-    assert keep_list.unkeep("e:/IRIZI focus") is True
+    keep_list.keep(r"E:\Example Project")
+    assert keep_list.is_kept("e:/example project/build") is True
+    assert keep_list.unkeep("e:/EXAMPLE project") is True
 
 
 def test_the_mark_can_be_taken_back():
-    keep_list.keep(r"E:\Irizi Focus")
-    assert keep_list.unkeep(r"E:\Irizi Focus") is True
-    assert keep_list.is_kept(r"E:\Irizi Focus") is False
+    keep_list.keep(r"E:\Example Project")
+    assert keep_list.unkeep(r"E:\Example Project") is True
+    assert keep_list.is_kept(r"E:\Example Project") is False
 
 
 def test_unkeeping_something_covered_but_not_marked():
     """The mark is on the root; a child cannot release itself."""
-    keep_list.keep(r"E:\Irizi Focus")
-    assert keep_list.unkeep(r"E:\Irizi Focus\build") is False
-    assert keep_list.is_kept(r"E:\Irizi Focus\build") is True
+    keep_list.keep(r"E:\Example Project")
+    assert keep_list.unkeep(r"E:\Example Project\build") is False
+    assert keep_list.is_kept(r"E:\Example Project\build") is True
 
 
 def test_it_can_name_the_folder_the_mark_is_on():
     """"Kept" on a row the user never marked needs to explain itself."""
-    keep_list.keep(r"E:\Irizi Focus")
-    root = keep_list.kept_root_for(r"E:\Irizi Focus\build\out.exe")
-    assert keep_list.display_name(root) == "Irizi Focus"
+    keep_list.keep(r"E:\Example Project")
+    root = keep_list.kept_root_for(r"E:\Example Project\build\out.exe")
+    assert keep_list.display_name(root) == "Example Project"
 
 
 # ── it survives the thing that made it necessary ──────────────────
 
 def test_it_outlives_the_session(tmp_path, monkeypatch):
     """A rescan rebuilds every entity; the mark is not one of them."""
-    keep_list.keep(r"E:\Irizi Focus")
+    keep_list.keep(r"E:\Example Project")
     keep_list.reset_for_tests()          # as if the app had restarted
-    assert keep_list.is_kept(r"E:\Irizi Focus\anything") is True
+    assert keep_list.is_kept(r"E:\Example Project\anything") is True
 
 
 # ── the engine refuses it, whatever the UI thought ────────────────
 
 def test_recycling_skips_a_kept_path(tmp_path):
-    target = tmp_path / "Irizi Focus"
+    target = tmp_path / "Example Project"
     target.mkdir()
     (target / "data.bin").write_bytes(b"x" * 32)
     keep_list.keep(str(target))
@@ -125,7 +125,7 @@ def test_the_skip_is_reported_apart_from_protected(tmp_path):
 
 
 def test_a_file_inside_a_kept_folder_is_skipped_too(tmp_path):
-    root = tmp_path / "Irizi Focus"
+    root = tmp_path / "Example Project"
     (root / "sub").mkdir(parents=True)
     victim = root / "sub" / "notes.txt"
     victim.write_text("keep me")
@@ -139,7 +139,7 @@ def test_a_file_inside_a_kept_folder_is_skipped_too(tmp_path):
 
 def test_permanent_delete_refuses_rather_than_skipping(tmp_path):
     """Nothing about that call is reversible, so it stops the batch."""
-    target = tmp_path / "Irizi Focus"
+    target = tmp_path / "Example Project"
     target.mkdir()
     keep_list.keep(str(target))
 
@@ -150,7 +150,7 @@ def test_permanent_delete_refuses_rather_than_skipping(tmp_path):
 
 def test_an_unkept_path_is_still_deletable(tmp_path):
     """The guard must not become a blanket refusal."""
-    keep_list.keep(str(tmp_path / "Irizi Focus"))
+    keep_list.keep(str(tmp_path / "Example Project"))
     other = tmp_path / "Scratch"
     other.mkdir()
     result = move_to_recycle_bin([str(other)])

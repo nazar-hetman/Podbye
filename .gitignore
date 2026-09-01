@@ -13,6 +13,7 @@ venv/
 env/
 
 # ── Test / tooling caches ────────────────────────────────
+.pytest-tmp/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

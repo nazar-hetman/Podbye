@@ -54,11 +54,11 @@ def test_no_underscore_name_handled():
 
 def test_packages_container_detected():
     assert _is_appdata_packages_path(
-        "c:/users/nazar/appdata/local/packages"
+        "c:/users/exampleuser/appdata/local/packages"
     ) is True
 
 
 def test_package_child_is_not_the_container():
     assert _is_appdata_packages_path(
-        "c:/users/nazar/appdata/local/packages/spotifyab.spotifymusic_x"
+        "c:/users/exampleuser/appdata/local/packages/spotifyab.spotifymusic_x"
     ) is False

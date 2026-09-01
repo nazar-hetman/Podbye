@@ -26,10 +26,51 @@ LANGUAGES: dict[str, str] = {
     "Spanish": "es",
     "German": "de",
     "French": "fr",
+    "Polish": "pl",
 }
+
+# What each language calls itself, for the picker. A language list exists to be
+# read by someone who wants that language — and the one person guaranteed not
+# to understand "Polish" is the Polish speaker looking for it. Worse, the
+# picker used to translate these names into the *current* UI language, so a
+# user who had switched to a language they could not read had no way back:
+# every option in the list was written in the language they were stuck in.
+#
+# Endonyms are stable, so they are never translated. English is its own
+# endonym; the map only needs the rest.
+ENDONYMS: dict[str, str] = {
+    "Ukrainian": "Українська",
+    "Spanish": "Español",
+    "German": "Deutsch",
+    "French": "Français",
+    "Polish": "Polski",
+}
+
+# Names that were once canonical and may still be sitting in a settings file.
+_LEGACY_NAMES: dict[str, str] = {
+    "Polski": "Polish",
+}
+
+
+def canonical_language(name: str) -> str:
+    """The stored name for *name*, migrating anything written by an older build.
+
+    "Polski" shipped briefly as a canonical key, so it is in real settings
+    files. Mapping it here means those users keep the language they chose
+    instead of silently reverting to English.
+    """
+    return _LEGACY_NAMES.get(name, name)
+
+
+def display_name(name: str) -> str:
+    """What to show in the picker for a canonical language name."""
+    return ENDONYMS.get(canonical_language(name), name)
 
 _lang: str = "English"
 _cache: dict[str, dict[str, str]] = {}
+# Locales can remain loadable for development while temporarily withheld from
+# the picker.  The set is empty while every shipped locale is production-ready.
+_INCOMPLETE_UI_LANGUAGES: set[str] = set()
 
 
 def _locales_dir() -> Path:
@@ -60,7 +101,8 @@ def available_languages() -> list[str]:
     for name, code in LANGUAGES.items():
         if code == "en":
             continue
-        if (_locales_dir() / f"{code}.json").exists():
+        if (name not in _INCOMPLETE_UI_LANGUAGES
+                and (_locales_dir() / f"{code}.json").exists()):
             names.append(name)
     return names
 
@@ -92,12 +134,12 @@ def init_language(store) -> None:
     """Read ui_language from settings store and activate it."""
     global _lang
     if store:
-        _lang = store.get("ui_language", "English")
+        _lang = canonical_language(store.get("ui_language", "English"))
 
 
 def set_language(lang: str) -> None:
     global _lang
-    _lang = lang
+    _lang = canonical_language(lang)
 
 
 def get_language() -> str:
@@ -112,6 +154,27 @@ def tr(key: str, **kwargs) -> str:
     """
     code = LANGUAGES.get(_lang, "en")
     text = _load(code).get(key, key) if code != "en" else key
+    if kwargs:
+        try:
+            return text.format(**kwargs)
+        except Exception:
+            return text
+    return text
+
+
+def tr_count(key: str, count: int | float, **kwargs) -> str:
+    """Translate a count-bearing template, using a locale's singular form.
+
+    Locale entries may add ``.__one`` beside an existing plural template when
+    English's ``item(s)`` shape cannot produce natural grammar.  Locales that
+    do not need or provide the alternate form continue to use ``key``.
+    """
+    code = LANGUAGES.get(_lang, "en")
+    text = ""
+    if code != "en" and count == 1:
+        text = _load(code).get(f"{key}.__one", "")
+    if not text:
+        text = _load(code).get(key, key) if code != "en" else key
     if kwargs:
         try:
             return text.format(**kwargs)

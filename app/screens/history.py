@@ -136,12 +136,23 @@ def _format_duration(seconds: float) -> str:
 
 
 def _short_target(target: str) -> str:
+    target = _target_label(target)
     if not target:
         return "—"
     parts = target.replace("\\", "/").rstrip("/").split("/")
     if len(parts) <= 3:
         return target
     return parts[0] + "/…/" + "/".join(parts[-2:])
+
+
+def _target_label(target: str) -> str:
+    """Localize stored scope names without changing real filesystem paths.
+
+    History records retain the original selection. ``All drives`` is an
+    application-defined scope, whereas ``D:/Projects`` is user data; ``tr``
+    translates the former and falls back to the latter unchanged.
+    """
+    return tr(target) if target else "—"
 
 
 def _risk_pcts(risk_totals: dict) -> tuple:
@@ -249,7 +260,19 @@ def _freed_for_session(session_id: str) -> tuple[int, int]:
 
 
 def _scan_mode_label(mode: str) -> str:
-    return tr("Adaptive scan") if mode == "smart" else tr("All files scan")
+    return {
+        "smart": tr("Adaptive analysis"),
+        "all": tr("Full-file analysis"),
+    }.get(mode, tr(mode) if mode else tr("Adaptive analysis"))
+
+
+def _analysis_status_label(status: str) -> str:
+    """Render a saved run outcome, not the application's current activity."""
+    return {
+        "completed": tr("Completed"),
+        "stopped": tr("Stopped (partial)"),
+        "running": tr("In progress"),
+    }.get(status, tr(status) if status else tr("Not recorded"))
 
 
 def _cleanup_mode_label(mode: str) -> str:
@@ -510,7 +533,8 @@ class CleanupRecordDetail(QFrame):
         # already read.
         _bold_keys = (tr("CLEANED"),)
         for lbl, val, col in [
-            (tr("CLEANED"), _format_size(freed), p.get("safe", "#7aa88a")),
+            (tr("CLEANED") if mode == "permanent" else tr("RECYCLED"),
+             _format_size(freed), p.get("safe", "#7aa88a")),
             (tr("ITEMS"), f"{succeeded:,}", ""),
             (tr("NOT REMOVED"), f"{total_exceptions:,}" if total_exceptions else tr("None"),
              p.get("review", "#c7a66c") if total_exceptions else ""),
@@ -524,7 +548,15 @@ class CleanupRecordDetail(QFrame):
         # Same shape as the scan panel's "Completed · Adaptive scan · scanned X".
         layout.addWidget(_muted_line(
             f"{_cleanup_mode_label(mode)} · {succeeded:,} {tr('items removed')}"
-            f" · {_format_size(freed)} {tr('freed')}", p))
+            f" · {_format_size(freed)} "
+            # Recycling is a move, and a move on the same volume frees nothing
+            # until the bin is emptied — see app/services/recycle_bin.py, where
+            # one machine had 16.7 GB sitting in the bin while the user kept
+            # cleaning and wondering why the disk had not changed. Quick
+            # Cleanup says so on its own results screen; History claimed the
+            # space was already back.
+            f"{tr('freed') if mode == 'permanent' else tr('moved to the Recycle Bin')}",
+            p))
 
         # ── Status note ───────────────────────────────────────────
         note = QLabel(assessment.explanation_text)
@@ -576,12 +608,7 @@ class SessionDetail(QFrame):
         safe_pct, review_pct, risk_pct = _risk_pcts(record.get("risk_totals", {}))
         duration = record.get("saved_at", 0) - record.get("start_time", 0)
         mode_label = _scan_mode_label(record.get("scan_mode", "smart"))
-        status = record.get("status", "unknown")
-        status_label = {
-            "completed": tr("Completed"),
-            "stopped":   tr("Stopped (partial)"),
-            "running":   tr("In progress"),
-        }.get(status, status.title())
+        status_label = _analysis_status_label(record.get("status", ""))
         if record.get("scan_mode") == "smart":
             items_val = f"{record.get('display_count', 0):,}"
         else:
@@ -594,7 +621,7 @@ class SessionDetail(QFrame):
         )
 
         # ── Target ────────────────────────────────────────────────
-        layout.addLayout(_kv(tr("TARGET"), record.get("target", "—") or "—",
+        layout.addLayout(_kv(tr("TARGET"), _target_label(record.get("target", "")),
                              p, val_size=11, wrap=True))
 
         # ── Outcome row ───────────────────────────────────────────
@@ -642,18 +669,15 @@ class SessionDetail(QFrame):
         layout.addSpacing(2)
         bar = _DistBar(safe_pct, review_pct, risk_pct)
         layout.addWidget(bar)
-        attention_parts = []
         review_count = int(risk_totals.get("Review", 0) or 0)
         protected_count = int(risk_totals.get("Protected", 0) or 0)
         optional_count = int(risk_totals.get("Optional", 0) or 0)
-        if review_count:
-            attention_parts.append(tr("{n:,} review", n=review_count))
-        if protected_count:
-            attention_parts.append(tr("{n:,} protected", n=protected_count))
-        if optional_count:
-            attention_parts.append(tr("{n:,} optional", n=optional_count))
-        attention_text = (" · ".join(attention_parts) if attention_parts
-                          else tr("No review-required items recorded"))
+        attention_text = (
+            tr("review: {review:,} · protected: {protected:,} · optional: {optional:,}",
+               review=review_count, protected=protected_count, optional=optional_count)
+            if review_count or protected_count or optional_count
+            else tr("No review-required items recorded")
+        )
         dtext = QLabel(attention_text)
         dtext.setStyleSheet(
             f"font-family: 'JetBrains Mono'; font-size: 10px; "
@@ -666,7 +690,7 @@ class SessionDetail(QFrame):
         btn_row.setSpacing(6)
         for text, cb in [
             (tr("Open findings"),           on_open),
-            (tr("Re-run with same target"), on_rerun),
+            (tr("Re-run analysis"),         on_rerun),
         ]:
             btn = QPushButton(text)
             btn.setObjectName("Subtle")
@@ -979,11 +1003,11 @@ class HistoryScreen(QWidget):
         s = load_summary()
         lbl = QLabel(
             tr("{freed} freed  ·  {cleanups} cleanups  ·  {scanned} scanned"
-               "  ·  {scans} scans",
+               "  ·  {analyses} analyses",
                freed=_format_size(s.get('total_recovered_bytes', 0)),
                cleanups=s.get('cleanup_sessions', 0),
                scanned=_format_size(s.get('total_scanned_bytes', 0)),
-               scans=s.get('analyze_sessions', 0))
+               analyses=s.get('analyze_sessions', 0))
         )
         lbl.setObjectName("Muted")
         lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 10px;")
@@ -1086,13 +1110,13 @@ class HistoryScreen(QWidget):
             subtitle = tr("// {n} sessions · {size} scanned",
                           n=len(sessions), size=_format_size(total_size))
         else:
-            subtitle = tr("// no scan sessions yet")
+            subtitle = tr("// no analysis sessions yet")
         v.addLayout(self._section_header(tr("ANALYZE SESSIONS"), subtitle))
 
         if not sessions:
             v.addWidget(self._placeholder(
                 tr("NO ANALYZE HISTORY"),
-                tr("Run a scan from the Analyze screen to build session history."),
+                tr("Run an analysis from the Analyze screen to build session history."),
             ))
             return frame
 
@@ -1148,7 +1172,7 @@ class HistoryScreen(QWidget):
         # clicked and the details it opened, so the two stopped reading as
         # connected. It is a footnote about the table's length; it belongs at
         # the end of the section.
-        note = self._limited_history_note(len(sessions), "scan sessions")
+        note = self._limited_history_note(len(sessions), "analysis sessions")
         if note:
             v.addWidget(note)
         v.addStretch(1)

@@ -31,7 +31,7 @@ from app.widgets.controls import ElidedLabel
 
 
 LONG_NAME = "OneDrive Startup Task-S-1-5-21-3897710897-563188546-1453878363-1001"
-LONG_PATH = ("C:/Users/Nazar/AppData/Local/Programs/SomeVendor/Application"
+LONG_PATH = ("C:/Users/ExampleUser/AppData/Local/Programs/SomeVendor/Application"
              "/resources/app.asar.unpacked/node_modules/@scope/package/dist")
 LONG_PROSE = ("This program registers a helper that starts with the session and "
               "keeps background features available across other applications. ") * 3
@@ -92,7 +92,7 @@ def _settled(qapp, widget, width):
     return widget
 
 
-def _startups(qapp, hostile=True):
+def _startups(qapp, hostile=True, monkeypatch=None):
     import app.screens.startups as st
     from app.models.startup_entry import StartupEntry
 
@@ -114,6 +114,15 @@ def _startups(qapp, hostile=True):
         rows.append(entry)
     screen._entries = rows
     screen._filtered = list(rows)
+    # showEvent() re-reads the machine, so without this the *real* startup
+    # list replaces these rows the moment the screen is shown and the
+    # selection is cleared — the panel then renders its empty state and every
+    # assertion below silently audits nothing. It only showed up
+    # intermittently because _last_refresh is a class attribute with a 3s
+    # throttle, so whether it fired depended on what ran before.
+    import app.services.startup_detector as detector
+    detector.detect_startup_entries = lambda: list(rows)
+
     screen._show_results()
     for _ in range(6):
         qapp.processEvents()
@@ -160,6 +169,46 @@ def test_startups_fits_a_longer_language(dressed):
     screen = _settled(dressed, _startups(dressed), 1100)
     try:
         assert _faults(screen) == []
+        assert "Заплановане завдання" in screen._detail_widget._meta_lbl.text()
+        assert screen._detail_widget._impact_lbl.text() == (
+            "Служба віддаленого доступу")
+    finally:
+        screen.deleteLater()
+        dressed.processEvents()
+
+
+@pytest.mark.parametrize("width", [1600, 1100])
+def test_startups_fits_polish_at_supported_widths(dressed, width):
+    set_language("Polish")
+    screen = _settled(dressed, _startups(dressed), width)
+    try:
+        assert _faults(screen) == []
+        assert "Scheduled task" not in screen._detail_widget._meta_lbl.text()
+    finally:
+        screen.deleteLater()
+        dressed.processEvents()
+
+
+@pytest.mark.parametrize("width", [1600, 1100])
+def test_startups_fits_german_at_supported_widths(dressed, width):
+    set_language("German")
+    screen = _settled(dressed, _startups(dressed), width)
+    try:
+        assert _faults(screen) == []
+        assert "Scheduled task" not in screen._detail_widget._meta_lbl.text()
+    finally:
+        screen.deleteLater()
+        dressed.processEvents()
+
+
+@pytest.mark.parametrize("width", [1600, 1100])
+def test_startups_fits_spanish_at_supported_widths(dressed, width):
+    """Spanish recommendations and metadata must survive hostile raw values."""
+    set_language("Spanish")
+    screen = _settled(dressed, _startups(dressed), width)
+    try:
+        assert _faults(screen) == []
+        assert "Scheduled task" not in screen._detail_widget._meta_lbl.text()
     finally:
         screen.deleteLater()
         dressed.processEvents()
@@ -172,6 +221,73 @@ def test_findings_fits_hostile_content(dressed, width):
     view = _settled(dressed, _findings(dressed), width)
     try:
         assert _faults(view) == []
+    finally:
+        view.deleteLater()
+        dressed.processEvents()
+
+
+def test_findings_fits_hostile_content_in_ukrainian_at_minimum_width(dressed):
+    """The inspector's Keep action and status are longer in Ukrainian."""
+    set_language("Ukrainian")
+    view = _settled(dressed, _findings(dressed), 1100)
+    try:
+        view._select_source_row(0)
+        for _ in range(6):
+            dressed.processEvents()
+        assert _faults(view) == []
+        assert "entities" not in view._stats_lbl.text()
+        assert "reviewed" not in view._ai_summary_lbl.text()
+        assert view._right_sidebar.detail_widget._btn_keep.text() == (
+            "Виключити з очищення")
+    finally:
+        view.deleteLater()
+        dressed.processEvents()
+
+
+@pytest.mark.parametrize("width", [1600, 1100])
+def test_findings_fits_polish_at_supported_widths(dressed, width):
+    set_language("Polish")
+    view = _settled(dressed, _findings(dressed), width)
+    try:
+        view._select_source_row(0)
+        for _ in range(6):
+            dressed.processEvents()
+        assert _faults(view) == []
+        assert "entities" not in view._stats_lbl.text()
+        assert "reviewed" not in view._ai_summary_lbl.text()
+    finally:
+        view.deleteLater()
+        dressed.processEvents()
+
+
+@pytest.mark.parametrize("width", [1600, 1100])
+def test_findings_fits_german_at_supported_widths(dressed, width):
+    set_language("German")
+    view = _settled(dressed, _findings(dressed), width)
+    try:
+        view._select_source_row(0)
+        for _ in range(6):
+            dressed.processEvents()
+        assert _faults(view) == []
+        assert "entities" not in view._stats_lbl.text()
+        assert "reviewed" not in view._ai_summary_lbl.text()
+    finally:
+        view.deleteLater()
+        dressed.processEvents()
+
+
+@pytest.mark.parametrize("width", [1600, 1100])
+def test_findings_fits_spanish_at_supported_widths(dressed, width):
+    """Long Spanish inspector text wraps rather than clipping at either width."""
+    set_language("Spanish")
+    view = _settled(dressed, _findings(dressed), width)
+    try:
+        view._select_source_row(0)
+        for _ in range(6):
+            dressed.processEvents()
+        assert _faults(view) == []
+        assert "entities" not in view._stats_lbl.text()
+        assert "reviewed" not in view._ai_summary_lbl.text()
     finally:
         view.deleteLater()
         dressed.processEvents()
@@ -191,6 +307,42 @@ def test_every_screen_fits_its_own_text(dressed, modname, cls):
 @pytest.mark.parametrize("modname,cls", SCREENS)
 def test_every_screen_fits_a_longer_language(dressed, modname, cls):
     set_language("Ukrainian")
+    screen = _settled(dressed,
+                      getattr(importlib.import_module(modname), cls)(), 1100)
+    try:
+        assert _faults(screen) == []
+    finally:
+        screen.deleteLater()
+        dressed.processEvents()
+
+
+@pytest.mark.parametrize("modname,cls", SCREENS)
+def test_every_screen_fits_polish_at_minimum_width(dressed, modname, cls):
+    set_language("Polish")
+    screen = _settled(dressed,
+                      getattr(importlib.import_module(modname), cls)(), 1100)
+    try:
+        assert _faults(screen) == []
+    finally:
+        screen.deleteLater()
+        dressed.processEvents()
+
+
+@pytest.mark.parametrize("modname,cls", SCREENS)
+def test_every_screen_fits_german_at_minimum_width(dressed, modname, cls):
+    set_language("German")
+    screen = _settled(dressed,
+                      getattr(importlib.import_module(modname), cls)(), 1100)
+    try:
+        assert _faults(screen) == []
+    finally:
+        screen.deleteLater()
+        dressed.processEvents()
+
+
+@pytest.mark.parametrize("modname,cls", SCREENS)
+def test_every_screen_fits_spanish_at_minimum_width(dressed, modname, cls):
+    set_language("Spanish")
     screen = _settled(dressed,
                       getattr(importlib.import_module(modname), cls)(), 1100)
     try:
@@ -299,6 +451,24 @@ def test_no_settings_section_asks_for_an_impossible_size(dressed, section):
             "setFixedHeight below the theme's own minimum clips the widget; "
             "use setMinimumHeight")
         assert _spills(screen) == []
+    finally:
+        screen.deleteLater()
+        dressed.processEvents()
+
+
+@pytest.mark.parametrize("section", ["general", "ai", "scan", "about"])
+def test_spanish_settings_sections_have_no_clipped_constraints(dressed, section):
+    set_language("Spanish")
+    import app.screens.settings as se
+
+    screen = _settled(dressed, se.SettingsScreen(), 1100)
+    try:
+        screen._switch_section(section)
+        for _ in range(6):
+            dressed.processEvents()
+        assert _impossible_constraints(screen) == []
+        assert _spills(screen) == []
+        assert _faults(screen) == []
     finally:
         screen.deleteLater()
         dressed.processEvents()

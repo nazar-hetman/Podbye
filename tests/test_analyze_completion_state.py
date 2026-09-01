@@ -9,6 +9,7 @@ from PySide6.QtGui import QColor
 
 from app.screens.analyze import AnalyzeScreen, _chip_styles, _rgba
 from app.themes import theme_manager as tm
+from app.i18n import get_language, set_language, tr
 
 
 @pytest.fixture
@@ -52,6 +53,31 @@ def test_skipped_ai_does_not_report_zero_percent(screen):
     screen._mark_ai_skipped()
     assert screen._ai_prog_lbl.text() != "0%"
     assert screen._ai_prog_lbl.text() == "\u2014"
+
+
+def test_ukrainian_analyze_uses_grouped_results_and_explicit_ai_non_run(qapp):
+    """Analyze should describe user-visible groups, not internal entities."""
+    previous = get_language()
+    set_language("Ukrainian")
+    try:
+        screen = AnalyzeScreen()
+        screen.resize(1100, 700)
+        screen.show()
+        qapp.processEvents()
+
+        assert [chip._label for chip in screen._chips] == [
+            "Пошук шляхів",
+            "Сканування й категоризація",
+            "Групування результатів",
+            "AI-класифікація",
+        ]
+        assert tr("{count:,} grouped results", count=1311) == (
+            "згрупованих результатів: 1,311")
+        assert tr("Not run") == "Не запускалося"
+        assert tr("// stdout") == "// stdout"
+    finally:
+        screen.deleteLater()
+        set_language(previous)
 
 
 # ── the sentinel that reached the screen ──────────────────────────

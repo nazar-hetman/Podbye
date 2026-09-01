@@ -15,7 +15,8 @@ from app.widgets.panels import Panel, apply_tactical_label
 from app.widgets.controls import (ElidedLabel, TacticalCheckBox,
                                   TacticalComboBox, style_container)
 from app.themes.theme_manager import THEME_NAMES, THEME_KEYS, get_palette, theme_signaller
-from app.i18n import tr, available_languages, explanation_languages
+from app.i18n import (available_languages, canonical_language, display_name,
+                      explanation_languages, tr)
 from app.services.ollama_client import LOCAL_ENDPOINT
 
 
@@ -64,6 +65,9 @@ def _setting_row(label_text: str, desc: str, widget: QWidget) -> QVBoxLayout:
         d.setStyleSheet("font-size: 11px;")
         d.setWordWrap(True)
         d.setFixedWidth(_LABEL_COL_WIDTH)
+        # QHBoxLayout otherwise uses QLabel's one-line size hint here and can
+        # reserve fewer lines than a translated description needs.
+        d.setMinimumHeight(d.heightForWidth(_LABEL_COL_WIDTH))
         label_col.addWidget(d)
     row.addLayout(label_col)
 
@@ -108,7 +112,7 @@ def _panel_title(title: str, subtitle: str = "") -> QHBoxLayout:
 # the two columns to its right, so a value and its action land in the same
 # place in every row of a panel rather than wherever the text happened to end.
 _VALUE_COL_WIDTH = 280      # matches the endpoint input; a minimum, not a cap
-_ACTION_COL_WIDTH = 88
+_ACTION_COL_WIDTH = 100
 # Scan's value blocks are prose rather than fields, so they get their own,
 # wider column — one width for both, so the page has a single value edge.
 _SCAN_VALUE_WIDTH = 360
@@ -197,6 +201,12 @@ _SECTION_SUBS = {
 }
 
 
+def _add_localized_enum_items(combo: TacticalComboBox, values: list[str]) -> None:
+    """Show translated enum labels while retaining canonical stored values."""
+    for value in values:
+        combo.addItem(tr(value), value)
+
+
 class SettingsScreen(QWidget):
 
     settings_saved = Signal()
@@ -280,21 +290,25 @@ class SettingsScreen(QWidget):
         # Tone
         tone = self._store.get("ai_tone")
         for i in range(self._tone_combo.count()):
-            if self._tone_combo.itemText(i) == tone:
+            if self._tone_combo.itemData(i) == tone:
                 self._tone_combo.setCurrentIndex(i)
                 break
 
         # Length
         length = self._store.get("ai_length")
         for i in range(self._length_combo.count()):
-            if self._length_combo.itemText(i) == length:
+            if self._length_combo.itemData(i) == length:
                 self._length_combo.setCurrentIndex(i)
                 break
 
         # AI explanation language
-        ai_lang = self._store.get("ai_explanation_language", "English")
+        # Migrated like ui_language: this setting can also hold a name from
+        # an older build, and an unmatched value would leave the picker on
+        # English while the prompt still asked for the old one.
+        ai_lang = canonical_language(
+            self._store.get("ai_explanation_language", "English"))
         for i in range(self._ai_lang_combo.count()):
-            if self._ai_lang_combo.itemText(i) == ai_lang:
+            if self._ai_lang_combo.itemData(i) == ai_lang:
                 self._ai_lang_combo.setCurrentIndex(i)
                 break
 
@@ -314,9 +328,11 @@ class SettingsScreen(QWidget):
         self.reload_close_behavior()
 
         # UI language
-        ui_lang = self._store.get("ui_language", "English")
+        # Migrated, so a settings file written when "Polski" was the stored
+        # name still selects Polish instead of falling through to English.
+        ui_lang = canonical_language(self._store.get("ui_language", "English"))
         for i in range(self._lang_combo.count()):
-            if self._lang_combo.itemText(i) == ui_lang:
+            if self._lang_combo.itemData(i) == ui_lang:
                 self._lang_combo.setCurrentIndex(i)
                 break
         self._lang_dirty = False
@@ -509,13 +525,14 @@ class SettingsScreen(QWidget):
     def _on_language_changed(self):
         if not self._store:
             return
-        self._lang_dirty = self._lang_combo.currentText() != self._store.get("ui_language", "English")
+        self._lang_dirty = (self._lang_combo.currentData()
+                            != canonical_language(self._store.get("ui_language", "English")))
         self._btn_apply_lang.setEnabled(self._lang_dirty)
 
     def _apply_language(self):
         if not self._store or not self._lang_dirty:
             return
-        self._store.set_and_save("ui_language", self._lang_combo.currentText())
+        self._store.set_and_save("ui_language", self._lang_combo.currentData())
         self._lang_dirty = False
         self._btn_apply_lang.setEnabled(False)
         self.settings_saved.emit()
@@ -659,7 +676,11 @@ class SettingsScreen(QWidget):
         lang_row.setContentsMargins(0, 0, 0, 0)
         lang_row.setSpacing(8)
         self._lang_combo = TacticalComboBox()
-        self._lang_combo.addItems(available_languages())
+        # Endonyms, not tr(): see app/i18n.ENDONYMS. Every other enum on this
+        # screen is a Podbye concept and belongs in the user's language; a
+        # language name belongs in its own.
+        for value in available_languages():
+            self._lang_combo.addItem(display_name(value), value)
         self._lang_combo.setFixedWidth(168)
         self._lang_combo.currentTextChanged.connect(lambda _: self._on_language_changed())
         self._apply_combo_style(self._lang_combo)
@@ -897,19 +918,22 @@ class SettingsScreen(QWidget):
         self._register_styled_panel(expl_panel)
 
         self._tone_combo = TacticalComboBox()
-        self._tone_combo.addItems(["Neutral", "Friendly", "Professional", "Technical"])
+        _add_localized_enum_items(self._tone_combo,
+                                  ["Neutral", "Friendly", "Professional", "Technical"])
         self._tone_combo.setCurrentIndex(0)
         self._tone_combo.setFixedWidth(146)
         self._apply_combo_style(self._tone_combo)
-        self._tone_combo.currentTextChanged.connect(lambda text: self._save_value("ai_tone", text))
+        self._tone_combo.currentIndexChanged.connect(
+            lambda _: self._save_value("ai_tone", self._tone_combo.currentData()))
         expl_lay.addLayout(_setting_row(tr("Explanation style"), tr("Affects terminology and tone, not personality."), self._tone_combo))
 
         self._length_combo = TacticalComboBox()
-        self._length_combo.addItems(["Compact", "Standard", "Detailed"])
+        _add_localized_enum_items(self._length_combo, ["Compact", "Standard", "Detailed"])
         self._length_combo.setCurrentIndex(1)
         self._length_combo.setFixedWidth(140)
         self._apply_combo_style(self._length_combo)
-        self._length_combo.currentTextChanged.connect(lambda text: self._save_value("ai_length", text))
+        self._length_combo.currentIndexChanged.connect(
+            lambda _: self._save_value("ai_length", self._length_combo.currentData()))
         expl_lay.addLayout(_setting_row(tr("Explanation length"), tr("Controls how much the model writes per finding."), self._length_combo))
 
         # No separator here. Style, length and language are one group — all
@@ -924,11 +948,12 @@ class SettingsScreen(QWidget):
         ai_lang_lay.setContentsMargins(0, 0, 0, 0)
         ai_lang_lay.setSpacing(4)
         self._ai_lang_combo = TacticalComboBox()
-        self._ai_lang_combo.addItems(explanation_languages())
+        _add_localized_enum_items(self._ai_lang_combo, explanation_languages())
         self._ai_lang_combo.setCurrentIndex(0)
         self._ai_lang_combo.setFixedWidth(168)
         self._apply_combo_style(self._ai_lang_combo)
-        self._ai_lang_combo.currentTextChanged.connect(lambda text: self._save_value("ai_explanation_language", text))
+        self._ai_lang_combo.currentIndexChanged.connect(
+            lambda _: self._save_value("ai_explanation_language", self._ai_lang_combo.currentData()))
         ai_lang_lay.addWidget(self._ai_lang_combo)
         ai_lang_hint1 = QLabel(tr("Make sure your local AI model supports the selected language well."))
         ai_lang_hint1.setObjectName("Dim")
@@ -1137,17 +1162,8 @@ class SettingsScreen(QWidget):
         fh_lay.addLayout(_panel_title(tr("File Handling"), tr("cleanup method")))
         self._register_styled_panel(fh_panel)
 
-        # One method, so this states a fact rather than offering a choice. The
-        # panel used to show two radio buttons where the second was permanently
-        # disabled under "Not available yet" — a control that could never be
-        # used, on the one screen where the user is deciding how much to trust
-        # cleanup.
-        # The method is a fact, so it reads as a value with its explanation
-        # under it. It used to be stated twice, once per column: the
-        # description said "Podbye never deletes permanently. Emptying the
-        # Recycle Bin is always your own, separate decision" while the value
-        # beside it said "Files are moved to the Recycle Bin and can be
-        # restored" — the same three facts, in two places, in muted type.
+        # Cleanup is Recycle Bin-first. The setting states the default rather
+        # than advertising a deletion mode that the UI does not offer.
         method_w = QWidget()
         method_v = QVBoxLayout(method_w)
         method_v.setContentsMargins(0, 0, 0, 0)
@@ -1158,10 +1174,8 @@ class SettingsScreen(QWidget):
             "font-family: 'JetBrains Mono'; font-size: 11px;")
         method_v.addWidget(self._method_value_lbl)
 
-        # One sentence, all three guarantees: never permanent, recoverable,
-        # and emptying the Bin stays the user's own action.
-        method_note = QLabel(tr("Podbye never deletes permanently — items stay "
-                                "recoverable until you empty the Bin yourself."))
+        method_note = QLabel(tr("Cleanup uses the Recycle Bin by default. "
+                                "Emptying it is irreversible."))
         method_note.setObjectName("Dim")
         method_note.setStyleSheet("font-size: 11px;")
         method_note.setWordWrap(True)
@@ -1355,6 +1369,11 @@ class SettingsScreen(QWidget):
         self._restyle_reset_button()
         self._btn_reset.clicked.connect(self._reset_all_settings)
         br_lay.addWidget(self._btn_reset)
+        # The quiet-danger style has its own vertical padding.  Reserve the
+        # button's post-style minimum here rather than an English-sized row;
+        # otherwise a longer localized caption can make the button paint below
+        # this small maintenance row at the minimum window width.
+        btn_row.setMinimumHeight(self._btn_reset.minimumSizeHint().height())
 
         br_lay.addStretch()
         dg_lay.addWidget(btn_row)
@@ -1367,6 +1386,10 @@ class SettingsScreen(QWidget):
         disc.setStyleSheet(f"{self._helper_style()} line-height: 1.4;")
         disc.setWordWrap(True)
         disc.setMaximumWidth(_HELPER_MAX_WIDTH)
+        # QSS line-height is not included consistently in QLabel's size hint.
+        # Reserve the measured wrapped height so localized two-line product copy
+        # cannot lose its last pixels in the compact About panel.
+        disc.setMinimumHeight(disc.heightForWidth(_HELPER_MAX_WIDTH))
         dg_lay.addWidget(disc)
 
         credit = QLabel(tr("Built with Qt for Python (PySide6), used under the LGPL v3."))
@@ -1550,9 +1573,17 @@ class SettingsScreen(QWidget):
         def _worker():
             from app.services.ollama_client import probe
             r = probe(endpoint, discover=discover)
-            self._conn_result.result.emit(
-                r["status"], r["backend"], r["models"], r["runtime_path"],
-                r["endpoint"])
+            try:
+                self._conn_result.result.emit(
+                    r["status"], r["backend"], r["models"], r["runtime_path"],
+                    r["endpoint"])
+            except RuntimeError:
+                # The screen was torn down while the probe was in flight — a
+                # language switch rebuilds the shell, and a probe with
+                # discover=True walks several ports with timeouts. Its sibling
+                # _auto_test_connection already guarded this; the manual Test
+                # button did not, and raised in a daemon thread instead.
+                pass
 
         t = threading.Thread(target=_worker, daemon=True)
         t.start()

@@ -16,13 +16,13 @@ from app.screens.cleanup_dialog import _cleanup_targets_for_item, _is_drive_root
 # ── Folder names are not qualified with the account name ───────────
 
 def test_profile_documents_not_qualified_with_username():
-    assert _qualify_folder_name("documents", "c:/users/nazar/documents") == "Documents"
+    assert _qualify_folder_name("documents", "c:/users/exampleuser/documents") == "Documents"
 
 
 def test_meaningful_qualifier_is_still_used():
     # An app/owner qualifier is useful and must be kept.
     assert _qualify_folder_name(
-        "cache", "c:/users/nazar/appdata/local/discord/cache"
+        "cache", "c:/users/exampleuser/appdata/local/discord/cache"
     ) == "Cache – Discord"
 
 

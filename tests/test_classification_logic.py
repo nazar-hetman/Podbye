@@ -28,28 +28,28 @@ def _mk(path, is_dir=False, size=0, ext=None):
 # ── #1  AppData\Local\Microsoft is not blanket "System" ───────────
 
 def test_appdata_microsoft_root_not_protected():
-    assert _is_protected_path("c:/users/nazar/appdata/local/microsoft") is False
+    assert _is_protected_path("c:/users/exampleuser/appdata/local/microsoft") is False
 
 
 def test_appdata_microsoft_subtree_not_protected():
     # Edge cache lives here — regenerable, not system-critical.
     assert _is_protected_path(
-        "c:/users/nazar/appdata/local/microsoft/edge/user data/default/cache"
+        "c:/users/exampleuser/appdata/local/microsoft/edge/user data/default/cache"
     ) is False
 
 
 def test_credential_store_still_protected():
     assert _is_protected_path(
-        "c:/users/nazar/appdata/roaming/microsoft/protect/s-1-5-21"
+        "c:/users/exampleuser/appdata/roaming/microsoft/protect/s-1-5-21"
     ) is True
     assert _is_protected_path(
-        "c:/users/nazar/appdata/roaming/microsoft/crypto/rsa"
+        "c:/users/exampleuser/appdata/roaming/microsoft/crypto/rsa"
     ) is True
     assert _is_protected_path(
-        "c:/users/nazar/appdata/roaming/microsoft/credentials"
+        "c:/users/exampleuser/appdata/roaming/microsoft/credentials"
     ) is True
     assert _is_protected_path(
-        "c:/users/nazar/appdata/local/microsoft/vault"
+        "c:/users/exampleuser/appdata/local/microsoft/vault"
     ) is True
 
 
@@ -58,7 +58,7 @@ def test_windows_root_still_protected():
 
 
 def test_appdata_microsoft_cache_classifies_as_cache_not_system():
-    root = "c:/users/nazar/appdata/local/microsoft"
+    root = "c:/users/exampleuser/appdata/local/microsoft"
     findings = [
         _mk(root, is_dir=True),
         _mk(f"{root}/edge", is_dir=True),
@@ -88,7 +88,7 @@ def test_asset_helper_respects_real_photos():
 def test_asset_helper_ignores_plain_named_folder():
     # Not an asset name and not inside an app tree → leave it as user media.
     files = [_mk("p/a.png", size=3000), _mk("p/b.png", size=3000)]
-    assert _looks_like_app_assets("c:/users/nazar/screens", "screens", files) is False
+    assert _looks_like_app_assets("c:/users/exampleuser/screens", "screens", files) is False
 
 
 def test_asset_helper_detects_internal_ancestor():
@@ -117,7 +117,7 @@ def test_app_assets_folder_not_in_images_category():
 
 
 def test_real_photo_collection_still_images():
-    root = "c:/users/nazar/pictures"
+    root = "c:/users/exampleuser/pictures"
     findings = [
         _mk(root, is_dir=True),
         _mk(f"{root}/Vacation2024", is_dir=True),

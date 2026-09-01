@@ -384,6 +384,21 @@ class SmartEntity:
     # cleanup targets those files instead of the entity's (folder/root) path.
     removable_file_paths: list = field(default_factory=list)
 
+    # What _enforce_disjoint_sizes took off this entity because a nested
+    # entity survived as its own row. size_bytes is deliberately *exclusive* —
+    # it is this entity's own contribution, so category totals charge every
+    # byte once — but recycling a folder-backed entity takes the whole folder,
+    # nested rows included. Without this number the two can never be
+    # reconciled: Chrome Data showed 5.4 GB, its CONTENTS measured 7.4 GB, and
+    # the button removed 7.4 GB. Recorded where the subtraction happens, so it
+    # costs no extra I/O.
+    contained_bytes: int = 0
+    contained_files: int = 0
+    # The nested entities themselves. Recycling this entity must leave them
+    # alone: they are separate findings, listed and sized on their own, and
+    # their bytes were charged to them rather than here.
+    contained_paths: list = field(default_factory=list)
+
     # Podbye's own install / data directory. Carried as a flag rather than baked
     # into risk_reason so the UI can phrase it in the user's language, and
     # re-phrase it when the language changes mid-session.
@@ -526,6 +541,9 @@ class SmartEntity:
             "duplicate_locations": list(self.duplicate_locations),
             "removable_duplicate_paths": list(self.removable_duplicate_paths),
             "removable_file_paths": list(self.removable_file_paths),
+            "contained_bytes": self.contained_bytes,
+            "contained_files": self.contained_files,
+            "contained_paths": list(self.contained_paths),
             "is_self": self.is_self,
             "origin": self.origin,
         }

@@ -115,6 +115,23 @@ def _session_risk_totals(s: dict) -> dict[str, int]:
     return normalized_risk_totals(_risk_from_items(_display_items(s)))
 
 
+def _scope_label(target: str) -> str:
+    """The scan target, translated when it is a word rather than a path.
+
+    Sessions store the target as it was chosen, and "All drives" is a phrase,
+    not a location — it was reaching the screen untranslated and reading as
+    English inside a Ukrainian sentence. tr() falls back to its key, so a real
+    path passes through unchanged.
+    """
+    return tr(target) if target else "—"
+
+
+def _unit_label(unit: str) -> str:
+    """Same for the display unit: "items" / "entities" / "files" are stored in
+    English by session_store and were printed raw next to a localised count."""
+    return tr(unit) if unit else ""
+
+
 def _display_mode(mode: str) -> str:
     if mode == "smart":
         return tr("Adaptive")
@@ -404,7 +421,9 @@ class HomeScreen(QWidget):
             tr("Analysis Ready") if ai_in_flight else tr("Completed"))
         n = _session_display_count(s)
         unit = _session_display_unit(s)
-        self._header_sub.setText(f"{status} · {n:,} {unit} · {ts} · {mode} · {target}")
+        self._header_sub.setText(
+            f"{status} · {n:,} {_unit_label(unit)} · {ts} · {mode} "
+            f"· {_scope_label(target)}")
 
     def _update_header_live(self):
         self._header_sub.setText(tr("Scan in progress…"))
@@ -507,7 +526,10 @@ class HomeScreen(QWidget):
             legend.setSpacing(12)
             for lbl, val, color in [
                 (tr("Safe"),   str(safe_n),   _p.get("safe",   "#7cc596")),
-                (tr("Review"), str(review_n), _p.get("review", "#d8b46a")),
+                # Its own key, not the "Review" the risk chips use: this is a
+                # legend with room for a status phrase, and those are compact
+                # badges that would clip one.
+                (tr("Needs review"), str(review_n), _p.get("review", "#d8b46a")),
                 (tr("Protected"), str(risk_n), _p.get("risk",   "#d68a78")),
             ]:
                 dot = QLabel("■")
@@ -613,7 +635,7 @@ class HomeScreen(QWidget):
         _p = get_palette()
         details = QLabel(
             tr("Type: {mode} ANALYSIS", mode=mode.upper()) + "\n" +
-            tr("Core folder: {target}", target=s.get("target", "—")) + "\n" +
+            tr("Scope: {target}", target=_scope_label(s.get("target", ""))) + "\n" +
             tr("Files scanned: {count:,} | Size analyzed: {size}",
                count=count, size=_format_size(s.get("total_size", 0))) + "\n" +
             tr("Duration: {duration}", duration=duration)
@@ -703,7 +725,7 @@ class HomeScreen(QWidget):
 
         info = QLabel(
             tr("Type: {mode} ANALYSIS", mode=mode.upper()) + "\n" +
-            tr("Core folder: {target}", target=target) + "\n" +
+            tr("Scope: {target}", target=_scope_label(target)) + "\n" +
             tr("Files scanned: {count:,} | Size: {size}",
                count=count, size=_format_size(data.get("total_size", 0))) + "\n" +
             tr("Last update: {timestamp}", timestamp=_ts_str(last_update))
@@ -890,8 +912,8 @@ class HomeScreen(QWidget):
         mode = _display_mode(summary.get("scan_mode", "smart"))
 
         details = QLabel(
-            tr("Target: {target}", target=summary.get("target", "—")) + "\n"
-            + tr("Summary: {count:,} {unit} · {size}", count=display_count, unit=display_unit, size=_format_size(total_size)) + "\n"
+            tr("Target: {target}", target=_scope_label(summary.get("target", ""))) + "\n"
+            + tr("Summary: {count:,} {unit} · {size}", count=display_count, unit=_unit_label(display_unit), size=_format_size(total_size)) + "\n"
             + tr("Completed: {timestamp} · {mode} mode", timestamp=_ts_str(saved_t or start_t), mode=mode)
         )
         details.setObjectName("Dim")

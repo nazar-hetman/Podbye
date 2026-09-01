@@ -307,12 +307,23 @@ class ScanState(QObject):
         """
         norm = {p.replace("\\", "/").lower().rstrip("/") for p in paths}
         norm_full = {p.replace("\\", "/").lower() for p in paths}
+        # Folders are recycled whole, so everything under a cleaned folder is
+        # gone too. Only the entity's *own* path was being checked, which left
+        # every nested row pointing at a path that no longer exists: recycling
+        # Chrome Data took its cache with it and the cache stayed in the list,
+        # still counted in the category total and the donut, still offering a
+        # delete button for something already in the bin.
+        #
+        # Prefixes only — a plain set membership test cannot express "inside".
+        removed_roots = tuple(r + "/" for r in norm if r)
         before = len(self._entities)
         kept: list = []
         for e in self._entities:
             ep = e.path.replace("\\", "/").lower().rstrip("/")
             if ep in norm:
                 continue  # the entity's own path was removed
+            if removed_roots and ep.startswith(removed_roots):
+                continue  # it lived inside a folder that was recycled
             rfp = [p for p in getattr(e, "removable_file_paths", []) if p]
             if rfp:
                 remaining = [
@@ -1310,6 +1321,9 @@ class ScanState(QObject):
                     # actually stand for, and Podbye's own data losing the
                     # is_self flag that protects it from cleanup.
                     removable_file_paths=ed.get("removable_file_paths", []),
+                    contained_bytes=int(ed.get("contained_bytes", 0) or 0),
+                    contained_files=int(ed.get("contained_files", 0) or 0),
+                    contained_paths=list(ed.get("contained_paths", []) or []),
                     install_date=ed.get("install_date", ""),
                     app_version=ed.get("app_version", ""),
                     app_publisher=ed.get("app_publisher", ""),

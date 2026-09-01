@@ -1,6 +1,6 @@
 """AppData must never be shown as one deletable entity.
 
-Reported: a full C:/ scan listed "AppData (Nazar) — 58 GB" at the top of
+Reported: a full C:/ scan listed "AppData (ExampleUser) — 58 GB" at the top of
 Application Data. There is no action a user can take on that row: it is not a
 thing they installed, deleting it would destroy every app's settings, and its
 size double-counted the hundreds of per-app entities detected inside it.
@@ -26,25 +26,25 @@ def _norm(path) -> str:
 # ── _is_appdata_container_dir ─────────────────────────────────────
 
 @pytest.mark.parametrize("path", [
-    "c:/users/nazar/appdata",
-    "c:/users/nazar/appdata/local",
-    "c:/users/nazar/appdata/locallow",
-    "c:/users/nazar/appdata/roaming",
-    "c:/users/nazar/appdata/local/programs",
-    "c:/users/nazar/appdata/",            # trailing separator
+    "c:/users/exampleuser/appdata",
+    "c:/users/exampleuser/appdata/local",
+    "c:/users/exampleuser/appdata/locallow",
+    "c:/users/exampleuser/appdata/roaming",
+    "c:/users/exampleuser/appdata/local/programs",
+    "c:/users/exampleuser/appdata/",            # trailing separator
 ])
 def test_container_paths_are_structural(path):
     assert _is_appdata_container_dir(path) is True
 
 
 @pytest.mark.parametrize("path", [
-    "c:/users/nazar/appdata/local/discord",       # a real per-app folder
-    "c:/users/nazar/appdata/roaming/code",
-    "c:/users/nazar/appdata/local/programs/ollama",
-    "c:/users/nazar",                             # the profile itself
+    "c:/users/exampleuser/appdata/local/discord",       # a real per-app folder
+    "c:/users/exampleuser/appdata/roaming/code",
+    "c:/users/exampleuser/appdata/local/programs/ollama",
+    "c:/users/exampleuser",                             # the profile itself
     "c:/users",
     "c:/program files/someapp/appdata",           # app's own nested AppData
-    "d:/backup/users/nazar/appdata",              # not a profile root
+    "d:/backup/users/exampleuser/appdata",              # not a profile root
 ])
 def test_other_paths_are_not_structural(path):
     assert _is_appdata_container_dir(path) is False
@@ -62,7 +62,7 @@ def _mk(path, is_dir=False, size=0):
     )
 
 
-HOME = "C:/Users/Nazar"
+HOME = "C:/Users/ExampleUser"
 APPDATA = f"{HOME}/AppData"
 # One sizeable folder per application, the way a real profile looks.
 APPS = (("Local", "Discord"), ("Local", "Spotify"),

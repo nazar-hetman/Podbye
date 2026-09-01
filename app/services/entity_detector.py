@@ -433,11 +433,11 @@ def _qualify_folder_name(folder_name: str, folder_path: str) -> str:
 
     The qualifier names the *data*, not the person — the account name is
     deliberately skipped, so a profile-level "Documents" stays "Documents"
-    rather than "Documents – Nazar".
+    rather than "Documents – ExampleUser".
 
     Examples:
-      "documents"  at c:/users/nazar/documents           → "Documents"
-      "cache"      at c:/users/nazar/appdata/local/discord/cache → "Cache – Discord"
+      "documents"  at c:/users/exampleuser/documents           → "Documents"
+      "cache"      at c:/users/exampleuser/appdata/local/discord/cache → "Cache – Discord"
       "videos"     at c:/steamapps/common/portal2/videos  → "Videos – Portal2"
       "node_modules" (not generic)                        → "node_modules"  (unchanged)
     """
@@ -1022,7 +1022,7 @@ def _is_container_path(norm_path: str) -> bool:
 
 
 def _is_user_home_dir(norm_path: str) -> bool:
-    """Return True if this is a user home directory (e.g. c:/users/nazar).
+    """Return True if this is a user home directory (e.g. c:/users/exampleuser).
 
     Depth-aware: only matches at depth 2 (drive/users/username).
     User home dirs are profiles, not applications.
@@ -1202,7 +1202,7 @@ def _nvidia_update_cache_root(norm_path: str) -> str:
 
 
 # Folder names that mean "game saves" ONLY with corroborating context. "saves"
-# is an ordinary English word: it labelled C:/Users/Nazar/LLaMA-Factory/saves —
+# is an ordinary English word: it labelled C:/Users/ExampleUser/LLaMA-Factory/saves —
 # 417 MB of LLM fine-tuning checkpoints — as Game Save Data, and that single
 # folder was 95% of the entire Saves category by size, so the category was both
 # wrong and misleadingly weighted.
@@ -3003,7 +3003,7 @@ def _pass_explode_user_roots(ctx: "_DetectionContext"):
         norm = d.path.replace("\\", "/").lower().rstrip("/")
         if norm in ctx.claimed_paths:
             continue
-        # The user home dir (C:/Users/Nazar) is the ultimate diverse root and
+        # The user home dir (C:/Users/ExampleUser) is the ultimate diverse root and
         # must never be shown as one deletable "User Profile" blob — explode it.
         is_home = _is_user_home_dir(norm)
         if (norm == ctx.root_norm or _is_drive_root(norm)
@@ -4153,6 +4153,11 @@ def _enforce_disjoint_sizes(ctx: "_DetectionContext", entities: list, log_fn) ->
         c_size, c_files, c_folders, _, _ = ctx.subtree(c_norm)
         owner.size_bytes = max(0, owner.size_bytes - c_size)
         owner.file_count = max(0, owner.file_count - c_files)
+        # Remember what came off. The owner still *contains* these bytes on
+        # disk, and recycling it takes them; only the accounting moved.
+        owner.contained_bytes += c_size
+        owner.contained_files += c_files
+        owner.contained_paths.append(child.path)
         # +1 for the child's own directory, which the parent also counted.
         owner.folder_count = max(0, owner.folder_count - c_folders - 1)
         adjusted += 1

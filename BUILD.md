@@ -22,13 +22,14 @@ or checksum the Qt DLLs in a way that stops them being replaced.
 
 - `LICENSE`, `THIRD-PARTY-NOTICES.md` and `licenses\*.txt` must be present in
   `dist\Podbye\_internal\`. The spec bundles them; verify after any spec edit.
-- Run the tests: `.venv\Scripts\python.exe -m pytest -q` (expect 1012 passing).
+- Run the tests: `.venv\Scripts\python.exe -m pytest -q`. Do not rely on a
+  historical test count; the expected suite changes as the product evolves.
 - pywin32 is optional. Without it, .lnk targets are resolved by parsing
   MS-SHLLINK directly instead of via win32com; both paths are exercised.
 
 ## Beta distribution
 
-Zip `dist\Podbye\` and hand over the archive. There is no installer yet, and the
-executable is unsigned — Windows SmartScreen will warn on first run, and
-testers need "More info -> Run anyway". Code signing is the fix when you are
-ready to buy a certificate.
+Zip `dist\Podbye\` for the portable release. The repository also includes an
+Inno Setup installer source at `installer\Podbye.iss`; build and test it for a
+standard installation release. The executable is unsigned, so Windows
+SmartScreen may warn on first run. Code signing is the long-term fix.

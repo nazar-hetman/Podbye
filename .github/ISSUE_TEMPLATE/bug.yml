@@ -57,7 +57,10 @@ body:
         - Paper
         - English
         - Ukrainian
+        - Spanish
+        - German
         - French
+        - Polish
     validations:
       required: false
 

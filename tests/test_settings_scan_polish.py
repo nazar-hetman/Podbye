@@ -1,12 +1,8 @@
 """The Scan settings page: section state, one statement per fact.
 
-Two things on this page were saying the same thing twice. The kept-paths empty
-state sat in the value column, dim, beside an equally dim description — two
-columns of muted text reading as a form with a blank field. File Handling
-stated the cleanup guarantee once per column: the description said "Podbye
-never deletes permanently. Emptying the Recycle Bin is always your own,
-separate decision", the value beside it said "Files are moved to the Recycle
-Bin and can be restored".
+The kept-paths empty state must remain understandable, and File Handling must
+state the Recycle Bin default and the irreversibility of emptying it without
+claiming that every cleanup outcome is recoverable.
 """
 import pytest
 from PySide6.QtWidgets import QCheckBox, QLabel
@@ -108,17 +104,20 @@ def test_the_value_sits_on_the_control_column(scan):
     assert _x(s._method_value_lbl, page) == _VALUE_COL_X
 
 
-def test_only_one_place_names_the_recycle_bin(scan):
-    """It used to be named in both columns of the same row."""
+def test_cleanup_method_names_the_recycle_bin_in_its_value_and_note(scan):
+    """The label and its safety note describe the same method clearly."""
     s, page = scan
     naming = [t for t in _labels(page) if "Recycle Bin" in t]
-    assert naming == ["Recycle Bin"], naming
+    assert naming == [
+        "Recycle Bin",
+        "Cleanup uses the Recycle Bin by default. Emptying it is irreversible.",
+    ], naming
 
 
 def test_the_explanation_is_one_line_of_prose_under_the_value(scan, page_note=None):
     s, page = scan
     note = next(l for l in page.findChildren(QLabel)
-                if l.text().startswith("Podbye never deletes"))
+                if l.text().startswith("Cleanup uses the Recycle Bin"))
     assert _x(note, page) == _VALUE_COL_X
     assert note.width() == _SCAN_VALUE_WIDTH, (
         "a wrapping QLabel reports a narrow size hint; without a pinned width "
@@ -126,14 +125,12 @@ def test_the_explanation_is_one_line_of_prose_under_the_value(scan, page_note=No
 
 
 def test_the_explanation_keeps_all_three_guarantees(scan):
-    """Shorter must not mean weaker: never permanent, recoverable, and
-    emptying the Bin stays the user's own action."""
+    """The setting describes the default and the irreversible Bin action."""
     s, page = scan
     note = next(l for l in page.findChildren(QLabel)
-                if l.text().startswith("Podbye never deletes")).text().lower()
-    assert "never deletes permanently" in note
-    assert "recoverable" in note
-    assert "you empty" in note
+                if l.text().startswith("Cleanup uses the Recycle Bin")).text().lower()
+    assert "recycle bin by default" in note
+    assert "irreversible" in note
 
 
 # ── muted text is readable in every theme ─────────────────────────

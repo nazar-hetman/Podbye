@@ -331,8 +331,17 @@ class FindingsTableModel(QAbstractTableModel):
         ]
 
     def checked_size(self) -> int:
+        """What the current selection will actually remove.
+
+        Deliberately the deletion scope rather than a sum of size_bytes: this
+        number sits beside "Move to Recycle Bin", so it has to answer the
+        question the button raises. They differ for a duplicate group, whose
+        size is every copy while cleanup keeps the newest.
+        """
+        from app.models.deletion_scope import deletion_scope_bytes
+
         return sum(
-            self._entities[i].get("size_bytes", 0)
+            deletion_scope_bytes(self._entities[i])
             for i in self._checked
             if i < len(self._entities)
         )

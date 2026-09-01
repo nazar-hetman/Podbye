@@ -7,6 +7,11 @@ from PySide6.QtWidgets import (
 _TACTICAL_FAMILY = "'Silkscreen', 'JetBrains Mono'"
 
 
+from PySide6.QtWidgets import QSizePolicy
+
+from app.widgets.controls import ElidedLabel
+
+
 def tactical_style(
     font_size: int = 10,
     letter_spacing: int = 2,
@@ -42,6 +47,36 @@ def apply_tactical_label(
             padding=padding,
         )
     )
+
+
+def meta_caption(text: str = "") -> QLabel:
+    """The muted "// 12 visible" caption that sits beside a section title.
+
+    Elided rather than plain, because of what the pair does when the row is
+    too narrow for both. Qt distributes the shortfall across every item that
+    can shrink, and a plain QLabel shrinks by *clipping* — no ellipsis, no
+    scrollbar, just a word cut mid-glyph. So a title and a caption sharing a
+    row both lost text at once.
+
+    English hid it: "APPS & FOLDERS" is 119px. The Spanish
+    "APLICACIONES Y CARPETAS" is 193px in a 302px pane and the title came out
+    at 144. Reported on Spanish and Polish, at the 1100px minimum window.
+
+    An ElidedLabel asks for the width of an ellipsis and no more, so the
+    caption absorbs the shortfall and the section title — short, fixed, and
+    the thing that says what you are looking at — keeps its text.
+    """
+    label = ElidedLabel(text)
+    label.setObjectName("Muted")
+    label.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 9px;")
+    # Preferred, not the Ignored that ElidedLabel defaults to. Ignored asks
+    # for nothing, so the row's trailing stretch took every pixel and the
+    # caption rendered at zero width — the count vanished from a header with
+    # 1500px to spare. Preferred asks for its natural width when the row has
+    # room, and ElidedLabel's minimumSizeHint (an ellipsis) is what still lets
+    # it give way when the row does not.
+    label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+    return label
 
 
 class Panel(QFrame):

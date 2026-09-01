@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QStackedWidget,
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QCoreApplication, QEvent, Qt, QTimer
 from PySide6.QtGui import QFont
 
 from app.fonts import load_fonts, FONT_UI
@@ -134,9 +134,64 @@ class PodbyeWindow(QMainWindow):
 
         threading.Thread(target=_run, name="session-compact", daemon=True).start()
 
+    def _carried_state(self) -> dict:
+        """What a rebuilt shell should be handed back.
+
+        A language change reconstructs every screen, and the screens are where
+        results that were expensive to produce happen to live. The shared
+        ScanState survives because the window owns it, but two things did not:
+
+        * **Startup entries.** The new screen came up empty, so its showEvent
+          re-read the registry and the Startup folders — 285ms of synchronous
+          filesystem work inside the switch — and every AI explanation was
+          gone with the old entries. Those cost a local model minutes each,
+          and the UI language has nothing to do with them: they are written in
+          ai_explanation_language, which did not change.
+        Findings' place in the category list is *not* carried, though it is
+        also lost. Rebuilding those rows measured ~1.5s on top of the switch —
+        paid on the very stall this audit started from — to save a click that
+        reopens the category. The trade is only worth making for state that is
+        expensive to recreate, and a category view is not.
+
+        Only plain data crosses. StartupEntry is not a QObject, and the view
+        names are strings; nothing here can keep a widget from the outgoing
+        tree alive.
+        """
+        carried: dict = {}
+        screens = getattr(self, "_screens", None) or {}
+
+        startups = screens.get("Startups")
+        entries = list(getattr(startups, "_entries", None) or [])
+        if entries:
+            carried["startups"] = (entries, getattr(startups, "_selected_key", None))
+
+        return carried
+
+    def _restore_carried_state(self, carried: dict) -> None:
+        """Hand *carried* to the freshly built screens.
+
+        Guarded: this is a convenience, and a language switch that fails
+        half-way through leaves the user with no usable window. Better to
+        arrive on the default view than not to arrive.
+        """
+        if not carried:
+            return
+        try:
+            entries, selected = carried.get("startups", (None, None))
+            startups = self._screens.get("Startups")
+            if entries and startups is not None:
+                startups.adopt_entries(
+                    entries, selected,
+                    render_now=getattr(self, "_current_screen_name", "") == "Startups")
+
+        except Exception as exc:      # noqa: BLE001 - see docstring
+            logging.getLogger("podbye.shell").debug(
+                "could not carry screen state across rebuild: %s", exc)
+
     def _build_ui(self):
         """Build (or rebuild) the entire UI. Safe to call again for language changes."""
         old_central = self.centralWidget()
+        carried = self._carried_state()
 
         central = QWidget()
         root = QHBoxLayout(central)
@@ -229,7 +284,14 @@ class PodbyeWindow(QMainWindow):
             self._stop_all_background_work()
             old_central.hide()
             old_central.deleteLater()
+            # Deferred on purpose, and it must stay that way. _build_ui() is
+            # reached from the Settings screen's own settings_saved signal, so
+            # the outgoing tree contains the widget whose handler is still on
+            # the stack. Flushing the delete here — tried, to spare the next
+            # step from re-polishing a tree on its way out — kills the process
+            # outright.
 
+        self._restore_carried_state(carried)
         self._refresh_shell_chrome()
 
     def _add_screen(self, name: str, widget: QWidget):
@@ -311,7 +373,14 @@ class PodbyeWindow(QMainWindow):
         # is the only lever.
         app = QApplication.instance()
         qss = build_qss(theme_key)
-        app.setStyleSheet(qss)
+        # Only when it actually differs. A language change rebuilds the shell
+        # and then calls this with the *same* theme, so the string handed to
+        # Qt was identical to the one already set — and Qt re-polishes every
+        # live widget regardless, for no visual change. Widgets built after an
+        # application stylesheet is set inherit it when they are polished, so
+        # the new shell is already wearing it.
+        if app.styleSheet() != qss:
+            app.setStyleSheet(qss)
         # Recolour the window / taskbar icon to match the theme accent.
         icon = logo_icon(get_palette(theme_key)["accent"])
         self.setWindowIcon(icon)
@@ -428,6 +497,15 @@ class PodbyeWindow(QMainWindow):
             return tr("Scanning")
         if self._scan_state.current_phase == "ai_classification":
             return tr("AI active")
+        # This footer reports what the app is doing, and "Complete" is its
+        # idle-with-data label — but idle and complete are not the same claim.
+        # A run the user stopped left data behind and nothing running, so it
+        # fell through to "Complete" while Home said Paused two lines above,
+        # and the word that describes the app was read as a verdict on the
+        # analysis. Same word Home's badge uses, so the screen agrees with
+        # itself.
+        if self._scan_state.current_phase == "stopped":
+            return tr("Paused")
         if self._scan_state.total_count > 0 or self._scan_state.entity_count > 0:
             return tr("Complete")
         return tr("Ready")

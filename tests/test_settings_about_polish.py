@@ -59,7 +59,7 @@ def test_a_real_windows_path_stays_on_one_line(qapp, width):
     must not.
     """
     real = "C:" + chr(92) + chr(92).join(
-        ["Users", "Nazar", "AppData", "Roaming", "Podbye", "sessions"])
+        ["Users", "ExampleUser", "AppData", "Roaming", "Podbye", "sessions"])
     s = SettingsScreen()
     s.resize(width, 900)
     s.show()

@@ -21,7 +21,7 @@ from app.widgets.controls import ElidedLabel
 # The sidebar as it renders on a 1920-wide window.
 SIDEBAR_W = 500
 
-NASTY_PATH = (r"C:\Users\Nazar\AppData\Local\Grammarly\DesktopIntegrations"
+NASTY_PATH = (r"C:\Users\ExampleUser\AppData\Local\Grammarly\DesktopIntegrations"
               r"\Grammarly.Desktop.Runtime\bin\Grammarly.Desktop.exe --autostart")
 
 
@@ -304,7 +304,7 @@ def test_elided_label_never_widens_its_container(qapp):
 
 
 def test_elided_label_shortens_to_fit_and_keeps_the_original(qapp):
-    full = "C:/Users/Nazar/AppData/Local/Programs/Thing/bin/thing.exe"
+    full = "C:/Users/ExampleUser/AppData/Local/Programs/Thing/bin/thing.exe"
     lbl = ElidedLabel(full, mode=Qt.ElideMiddle)
     lbl.resize(120, 20)
     lbl.show()
@@ -319,7 +319,7 @@ def test_setting_text_on_an_elided_label_still_elides(qapp):
     lbl = ElidedLabel(mode=Qt.ElideMiddle)
     lbl.resize(100, 20)
     lbl.show()
-    lbl.setText("C:/Users/Nazar/AppData/Local/Programs/Thing/bin/thing.exe")
+    lbl.setText("C:/Users/ExampleUser/AppData/Local/Programs/Thing/bin/thing.exe")
 
     assert "…" in lbl.text()
-    assert lbl.toolTip() == "C:/Users/Nazar/AppData/Local/Programs/Thing/bin/thing.exe"
+    assert lbl.toolTip() == "C:/Users/ExampleUser/AppData/Local/Programs/Thing/bin/thing.exe"

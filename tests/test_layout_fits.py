@@ -159,6 +159,18 @@ def test_no_dialog_control_overflows_in_any_shipped_language(app, language):
         + "\n  ".join(problems))
 
 
+@pytest.mark.parametrize("language", ["German", "Spanish"])
+def test_development_locale_fits_tight_controls(app, language):
+    """Exercise hidden locales before they reach the production picker."""
+    set_language(language)
+    problems = []
+    for screen in _build_screens(app):
+        problems += _overflowing(screen)
+    for dlg in _build_dialogs(app):
+        problems += _overflowing(dlg)
+    assert not problems, f"{language}: text does not fit its control —\n  " + "\n  ".join(problems)
+
+
 def test_the_harness_can_actually_detect_an_overflow(app):
     """A check that never fails is worthless — prove it catches a real case."""
     btn = QPushButton("A" * 200)

@@ -1,6 +1,6 @@
 """Cleaning does not free disk space until the bin is emptied — say so.
 
-Podbye never deletes permanently: every cleanup is a *move* to the Recycle Bin,
+Podbye sends cleanup to the Recycle Bin by default. The normal cleanup path is a *move* to the Recycle Bin,
 so nothing it does is irreversible. But a move on the same volume is a rename,
 and not one byte comes back until the bin is emptied. Nobody was told that. On
 one real machine the bin held 16.7 GB across 795 items while the user kept

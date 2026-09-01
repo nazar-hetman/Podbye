@@ -15,13 +15,13 @@ from app.services.entity_detector import (
 
 def test_my_games_container_yields_following_segment():
     assert _extract_owning_game(
-        "c:/users/nazar/documents/my games/skyrim/saves"
+        "c:/users/exampleuser/documents/my games/skyrim/saves"
     ) == "skyrim"
 
 
 def test_saved_games_container_yields_following_segment():
     assert _extract_owning_game(
-        "c:/users/nazar/saved games/cyberpunk 2077"
+        "c:/users/exampleuser/saved games/cyberpunk 2077"
     ) == "cyberpunk 2077"
 
 
@@ -40,11 +40,11 @@ def test_publisher_is_skipped_for_game_under_appdata():
 
 def test_multi_game_container_itself_returns_empty():
     # The container folder has no single owning game.
-    assert _extract_owning_game("c:/users/nazar/saved games") == ""
+    assert _extract_owning_game("c:/users/exampleuser/saved games") == ""
 
 
 def test_generic_only_path_returns_empty():
-    assert _extract_owning_game("c:/users/nazar/documents/saves") == ""
+    assert _extract_owning_game("c:/users/exampleuser/documents/saves") == ""
 
 
 # ── _normalize_game_name ──────────────────────────────────────────

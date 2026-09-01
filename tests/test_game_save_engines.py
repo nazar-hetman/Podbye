@@ -22,9 +22,9 @@ def _f(path, is_dir=False, size=0, ext="", parent=""):
 
 
 def _renpy_tree():
-    base = "C:/Users/Nazar/AppData/Roaming/RenPy"
-    f = [_f("C:/Users/Nazar/AppData/Roaming", is_dir=True, parent="C:/Users/Nazar/AppData"),
-         _f(base, is_dir=True, parent="C:/Users/Nazar/AppData/Roaming")]
+    base = "C:/Users/ExampleUser/AppData/Roaming/RenPy"
+    f = [_f("C:/Users/ExampleUser/AppData/Roaming", is_dir=True, parent="C:/Users/ExampleUser/AppData"),
+         _f(base, is_dir=True, parent="C:/Users/ExampleUser/AppData/Roaming")]
     for game in ("MyOfficeAdventures-1602343789", "GOGOPIZZABOY-1693749163"):
         g = f"{base}/{game}"
         f.append(_f(g, is_dir=True, parent=base))
