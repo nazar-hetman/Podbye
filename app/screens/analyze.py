@@ -387,7 +387,8 @@ class AnalyzeScreen(QWidget):
         self._btn_scan_all = QPushButton(tr("ALL"))
         self._btn_scan_all.setObjectName("TargetAllChip")
         self._btn_scan_all.setCursor(Qt.PointingHandCursor)
-        self._btn_scan_all.setFixedSize(50, 30)
+        # Polish "WSZYSTKIE" needs more room than the original ALL chip.
+        self._btn_scan_all.setFixedSize(76, 30)
         self._btn_scan_all.setToolTip(
             tr("Scan every internal (fixed) drive at once. "
                "Removable and network drives are skipped.")
@@ -412,7 +413,7 @@ class AnalyzeScreen(QWidget):
         self._btn_scan.setObjectName("Primary")
         self._btn_scan.setCursor(Qt.PointingHandCursor)
         self._btn_scan.setEnabled(False)
-        self._btn_scan.setFixedWidth(120)
+        self._btn_scan.setFixedWidth(140)
         self._btn_scan.setMinimumHeight(32)
         self._btn_scan.clicked.connect(self._on_scan_btn)
         self._scan_active = False  # tracks whether we are currently scanning
@@ -434,7 +435,8 @@ class AnalyzeScreen(QWidget):
         scan_prog_row.setSpacing(8)
         self._scan_label = QLabel(tr("SCAN"))
         self._scan_label.setStyleSheet(f"font-family: 'Silkscreen', 'JetBrains Mono'; font-size: 8px; letter-spacing: 2px; color: {_p.get('safe', '#7cc596')};")
-        self._scan_label.setFixedWidth(36)
+        # Localized analysis labels are longer than the original SCAN caption.
+        self._scan_label.setFixedWidth(60)
         scan_prog_row.addWidget(self._scan_label)
         self._scan_bar = _make_progress(_p.get("safe", "#7cc596"))
         scan_prog_row.addWidget(self._scan_bar, stretch=1)
@@ -697,8 +699,8 @@ class AnalyzeScreen(QWidget):
         if self._pipeline_state == "ai_classifying" and (active > 0 or pending > 0):
             parts = []
             if active > 0:
-                parts.append(f"{active} active")
-            parts.append(f"{pending} pending")
+                parts.append(tr("{count} active", count=active))
+            parts.append(tr("{count} pending", count=pending))
             return self._compact_text(" · ".join(parts), 24)
         return ""
 
@@ -1172,7 +1174,8 @@ class AnalyzeScreen(QWidget):
             self._grouping_complete = True
             _set_determinate(self._scan_bar, 100, "#7cc596")
             self._scan_prog_lbl.setText("100%")
-            self._chips[2].set_state("done", f"{entities_created} entities")
+            self._chips[2].set_state(
+                "done", tr("{count:,} grouped results", count=entities_created))
             self._feed.add_line(f"[smart] Entity Detection complete · {entities_created} entities · {coverage_pct}% coverage")
         else:
             # Real progress: grouped_files out of total discovered files
@@ -1184,10 +1187,13 @@ class AnalyzeScreen(QWidget):
             else:
                 # Total not yet known — stay indeterminate
                 _set_indeterminate(self._scan_bar, "#7cc596")
-                count_label = f"{grouped_files:,} grouped"
+                count_label = tr("{count:,} grouped", count=grouped_files)
                 self._scan_prog_lbl.setText("...")
 
-            chip_detail = f"{stage_text} · {count_label} · {entities_created} entities"
+            chip_detail = tr(
+                "{stage} · {count} · {results:,} grouped results",
+                stage=stage_text, count=count_label, results=entities_created,
+            )
             self._chips[2].set_state("active", chip_detail)
 
     # ─── Worker callbacks ────────────────────────────────────
@@ -1263,7 +1269,7 @@ class AnalyzeScreen(QWidget):
             self._chips[0].set_state("done", f"{total:,}")
             self._chips[1].set_state("active")
         elif count > 0 and self._chips[1]._state == "active":
-            self._chips[1].set_state("active", f"{total:,} items")
+            self._chips[1].set_state("active", tr("{count:,} items", count=total))
 
         # Log milestones to feed (not every batch)
         if count > 0 and count % 10_000 == 0:
@@ -1349,7 +1355,7 @@ class AnalyzeScreen(QWidget):
             
             if mode == "smart":
                 self._pipeline_state = "grouping_entities"
-                self._chips[2].set_state("active", "grouping…")
+                self._chips[2].set_state("active", tr("Grouping results…"))
                 self._set_badge(tr("Scanning"), "running")
                 self._feed.add_line("[scan] filesystem complete · starting entity grouping…")
                 # Switch bar from indeterminate to determinate at 0%
@@ -1405,7 +1411,7 @@ class AnalyzeScreen(QWidget):
                 # neither _on_entities_ready nor _on_ai_queue_finished will ever
                 # fire. Finish the pipeline here or the elapsed timer ticks
                 # forever and the state stays stuck in "ai_classifying".
-                self._chips[3].set_state("done", tr("skipped"))
+                self._chips[3].set_state("done", tr("Not run"))
                 self._mark_ai_skipped()
                 self._ai_complete = True
                 self._pipeline_state = "complete"
@@ -1471,7 +1477,8 @@ class AnalyzeScreen(QWidget):
 
         self._grouping_complete = True
         self._pipeline_state = "stopped" if stopped else "ai_classifying"
-        self._chips[2].set_state("done", f"{entity_count} entities")
+        self._chips[2].set_state(
+            "done", tr("{count:,} grouped results", count=entity_count))
         if not stopped:
             _set_determinate(self._scan_bar, 100, "#7cc596")
             self._scan_prog_lbl.setText("100%")
@@ -1507,7 +1514,7 @@ class AnalyzeScreen(QWidget):
             self._ai_complete = True
             self._pipeline_state = "complete"
             self._update_findings_title()
-            self._chips[3].set_state("done", tr("skipped"))
+            self._chips[3].set_state("done", tr("Not run"))
             self._mark_ai_skipped()
             self._set_badge(tr("Complete"), "completed")
             self._elapsed_timer.stop()
@@ -1656,9 +1663,12 @@ class AnalyzeScreen(QWidget):
             self._ai_bar.setValue(pct)
             self._ai_prog_lbl.setText(f"{pct}%")
             pending = total - done - active - failed
-            parts = [f"{active} active", f"{max(pending,0)} pending"]
+            parts = [
+                tr("{count} active", count=active),
+                tr("{count} pending", count=max(pending, 0)),
+            ]
             if failed > 0:
-                parts.append(f"{failed} unavailable")
+                parts.append(tr("{count} unavailable", count=failed))
             self._ai_queue_lbl.setText(" · ".join(parts))
             self._chips[3].set_state("active", f"{done}/{total}")
             # Show retry button when there are failures and queue is idle
@@ -1683,7 +1693,10 @@ class AnalyzeScreen(QWidget):
             total_items = self._scan_state.total_count
             self._pf_table.setRowCount(0)
             self._selected_pf_row = -1
-            self._pf_count.setText(f"{total_items:,} items · {self._scan_state.total_size_str}")
+            self._pf_count.setText(tr(
+                "{count:,} filesystem items · {size}",
+                count=total_items, size=self._scan_state.total_size_str,
+            ))
             self._pf_sub.setText(tr("// Scanning — categories after entity detection"))
             return
 
@@ -1701,7 +1714,11 @@ class AnalyzeScreen(QWidget):
                 if self._scan_state.current_phase == "stopped"
                 else tr("// Semantic grouping complete"))
         else:
-            self._pf_count.setText(f"{self._scan_state.total_count:,} items · {self._scan_state.total_size_str}")
+            self._pf_count.setText(tr(
+                "{count:,} filesystem items · {size}",
+                count=self._scan_state.total_count,
+                size=self._scan_state.total_size_str,
+            ))
             self._pf_sub.setText(tr("// Raw file mode"))
 
         cats = sorted(summary.items(), key=lambda x: x[1]["size_bytes"], reverse=True)

@@ -63,8 +63,8 @@ def test_real_files_are_still_deletable():
 
 @pytest.mark.parametrize("path", [
     r"C:\Program Files\SomeApp\cache",
-    r"C:\Users\Nazar\Downloads\old.zip",
-    r"C:\Users\Nazar\AppData\Local\Temp\x.tmp",
+    r"C:\Users\ExampleUser\Downloads\old.zip",
+    r"C:\Users\ExampleUser\AppData\Local\Temp\x.tmp",
 ])
 def test_places_podbye_is_meant_to_clean_are_not_blocked(path):
     assert _is_protected_for_delete(path) is False

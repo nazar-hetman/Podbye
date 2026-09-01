@@ -11,6 +11,7 @@ import string
 import pytest
 
 from app.i18n import LANGUAGES, _locales_dir, available_languages
+from tests.test_translation_coverage import _tr_keys
 
 _fmt = string.Formatter()
 
@@ -64,20 +65,15 @@ def test_translations_are_not_left_empty(path):
 
 
 def test_shipped_languages_are_substantially_complete():
-    """A language in the picker should not be mostly English.
+    """A language in the picker should cover the strings users can reach.
 
-    French shipped at 984 of 1,073 strings — the AI status labels, several
-    dialog help texts and most feed captions fell back to English mid-sentence.
-    Guard the floor rather than demanding a perfect 100%, so adding a string
-    does not immediately break the build.
+    Locale files retain historical and experimental entries that may no longer
+    have a call site. Comparing every locale to the largest such file marks a
+    finished locale incomplete for text that cannot render. Measure active
+    literal ``tr()`` keys instead, while allowing deliberate technical labels
+    such as ``stdout`` to remain untranslated.
     """
-    reference = max(
-        (json.loads((_locales_dir() / f"{code}.json").read_text(encoding="utf-8"))
-         for name, code in LANGUAGES.items()
-         if code != "en" and (_locales_dir() / f"{code}.json").exists()),
-        key=len,
-    )
-    keys = [k for k in reference if not k.startswith("__")]
+    keys = _tr_keys()
 
     for name in available_languages():
         code = LANGUAGES[name]
@@ -90,3 +86,40 @@ def test_shipped_languages_are_substantially_complete():
             f"{name} covers only {coverage:.1%} of the {len(keys)} known strings "
             f"({len(keys) - translated} missing) — it will render half in English"
         )
+
+
+@pytest.mark.parametrize("locale", ["uk", "fr"])
+def test_locales_keep_the_canonical_podbye_categories_in_english(locale):
+    """Category labels are shared taxonomy identifiers, not translated UI copy."""
+    data = json.loads((_locales_dir() / f"{locale}.json").read_text(encoding="utf-8"))
+    categories = {
+        "Images", "Dev Artifacts", "AI / ML", "Applications", "Unknown",
+        "Downloads", "System", "Application Data", "Databases", "Cache & Temp",
+        "Browser Data", "System Logs", "Archives", "Installers", "Desktop",
+        "Documents", "Media",
+    }
+    assert {key: data.get(key) for key in categories} == {
+        key: key for key in categories
+    }
+
+
+def test_ukrainian_findings_names_the_persistent_cleanup_exclusion():
+    """Keep is a durable no-cleanup rule, not a save action or hidden filter."""
+    data = json.loads((_locales_dir() / "uk.json").read_text(encoding="utf-8"))
+    assert data["Keep"] == "Виключити з очищення"
+    assert data["Kept"] == "ВИКЛЮЧЕНО"
+    assert data["Remove from Keep"] == "Повернути до очищення"
+    assert data["Kept paths"] == "Ігноровані шляхи"
+    assert "зберег" not in data["Marked with Keep in Findings. Nothing inside these is ever selected by a bulk action, and cleanup refuses them outright."].lower()
+
+
+def test_ukrainian_startups_uses_windows_startup_terms_not_internal_labels():
+    data = json.loads((_locales_dir() / "uk.json").read_text(encoding="utf-8"))
+    assert data["STARTUP INSPECTION"] == "ДЕТАЛІ АВТОЗАПУСКУ"
+    assert data["BOOT IMPACT"] == "ВПЛИВ НА ЗАПУСК"
+    assert data["need review or are protected"] == (
+        "потребують перевірки або захищені")
+    assert data["User startup registry"] == (
+        "Реєстр автозапуску поточного користувача")
+    assert data["Scheduled task (logon)"] == (
+        "Заплановане завдання (вхід у систему)")

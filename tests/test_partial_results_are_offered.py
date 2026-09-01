@@ -25,8 +25,22 @@ from app.themes.theme_manager import build_qss
 
 @pytest.fixture
 def dressed(qapp):
+    """Dressed as main() dresses it — stylesheet *and* fonts.
+
+    A bare test process has different metrics, and every geometry assertion
+    below is then measuring a layout no user ever sees: without this the
+    badge came out wider, the action moved ~90px right, and the collision
+    test failed on a screen that is fine.
+    """
+    from app.fonts import FONT_UI, load_fonts
+    from PySide6.QtGui import QFont
+
+    previous = qapp.font()
+    load_fonts()
+    qapp.setFont(QFont(FONT_UI, 10))
     qapp.setStyleSheet(build_qss("forest"))
-    return qapp
+    yield qapp
+    qapp.setFont(previous)
 
 
 def _findings(n):
@@ -364,6 +378,70 @@ def test_the_notice_survives_a_theme_switch(dressed, dash):
         assert d._partial_notice._text.text()
     finally:
         dressed.setStyleSheet(build_qss("forest"))
+
+
+@pytest.mark.parametrize("width", [1724, 1400, 1200, 884])
+@pytest.mark.parametrize("language", ["English", "Ukrainian", "French"])
+def test_the_action_never_stacks_under_the_header_button(dressed, dash, width, language):
+    """Reported: "buttons too close".
+
+    Right-aligned, Resume landed 9px from and 53px above "Browse by folder"
+    in the section header below — two buttons in the top-right corner reading
+    as one control group, one of which resumes a scan and the other of which
+    changes the view. The action now sits beside the sentence that explains
+    it, and the sentence is capped against the window width so a longer
+    translation or a smaller monitor cannot push it back into the corner.
+    """
+    from app.i18n import set_language
+
+    set_language(language)
+    try:
+        d = dash(_stopped_state())
+        d._on_view_partial_results()
+        d.resize(width, 1000)
+        for _ in range(8):
+            dressed.processEvents()
+
+        resume = d._partial_notice._resume_btn
+        top_left = resume.mapTo(d, resume.rect().topLeft())
+        right_edge = top_left.x() + resume.width()
+
+        for btn in d.findChildren(QPushButton):
+            if btn is resume or not btn.isVisibleTo(d) or not btn.text():
+                continue
+            other = btn.mapTo(d, btn.rect().topLeft())
+            if abs(other.y() - top_left.y()) > 120:
+                continue          # far enough down to read as a separate row
+            assert other.x() - right_edge > 40, (
+                f"{btn.text()!r} sits {other.x() - right_edge}px from Resume")
+    finally:
+        set_language("English")
+
+
+def test_the_notice_stays_a_strip(dressed, dash):
+    """It is a persistent line, not a panel. At 44px the button alone made it
+    as tall as the section header it sits above."""
+    d = dash(_stopped_state())
+    d._on_view_partial_results()
+    for _ in range(6):
+        dressed.processEvents()
+
+    assert d._partial_notice.height() <= 60
+    assert d._partial_notice._resume_btn.height() <= 30
+
+
+def test_the_sentence_uses_the_room_a_wide_window_has(dressed, dash):
+    """Capped, not shrunk: on a wide monitor it should read as one line, not
+    wrap into three beside a mostly empty strip."""
+    d = dash(_stopped_state())
+    d._on_view_partial_results()
+    d.resize(1724, 1000)
+    for _ in range(8):
+        dressed.processEvents()
+
+    text = d._partial_notice._text
+    assert text.width() >= 600, text.width()
+    assert text.heightForWidth(text.width()) <= 24, "wrapped on a wide window"
 
 
 def test_the_notice_fits_a_narrow_window(dressed, dash):

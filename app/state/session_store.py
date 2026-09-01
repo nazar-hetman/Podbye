@@ -676,23 +676,31 @@ def save_cleanup_record(session_id: str, items: list, result, mode: str) -> bool
         mode: "recycle_bin" or "permanent".
     """
     ts = int(time.time())
+    # Keep the stored historical verdict in step with the classifier History
+    # uses. A run that removed some files and then hit an error is partial,
+    # rather than a total failure.
+    from app.services.cleanup_result_classifier import assess_cleanup_counts
+    succeeded_count = len(result.succeeded)
+    in_use_count = len(getattr(result, "in_use", []))
+    failed_count = len(result.failed)
+    skipped_count = len(result.skipped_protected)
+    result_state = assess_cleanup_counts(
+        succeeded_count=succeeded_count,
+        in_use_count=in_use_count,
+        failed_count=failed_count,
+        skipped_count=skipped_count,
+    ).state
     data = {
         "type": "cleanup",
         "timestamp": ts,
         "session_id": session_id,
         "mode": mode,
         "total_bytes_freed": result.total_bytes_freed,
-        "succeeded_count": len(result.succeeded),
-        "in_use_count": len(getattr(result, "in_use", [])),
-        "failed_count": len(result.failed),
-        "skipped_protected_count": len(result.skipped_protected),
-        "result_state": (
-            "failed" if len(result.failed) > 0 else
-            "partial" if len(getattr(result, "in_use", [])) > 0 and len(result.succeeded) > 0 else
-            "in_use" if len(getattr(result, "in_use", [])) > 0 else
-            "success" if len(result.succeeded) > 0 else
-            "already_clean"
-        ),
+        "succeeded_count": succeeded_count,
+        "in_use_count": in_use_count,
+        "failed_count": failed_count,
+        "skipped_protected_count": skipped_count,
+        "result_state": result_state,
         "items": items,
         # Marks that each item's "size" is its own bytes. Records written
         # before 2026-08-20 carry the *bucket's* total on every one of its

@@ -6,8 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Podbye ships English, Ukrainian and French. That is how far one person
-        got, not a judgement about which languages matter.
+        Podbye ships English, Ukrainian, Spanish, German, French and Polish.
 
         A **partial** translation is genuinely useful — translated strings show
         in your language and the rest stay English, so there is no need to
@@ -38,7 +37,8 @@ body:
       label: Details
       description: >
         For a new locale: attach the JSON, or paste it here, or link a fork —
-        whatever is easiest. Start from `app/locales/fr.json`, keep the keys
+        whatever is easiest. Start from a complete current locale such as
+        `app/resources/i18n/es.json`, keep the keys
         exactly as they are, and keep every `{placeholder}` in braces.
 
         For a fix: the English string, what Podbye currently shows, and what it

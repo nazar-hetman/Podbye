@@ -52,7 +52,7 @@ from app.services.keep_list import (is_kept, kept_root_for, keep as keep_path,
 from app.models.path_tree import PathNode, build_tree, collapse_single_child_chains
 from app.widgets.tables import install_header_fit
 from app.i18n import tr
-from app.widgets.panels import apply_tactical_label
+from app.widgets.panels import apply_tactical_label, meta_caption
 from app.widgets.controls import (
     ElidedLabel, TacticalCheckBox, TacticalComboBox, ask_ai_button_qss,
     restyle_needed, style_container)
@@ -261,9 +261,9 @@ def _duplicate_representative_name(entity: dict) -> str:
     if ext:
         label = _duplicate_type_label(ext)
         if label == "archive":
-            return "Duplicate archive files"
-        return f"Duplicate {ext} files"
-    return "Duplicate Files"
+            return tr("Duplicate archive files")
+        return tr("Duplicate {ext} files", ext=ext)
+    return tr("Duplicate Files")
 
 
 def _duplicate_copy_count(entity: dict) -> int:
@@ -277,9 +277,7 @@ def _duplicate_copy_count(entity: dict) -> int:
 def _duplicate_title(entity: dict) -> str:
     name = _duplicate_representative_name(entity)
     copies = _duplicate_copy_count(entity)
-    if name == "Duplicate Files" or name.startswith("Duplicate "):
-        return f"{name} · {copies} copies"
-    return f"{name} · {copies} copies"
+    return tr("{name} · {count} copies", name=name, count=copies)
 
 
 def _short_parent(path: str, segments: int = 2) -> str:
@@ -425,21 +423,23 @@ def _duplicate_explanation(entity: dict) -> str:
     copies = _duplicate_copy_count(entity)
     reclaimable = entity.get("dup_reclaimable", 0) or entity.get("reclaimable_bytes", 0)
     shorts = _duplicate_short_parents(entity)
-    where = ", ".join(shorts[:3]) if shorts else "several locations"
-    saving = _format_size(reclaimable) if reclaimable else "space"
+    where = ", ".join(shorts[:3]) if shorts else tr("several locations")
+    saving = _format_size(reclaimable) if reclaimable else tr("space")
 
     if _duplicate_is_per_app_binary(entity):
-        return (
-            f"{copies} identical copies of this file exist, each inside a separate "
-            f"application or runtime ({where}). These are not spare copies — every "
-            f"program ships and depends on its own, so deleting one will likely break "
-            f"that application. To recover the {saving}, uninstall a program you no "
-            f"longer use (Deep Uninstall) instead of removing this file."
+        return tr(
+            "{count} identical copies of this file exist, each inside a separate "
+            "application or runtime ({where}). These are not spare copies — every "
+            "program ships and depends on its own, so deleting one will likely break "
+            "that application. To recover the {size}, uninstall a program you no "
+            "longer use (Deep Uninstall) instead of removing this file.",
+            count=copies, where=where, size=saving,
         )
-    return (
-        f"{copies} identical copies were found ({where}). The newest copy is kept as "
-        f"the original; the rest are extra and can be moved to the Recycle Bin to "
-        f"reclaim {saving}. Make sure none of the copies is still in active use first."
+    return tr(
+        "{count} identical copies were found ({where}). The newest copy is kept as "
+        "the original; the rest are extra and can be moved to the Recycle Bin to "
+        "reclaim {size}. Make sure none of the copies is still in active use first.",
+        count=copies, where=where, size=saving,
     )
 
 
@@ -852,39 +852,46 @@ def _container_explanation(entity: dict) -> str:
     its size/contents and the safe way to reclaim space without nuking personal
     data.
     """
-    name = entity.get("name") or "This folder"
+    name = entity.get("name") or tr("This folder")
     size = entity.get("size", "—")
     file_count = int(entity.get("file_count", 0) or 0)
     folder_count = int(entity.get("folder_count", 0) or 0)
     entity_type = entity.get("entity_type", "")
     category = entity.get("category", "")
-    where = f"{file_count:,} files" + (f" across {folder_count:,} folders" if folder_count else "")
-    scale = f"{where} ({size})" if where else size
+    where = tr("{count:,} files", count=file_count)
+    if folder_count:
+        where += tr(" across {count:,} folders", count=folder_count)
+    scale = tr("{contents} ({size})", contents=where, size=size) if where else size
 
     if entity_type in ("mixed_folder", "unknown_folder", "loose_files"):
-        return (
-            f"{name} holds {scale} of mixed or unrecognized content. Because the "
-            f"files aren't all one kind, deleting the whole folder could remove "
-            f"things you still want. Open it to see what's inside, or clean only "
-            f"specific items — duplicates and very old large files are the safe wins."
+        return tr(
+            "{name} contains {contents} of mixed or unrecognized content. Because "
+            "the files are not all one kind, deleting the whole folder could remove "
+            "things you still need. Open it to see what is inside, or clean only "
+            "specific items — duplicates and very old large files are safer.",
+            name=name, contents=scale,
         )
     if entity_type == "dev_workspace":
-        return (
-            f"{name} is where several separate projects live ({scale}). It is not "
-            f"one thing to delete — open the projects inside and decide about "
-            f"each of them, or reclaim their generated parts under Dev Artifacts."
+        return tr(
+            "{name} contains several separate projects ({contents}). It is not one "
+            "thing to delete — open the projects inside and decide about each of "
+            "them, or reclaim generated parts under Dev Artifacts.",
+            name=name, contents=scale,
         )
     if entity_type == "dev_project":
-        return (
-            f"{name} looks like a source/project folder ({scale}). The source is "
-            f"yours to keep — instead of deleting it, reclaim space from generated "
-            f"parts (build output, node_modules, caches) shown separately under Dev Artifacts."
+        return tr(
+            "{name} looks like a source/project folder ({contents}). Keep the source "
+            "itself — instead, reclaim space from generated parts (build output, "
+            "node_modules, caches) shown separately under Dev Artifacts.",
+            name=name, contents=scale,
         )
-    label = (category or "personal").lower()
-    return (
-        f"{name} is a personal {label} location with {scale}. Podbye keeps personal "
-        f"data intact, so it won't bulk-delete this folder. Open it to review, or "
-        f"target only reclaimable items inside — duplicates or files untouched for years."
+    label = tr(category or "personal").lower()
+    return tr(
+        "{name} is a personal {category} location with {contents}. Podbye keeps "
+        "personal data intact, so it will not bulk-delete this folder. Open it to "
+        "review, or target only reclaimable items inside — duplicates or files "
+        "untouched for years.",
+        name=name, category=label, contents=scale,
     )
 
 
@@ -1021,7 +1028,7 @@ def _finding_recommendation(entity: dict) -> tuple[str, str, str, str]:
         return (
             tr("PROTECTED"),
             tr("Recommendation: keep this item. It is marked protected and should not be cleaned from Findings."),
-            translate_reason(entity) or tr("Protected rule matched this path or entity type."),
+            translate_reason(entity) or tr("A protection rule covers this location or this kind of item."),
             accent_risk,
         )
     if is_duplicate and _duplicate_is_per_app_binary(entity):
@@ -1063,7 +1070,12 @@ def _finding_recommendation(entity: dict) -> tuple[str, str, str, str]:
         return (
             tr("OPTIONAL"),
             tr("Recommendation: clean this only if the path and contents are familiar."),
-            entity.get("recommendation") or translate_reason(entity) or tr("This is likely removable but may still be useful."),
+            # ``recommendation`` is legacy, rendered English prose stored in
+            # old snapshots.  It is not evidence and has no template/locale
+            # metadata, so reusing it here freezes a current-language UI in
+            # the language of the original scan.  The canonical rule reason
+            # can be rendered now; otherwise use the current UI fallback.
+            translate_reason(entity) or tr("This is likely removable but may still be useful."),
             accent_info,
         )
     return (
@@ -1868,10 +1880,13 @@ class ContentsWalkWorker(QThread):
 
     measured = Signal(str, object)      # path, Contents
 
-    def __init__(self, path: str, file_paths=None):
+    def __init__(self, path: str, file_paths=None, exclude=None):
         super().__init__()
         self._path = path
         self._file_paths = list(file_paths or [])
+        # Nested findings are owned by their own rows and stay put, so the
+        # section must not measure them into this one's total.
+        self._exclude = list(exclude or [])
         self._stop = False
 
     def cancel(self):
@@ -1885,7 +1900,8 @@ class ContentsWalkWorker(QThread):
                                          should_stop=lambda: self._stop)
             else:
                 contents = walk_contents(self._path,
-                                         should_stop=lambda: self._stop)
+                                         should_stop=lambda: self._stop,
+                                         exclude=self._exclude)
         except Exception:
             return
         if not self._stop:
@@ -2496,11 +2512,14 @@ class _PreallocDetailPanel(QWidget):
         # attributed the verdict to the thing least responsible for it.
         self._ai_title = ElidedLabel(tr("PODBYE ASSESSMENT"))
         self._ai_title.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
-        self._ai_title.setMinimumWidth(90)
         self._ai_title.setStyleSheet(
             f"font-family: 'Silkscreen', 'JetBrains Mono'; font-size: 9px; "
             f"letter-spacing: 1px; color: {faint};"
         )
+        # Its own natural width, measured after the style is on: 94px in
+        # Ukrainian, 155px in Spanish. A single hard-coded floor is either too
+        # small for one language or too wide for another.
+        self._ai_title.setMinimumWidth(self._ai_title.sizeHint().width())
 
         self._ai_frame = QFrame()
         self._ai_frame.setObjectName("ReasoningBlock")
@@ -2523,7 +2542,12 @@ class _PreallocDetailPanel(QWidget):
         # and must stay readable.
         self._ai_state_badge = ElidedLabel()
         self._ai_state_badge.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
-        self._ai_state_badge.setMinimumWidth(60)
+        # 24, not 60. Both items had a floor, so a narrow row shrank them
+        # together and the *heading* lost letters — "PODBYE ASSESSME…". The
+        # caption is the half that can be guessed from context, so it yields
+        # first. Reported when "Summary" became "Podbye's summary" (naming who
+        # wrote the text) and the extra 40px came out of the heading.
+        self._ai_state_badge.setMinimumWidth(24)
         self._ai_state_badge.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
         ai_hdr_row.addWidget(self._ai_state_badge)
         ai_hdr_row.addStretch()
@@ -2599,6 +2623,16 @@ class _PreallocDetailPanel(QWidget):
         self._btn_recycle.setCursor(Qt.PointingHandCursor)
         self._btn_recycle.clicked.connect(self._on_recycle)
         action_stack.addWidget(self._btn_recycle)
+
+        # What the button removes, stated where the button is. The row's
+        # figure is this entity's *exclusive* share — correct for totals,
+        # and not what recycling a folder takes.
+        self._scope_lbl = QLabel("")
+        self._scope_lbl.setObjectName("Dim")
+        self._scope_lbl.setWordWrap(True)
+        self._scope_lbl.setAlignment(Qt.AlignCenter)
+        self._scope_lbl.setVisible(False)
+        action_stack.addWidget(self._scope_lbl)
 
         # Built here, placed at the end of the footer row below. It is the
         # alternative route for one kind of entity, not the headline action,
@@ -2732,6 +2766,36 @@ class _PreallocDetailPanel(QWidget):
         if self._current_path:
             self._copy_cb(self._current_path)
 
+    def _state_scope(self, entity: dict, allow_recycle: bool):
+        """Say what the button takes, whenever that is more than the row says.
+
+        Silent in the ordinary case — a folder with no nested rows removes
+        exactly its own figure and a second number would be noise. It speaks
+        only where the two diverge, which is the case that was destroying
+        more than it advertised.
+        """
+        from app.models.deletion_scope import (
+            contained_bytes, excluded_paths, keeps_something_inside)
+
+        lbl = getattr(self, "_scope_lbl", None)
+        if lbl is None:
+            return
+        if not allow_recycle or not keeps_something_inside(entity):
+            lbl.setVisible(False)
+            return
+        p = get_palette()
+        lbl.setStyleSheet(
+            f"font-size: 11px; color: {p.get('text_dim', '#8a9b8f')};")
+        # Reassurance, not a warning. The figure on the button is the figure
+        # on the row; this says what stays behind and why, so a folder that
+        # survives the removal is expected rather than alarming.
+        lbl.setText(tr(
+            "{n} finding(s) inside are listed separately and will be kept "
+            "({size}).",
+            n=len(excluded_paths(entity)),
+            size=_format_size(contained_bytes(entity))))
+        lbl.setVisible(True)
+
     def _on_recycle(self):
         if self._current_entity and self._recycle_cb:
             self._recycle_cb(self._current_entity)
@@ -2823,7 +2887,9 @@ class _PreallocDetailPanel(QWidget):
             self._start_contents_walk(entity.get("path", ""),
                                       file_paths_of(entity))
         elif entity.get("path"):
-            self._start_contents_walk(entity["path"])
+            from app.models.deletion_scope import excluded_paths
+            self._start_contents_walk(entity["path"],
+                                      exclude=excluded_paths(entity))
 
     # ── Parts ─────────────────────────────────────────────────────────
 
@@ -2941,7 +3007,7 @@ class _PreallocDetailPanel(QWidget):
         """
         return tuple(e.get("path", "") for _sr, e in self._parts if e.get("path"))
 
-    def _start_contents_walk(self, path: str, file_paths=None):
+    def _start_contents_walk(self, path: str, file_paths=None, exclude=None):
         """Start measuring, with the thread deliberately unparented.
 
         Parenting it to this panel is the obvious thing and it crashes: Qt
@@ -2952,7 +3018,7 @@ class _PreallocDetailPanel(QWidget):
         suite with it). Parentless, the thread outlives the widget harmlessly
         and Qt drops the signal connection when the receiver goes.
         """
-        worker = ContentsWalkWorker(path, file_paths)
+        worker = ContentsWalkWorker(path, file_paths, exclude)
         worker.measured.connect(self._on_contents_measured)
         # Python has to hold it too: drop the last reference and PySide
         # destroys the C++ QThread, which is the same crash by another route.
@@ -3016,8 +3082,13 @@ class _PreallocDetailPanel(QWidget):
 
         is_files = contents.mode == MODE_FILES
         is_items = contents.mode == MODE_ITEMS
+        # "ITEMS" read as a breakdown of the entity, and it is not one: these
+        # are separate findings that happen to live inside, so their total is
+        # unrelated to the header's figure. Reported as Projects showing
+        # 255.4 GB above an ITEMS list of 8.7 GB. The gap is now stated by the
+        # scope line on the button; this says what the list actually is.
         self._contents_title.setText(
-            tr("ITEMS") if is_items else
+            tr("FINDINGS INSIDE") if is_items else
             tr("FILES") if is_files else tr("CONTENTS"))
 
         shown = (contents.rows if self._contents_expanded
@@ -3545,9 +3616,18 @@ class _PreallocDetailPanel(QWidget):
                 # Signpost the language so a Ukrainian explanation under an
                 # English UI reads as intentional, not a glitch.
                 ai_lang = (entity.get("ai_language") or "").strip()
+                # "Available" described whether text existed, not who wrote
+                # it — the one thing a reader needs in order to weigh it. The
+                # rule-based blocks below said "Summary" in the same style, so
+                # a model's guess and Podbye's own reasoning were
+                # indistinguishable at a glance.
                 self._ai_state_badge.setText(
-                    tr("Available · {lang}").format(lang=ai_lang) if ai_lang
-                    else tr("Available")
+                    tr("AI answer · {lang}").format(lang=ai_lang) if ai_lang
+                    # Older sessions stored the prose but predate ai_language.
+                    # Preserve that evidence verbatim; a generic "AI answer"
+                    # would make it look as though it followed today's answer
+                    # language setting when it may not have.
+                    else tr("AI answer · original language unknown")
                 )
                 self._ai_state_badge.setStyleSheet(
                     f"font-family: 'JetBrains Mono'; font-size: 11px; color: {get_palette().get('text_dim', '#8a9b8f')};"
@@ -3557,7 +3637,7 @@ class _PreallocDetailPanel(QWidget):
             elif is_duplicate:
                 # Rule-based duplicate explanation in place of AI prose.
                 self._ai_has_long_reasoning = False
-                self._ai_state_badge.setText(tr("Summary"))
+                self._ai_state_badge.setText(tr("Podbye's summary"))
                 self._ai_state_badge.setStyleSheet(
                     f"font-family: 'JetBrains Mono'; font-size: 11px; color: {get_palette().get('text_dim', '#8a9b8f')};"
                 )
@@ -3571,7 +3651,7 @@ class _PreallocDetailPanel(QWidget):
                 # Rule-based help for personal/mixed containers — what it holds
                 # and how to reclaim space without deleting the whole folder.
                 self._ai_has_long_reasoning = False
-                self._ai_state_badge.setText(tr("Summary"))
+                self._ai_state_badge.setText(tr("Podbye's summary"))
                 self._ai_state_badge.setStyleSheet(
                     f"font-family: 'JetBrains Mono'; font-size: 11px; color: {get_palette().get('text_dim', '#8a9b8f')};"
                 )
@@ -3657,6 +3737,7 @@ class _PreallocDetailPanel(QWidget):
             allow_recycle = False
         self._btn_recycle.setVisible(allow_recycle)
         self._btn_recycle.setEnabled(allow_recycle)
+        self._state_scope(entity, allow_recycle)
         # Only offer Deep Uninstall when an uninstaller actually exists. Plenty
         # of Program Files folders (WSL, gstreamer, Fortinet, vendor
         # components…) register no uninstall command.
@@ -3744,7 +3825,7 @@ class RightSidebar(QFrame):
 
         hdr = QHBoxLayout()
         hdr.setSpacing(8)
-        title = QLabel(tr("ENTITY INSPECTION"))
+        title = QLabel(tr("SELECTED ITEM"))
         apply_tactical_label(title, font_size=8, letter_spacing=1)
         hdr.addWidget(title)
         self._meta = QLabel(tr("// details"))
@@ -4591,9 +4672,7 @@ class CategoryDetailView(QFrame):
         self._list_title_lbl = QLabel(tr("APPS & FOLDERS"))
         apply_tactical_label(self._list_title_lbl, font_size=9, letter_spacing=2)
         list_hdr.addWidget(self._list_title_lbl)
-        self._list_count_lbl = QLabel(tr("// 0 visible"))
-        self._list_count_lbl.setObjectName("Muted")
-        self._list_count_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 9px;")
+        self._list_count_lbl = meta_caption(tr("// 0 visible"))
         list_hdr.addWidget(self._list_count_lbl)
         list_hdr.addStretch()
         list_outer.addLayout(list_hdr)
@@ -4672,7 +4751,7 @@ class CategoryDetailView(QFrame):
         # Footer — must be created before proxy signals are connected,
         # because setSourceModel fires modelReset immediately.
         footer = QHBoxLayout()
-        self._footer_lbl = QLabel(tr("Showing 0 of 0 entities"))
+        self._footer_lbl = QLabel(tr("Showing 0 of 0 items"))
         self._footer_lbl.setObjectName("Muted")
         self._footer_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 10px;")
         self._footer_lbl.setVisible(False)
@@ -4712,7 +4791,7 @@ class CategoryDetailView(QFrame):
         self._apply_title_color()
 
         total_size = sum(e.get("size_bytes", 0) for e in entities)
-        self._stats_lbl.setText(tr("// {n} entities · {size}",
+        self._stats_lbl.setText(tr("// {n} items · {size}",
                                    n=len(entities), size=_format_size(total_size)))
 
         ai_analyzed = sum(1 for e in entities if e.get("ai_status") in ("ready", "done"))
@@ -4720,13 +4799,14 @@ class CategoryDetailView(QFrame):
         ai_failed = sum(1 for e in entities if e.get("ai_status") in ("failed", "error"))
 
         if ai_pending:
-            msg = f"AI analyzing · {ai_pending} queued/waiting"
+            msg = tr("AI analyzing · {count} queued/waiting", count=ai_pending)
             if ai_failed:
-                msg += f" · {ai_failed} unavailable"
+                msg += " · " + tr("{count} unavailable", count=ai_failed)
         elif ai_failed:
-            msg = f"AI reviewed {ai_analyzed} item(s) · {ai_failed} unavailable"
+            msg = tr("AI reviewed {count} item(s) · {failed} unavailable",
+                     count=ai_analyzed, failed=ai_failed)
         elif ai_analyzed:
-            msg = f"AI reviewed {ai_analyzed} item(s)"
+            msg = tr("AI reviewed {count} item(s)", count=ai_analyzed)
         else:
             msg = tr("AI queue idle")
         self._ai_summary_lbl.setText(msg)
@@ -4854,7 +4934,7 @@ class CategoryDetailView(QFrame):
         show_footer = has_search or has_filter or visible != total
         self._footer_lbl.setVisible(show_footer)
         if show_footer:
-            self._footer_lbl.setText(tr("Showing {visible:,} of {total:,} entities",
+            self._footer_lbl.setText(tr("Showing {visible:,} of {total:,} items",
                                         visible=visible, total=total))
 
     def _refresh_risk_chip_styles(self):
@@ -5439,16 +5519,44 @@ class CategoryDetailView(QFrame):
             "ai_status": "none",
         }
 
+    # Every row is a real widget in one QVBoxLayout, and each one's
+    # setVisible() posts a layout request for the whole list — so the build
+    # cost grows faster than the row count. Measured on this machine:
+    #
+    #     100 rows  0.37 s      1,000 rows   3.6 s
+    #     400 rows  2.02 s      3,000 rows  15.5 s
+    #     800 rows  4.74 s      5,000 rows  33.5 s   <- _ENTITY_CAP allows this
+    #
+    # Opening the biggest category on a real drive froze the app for half a
+    # minute. Suspending updates during the loop was tried and measured
+    # *worse* (52.6 s at 5,000): Qt defers the layout requests and the flush
+    # costs more than the incremental passes.
+    #
+    # So the list renders a window of the sorted, filtered result instead of
+    # all of it. Nothing is hidden from the user's reach — the model still
+    # holds every row, search and the risk chips filter the whole set, and
+    # bulk selection acts on everything filtered rather than on what is
+    # painted. The count label says plainly that it is showing a subset.
+    _ROW_RENDER_CAP = 250
+
     def _rebuild_entity_rows(self):
         """Repopulate the left pane, reusing pooled row widgets."""
         things = self._things()
-        self._things_by_key = {t["key"]: t for t in things}
         visible = self._proxy.rowCount()
+        total_things = len(things)
+        if total_things > self._ROW_RENDER_CAP:
+            things = things[:self._ROW_RENDER_CAP]
+        self._things_by_key = {t["key"]: t for t in things}
         shown = len(things)
-        self._list_count_lbl.setText(
-            tr("// {n:,} visible", n=shown) if shown == visible
-            else tr("// {shown:,} rows · {total:,} items",
-                    shown=shown, total=visible))
+        if total_things > shown:
+            self._list_count_lbl.setText(tr(
+                "// showing {shown:,} of {total:,} — search or filter to narrow",
+                shown=shown, total=total_things))
+        else:
+            self._list_count_lbl.setText(
+                tr("// {n:,} visible", n=shown) if shown == visible
+                else tr("// {shown:,} rows · {total:,} items",
+                        shown=shown, total=visible))
 
         if not things:
             for row in self._row_pool:
@@ -5461,6 +5569,22 @@ class CategoryDetailView(QFrame):
             return
 
         self._list_empty_lbl.setVisible(False)
+        self._populate_rows(things)
+
+        if self._selected_thing_key not in self._things_by_key:
+            self._select_thing(things[0]["key"])
+        else:
+            self._rebuild_parts()
+        self._refresh_select_all_label()
+        self._update_footer()
+
+    def _populate_rows(self, things: list):
+        """Bind or build one row per thing, then hide the unused tail.
+
+        Split out so the caller can suspend layout updates around exactly this
+        loop and nothing else — the selection and footer work that follows
+        needs a live layout.
+        """
         for idx, thing in enumerate(things):
             if idx < len(self._row_pool):
                 row = self._row_pool[idx]
@@ -5481,13 +5605,6 @@ class CategoryDetailView(QFrame):
             row.set_selected(thing["key"] == self._selected_thing_key)
         for j in range(len(things), len(self._row_pool)):
             self._row_pool[j].setVisible(False)
-
-        if self._selected_thing_key not in self._things_by_key:
-            self._select_thing(things[0]["key"])
-        else:
-            self._rebuild_parts()
-        self._refresh_select_all_label()
-        self._update_footer()
 
     def _select_thing(self, key: str):
         """Open a thing in the right pane."""
@@ -5808,7 +5925,7 @@ class LoadingStateWidget(QFrame):
 
         _add_stat(0, 0, tr("GROUPED FILES"),    "_stat_grouped")
         _add_stat(0, 1, tr("UNKNOWN FILES"),    "_stat_unknown")
-        _add_stat(1, 0, tr("ENTITIES CREATED"), "_stat_entities")
+        _add_stat(1, 0, tr("ITEMS GROUPED"), "_stat_entities")
         _add_stat(1, 1, tr("COVERAGE"),         "_stat_coverage")
 
         layout.addWidget(self._stats_frame)
@@ -5861,7 +5978,7 @@ class LoadingStateWidget(QFrame):
         phase_display = {
             "filesystem":        tr("Scanning filesystem\u2026"),
             "entity_detection":  tr("Grouping into semantic categories\u2026"),
-            "ai_classification": tr("AI analyzing entities\u2026"),
+            "ai_classification": tr("AI is reading the results\u2026"),
             "error":             message or tr("An error occurred"),
         }.get(phase, message or tr("Processing\u2026"))
         self._phase_lbl.setText(phase_display)
@@ -5897,6 +6014,9 @@ class PartialResultsNotice(QFrame):
     into a category or the folder tree cannot leave it behind.
     """
 
+    _TEXT_MAX_WIDTH = 700
+    _TEXT_MIN_WIDTH = 260
+
     def __init__(self, parent=None, on_resume: Callable = None):
         super().__init__(parent)
         self.on_resume = on_resume
@@ -5905,28 +6025,60 @@ class PartialResultsNotice(QFrame):
 
     def _build_ui(self):
         row = QHBoxLayout(self)
-        row.setContentsMargins(22, 8, 22, 8)
+        row.setContentsMargins(22, 7, 22, 7)
         row.setSpacing(10)
 
         self._badge = Badge(tr("PARTIAL RESULTS"), "partial_halted")
-        row.addWidget(self._badge)
+        row.addWidget(self._badge, alignment=Qt.AlignVCenter)
 
         self._text = QLabel("")
         self._text.setObjectName("Dim")
         self._text.setWordWrap(True)
-        self._text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        row.addWidget(self._text, stretch=1)
+        # Capped rather than stretched. Given the whole width, the sentence
+        # ran to the far edge and pushed the action into the top-right corner,
+        # 9px from and 53px above "Browse by folder" — the two read as a
+        # stacked pair of corner buttons belonging to the same control group.
+        # The action belongs beside the sentence that explains it; the space
+        # left over stays empty on purpose.
+        self._text.setMaximumWidth(self._TEXT_MAX_WIDTH)
+        self._text_cap = self._TEXT_MAX_WIDTH
+        self._text.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        # stretch=1 against the trailing addStretch(0): the sentence grows
+        # into the space it has until the cap stops it, and the leftover goes
+        # to the spacer instead of to the label.
+        row.addWidget(self._text, stretch=1, alignment=Qt.AlignVCenter)
 
         self._resume_btn = QPushButton(tr("Resume analysis"))
         self._resume_btn.setObjectName("Subtle")
         self._resume_btn.setCursor(Qt.PointingHandCursor)
-        self._resume_btn.setMinimumHeight(26)
+        # A strip, not a dialog: the 44px this inherited made the notice as
+        # tall as the section header under it.
+        self._resume_btn.setFixedHeight(26)
+        self._resume_btn.setStyleSheet("padding: 0px 12px; font-size: 11px;")
         if self.on_resume:
             self._resume_btn.clicked.connect(self.on_resume)
-        row.addWidget(self._resume_btn)
+        row.addWidget(self._resume_btn, alignment=Qt.AlignVCenter)
+
+        row.addStretch(0)
 
         self.set_counts(0, "")
         self.apply_style()
+
+    def resizeEvent(self, event):
+        """Keep the action in the left half at every width.
+
+        A fixed cap is not enough. At the 1100px minimum window the sentence
+        still filled the row and pushed Resume to the right edge, landing 2px
+        from "Browse by folder" in the header below — the same stacked-corner
+        pair the fixed cap was meant to break up, just at a narrower window.
+        Tying the cap to the width keeps a gap at the right on any monitor.
+        """
+        super().resizeEvent(event)
+        cap = max(self._TEXT_MIN_WIDTH,
+                  min(self._TEXT_MAX_WIDTH, int(self.width() * 0.38)))
+        if cap != self._text_cap:
+            self._text_cap = cap
+            self._text.setMaximumWidth(cap)
 
     def apply_style(self):
         p = get_palette()

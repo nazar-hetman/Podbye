@@ -1,8 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for Podbye — single-file windowed Windows build.
+"""PyInstaller spec for the Podbye windowed Windows bundle.
 
 Build:  .venv\\Scripts\\python.exe -m PyInstaller --noconfirm podbye.spec
-Output: dist\\Podbye.exe
+Output: dist\\Podbye\\Podbye.exe
 """
 import os
 

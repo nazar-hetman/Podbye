@@ -51,9 +51,9 @@ def test_a_structural_path_segment_names_nobody(path, name):
 
 
 def test_the_username_is_not_evidence():
-    apps = _registry("Nazar Studio Pro")
+    apps = _registry("ExampleUser Studio Pro")
     assert ed._find_related_app(
-        "C:/Users/Nazar/AppData/Local/Whatever/x.db", "x.db", apps) == ""
+        "C:/Users/ExampleUser/AppData/Local/Whatever/x.db", "x.db", apps) == ""
 
 
 # ── attribution that is actually earned ───────────────────────────

@@ -77,7 +77,7 @@ _register("Fonts", ".ttf", ".otf", ".woff", ".woff2", ".eot")
 # A shortcut is a few hundred bytes pointing somewhere else. They pile up on
 # a Desktop and read as clutter, which is exactly a thing to decide about.
 _register("Shortcuts", ".lnk", ".url", ".rdp", ".appref-ms", ".desktop")
-# Mapping and survey data. Nazar's secondary drive is largely drone/GIS work,
+# Mapping and survey data on a representative secondary drive is largely drone/GIS work,
 # so these are content, not noise -- see the secondary-drive note.
 _register("Map & survey data", ".kml", ".kmz", ".gpx", ".waypoints", ".mission",
           ".las", ".laz", ".ply", ".e57", ".shp", ".shx", ".dbf", ".geojson",

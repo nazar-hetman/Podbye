@@ -1,6 +1,6 @@
 """Paths the user has marked **Keep** — never selected, never deleted.
 
-Asked for directly: *"I need irizi focus — I'm adding it to protected state. If
+Asked for directly: *"I need Example Project — I'm adding it to protected state. If
 I click select all, it won't be selected."*
 
 Podbye already has a Protected tier, but that one is Podbye's own judgement about
@@ -14,7 +14,7 @@ Three properties follow from that:
   beside the other settings, so they survive a rescan, a restart, and clearing
   the session store.
 * **It covers the subtree.** People keep a *project*, not a file list. Marking
-  ``E:/Irizi Focus`` keeps everything under it, including entities that did not
+  ``E:/Example Project`` keeps everything under it, including entities that did not
   exist when the mark was made.
 * **It is enforced at the bottom, not the top.** The UI hides the buttons and
   skips the row in select-all, and ``cleanup_engine`` refuses the path anyway —
@@ -78,7 +78,7 @@ def _read() -> list[str]:
     """The stored paths, as the user gave them.
 
     Kept as typed rather than normalised: this list is shown back to them in
-    Settings, and "E:/Irizi Focus" turning into "e:/irizi focus" reads as
+    Settings, and "E:/Example Project" turning into "e:/example project" reads as
     Podbye having mangled something. Comparison normalises both sides instead.
     """
     raw = _ensure_store().get(_SETTING, []) or []

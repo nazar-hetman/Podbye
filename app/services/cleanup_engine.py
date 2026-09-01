@@ -82,6 +82,11 @@ class CleanupResult:
     # so they are gone for good. Subset of `succeeded` — the removal did work,
     # it just was not recoverable. Callers must not describe these as restorable.
     not_recycled: list = field(default_factory=list)
+    # Paths deliberately left alone because the Recycle Bin would not have
+    # taken them, so honouring the request would have meant destroying them.
+    # Nothing here was touched: it is a refusal, not a failure and not a
+    # removal. path -> reason ("too_large" | "bin_disabled").
+    skipped_not_recyclable: dict = field(default_factory=dict)
     total_bytes_freed: int = 0
     errors_by_path: dict = field(default_factory=dict)     # path → error string
     error_codes_by_path: dict = field(default_factory=dict)  # path → parsed Windows error code
@@ -235,6 +240,26 @@ def _bin_size_for(path: str) -> Optional[int]:
     return None if (size == 0 and count == 0) else size
 
 
+def _refuses_to_recycle(path: str, size: int) -> str:
+    """Why the bin would not take *path*, or "".
+
+    Asked before anything is deleted. SHFileOperationW is given
+    FOF_NOCONFIRMATION, and Windows answers a request it cannot satisfy by
+    destroying the file: an item over the volume's quota, or any item on a
+    volume with NukeOnDelete set, is removed permanently and the call still
+    reports success. A user who chose the Recycle Bin has not agreed to that,
+    so the item is skipped instead and reported.
+
+    An unreadable policy returns "" — the machine keeps working as it always
+    did, and the post-hoc verification below still catches what it can.
+    """
+    try:
+        from app.services.recycle_bin import recycle_bin_policy
+        return recycle_bin_policy(path).refuses(size)
+    except Exception:
+        return ""
+
+
 def move_to_recycle_bin(paths: list) -> CleanupResult:
     """Move each path to the Windows Recycle Bin.
 
@@ -258,6 +283,10 @@ def move_to_recycle_bin(paths: list) -> CleanupResult:
             result.skipped_kept.append(path)
             continue
         size = _get_size(path)
+        refusal = _refuses_to_recycle(path, size)
+        if refusal:
+            result.skipped_not_recyclable[path] = refusal
+            continue
         verify = size >= _VERIFY_RECYCLED_MIN_BYTES
         bin_before = _bin_size_for(path) if verify else None
         err = _recycle_one(path)
@@ -341,18 +370,45 @@ class CleanupWorker(QThread):
     MODE_PERMANENT = "permanent"
 
     def __init__(self, paths: list, mode: str = MODE_RECYCLE,
-                 perm_delete_enabled: bool = False, parent=None):
+                 perm_delete_enabled: bool = False, parent=None,
+                 exclude_by_path: dict | None = None):
         super().__init__(parent)
         self._paths = list(paths)
         self._mode = mode
         self._perm_delete_enabled = perm_delete_enabled
+        # {folder: [paths inside it owned by another finding]}. Expanded in
+        # run(), on this thread: it is a directory walk, and doing it in the
+        # confirm dialog's constructor froze the UI for 2.8 s on a 23k-file
+        # tree between the click and the dialog appearing.
+        self._exclude_by_path = dict(exclude_by_path or {})
         self._cancel = False
+
+    def _expanded_paths(self) -> list:
+        """Replace each folder that holds another finding with the parts it
+        owns. Runs on the worker thread."""
+        if not self._exclude_by_path:
+            return list(self._paths)
+        from app.models.deletion_scope import expand_targets
+
+        out = []
+        for path in self._paths:
+            keep = self._exclude_by_path.get(path)
+            if not keep:
+                out.append(path)
+                continue
+            owned = expand_targets(path, keep)
+            self.log_line.emit(
+                f"[cleanup] {os.path.basename(path) or path}: "
+                f"{len(owned)} part(s), keeping {len(keep)} nested finding(s)")
+            out.extend(owned)
+        return out
 
     def cancel(self):
         self._cancel = True
 
     def run(self):
         result = CleanupResult()
+        self._paths = self._expanded_paths()
         total = len(self._paths)
         mode_label = "Recycle Bin" if self._mode == self.MODE_RECYCLE else "permanent delete"
         self.log_line.emit(f"[cleanup] moving {total} item(s) → {mode_label}...")
@@ -379,9 +435,20 @@ class CleanupWorker(QThread):
                     continue
                 err = _delete_one(path)
             else:
-                # See move_to_recycle_bin: a large item can be deleted outright
-                # when it does not fit the bin's quota, and the API still
-                # reports success. Verify the big ones actually landed.
+                # Refuse before removing. The Recycle Bin cannot take this
+                # one, and Windows would delete it outright rather than say
+                # so — which is not what "Move to Recycle Bin" asked for.
+                refusal = _refuses_to_recycle(path, size)
+                if refusal:
+                    result.skipped_not_recyclable[path] = refusal
+                    self.log_line.emit(
+                        f"[cleanup] skipped (kept on disk): "
+                        f"{os.path.basename(path)} — the Recycle Bin would not "
+                        f"take it, so removing it would have been permanent")
+                    continue
+                # A large item can still be deleted outright when the quota
+                # could not be read, and the API reports success either way.
+                # Verify the big ones actually landed.
                 verify = size >= _VERIFY_RECYCLED_MIN_BYTES
                 bin_before = _bin_size_for(path) if verify else None
                 err = _recycle_one(path)

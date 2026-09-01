@@ -8,12 +8,16 @@ word naming no unit.
 import time
 
 import pytest
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QLabel, QPushButton
 
 import app.screens.history as H
+from app.fonts import FONT_UI, load_fonts
+from app.i18n import set_language
 from app.screens.history import _cleanup_status
 from app.state import session_store as ss
 from app.themes import theme_manager as tm
+from app.widgets.controls import ElidedLabel
 
 
 def _rec(ok=10, in_use=0, failed=0, skipped=0, state=None):
@@ -158,7 +162,10 @@ def test_the_cleanup_panel_opens_on_what_was_cleaned(screen, qapp):
     screen._toggle_cleanup_detail(2)
     qapp.processEvents()
     keys = _metric_keys(screen._cleanup_detail_widget)
-    assert keys[:3] == ["CLEANED", "ITEMS", "NOT REMOVED"]
+    # RECYCLED, not CLEANED: this record's mode is recycle_bin, and moving a
+    # file to the bin on the same volume frees nothing until the bin is
+    # emptied. A permanent delete still says CLEANED.
+    assert keys[:3] == ["RECYCLED", "ITEMS", "NOT REMOVED"]
     assert "IMPACT" not in keys and "RESULT" not in keys
     # "ATTENTION" counted protected paths Podbye had correctly refused to
     # touch, so a run that did exactly the right thing reported 170 of them.
@@ -220,3 +227,94 @@ def test_the_detail_panel_sits_below_the_table_surface(screen):
         p = tm.get_palette()
         assert p["tint_bg"] in area.styleSheet()
         assert p["panel_alt"] not in area.styleSheet()
+
+
+# ── Ukrainian presentation of stored session values ───────────────
+
+def _visible_texts(widget):
+    labels = [label.text() for label in widget.findChildren(QLabel)
+              if label.isVisibleTo(widget) and label.text().strip()]
+    buttons = [button.text() for button in widget.findChildren(QPushButton)
+               if button.isVisibleTo(widget) and button.text().strip()]
+    return labels + buttons
+
+
+def _fit_faults(widget):
+    faults = []
+    for label in widget.findChildren(QLabel):
+        if (not label.isVisibleTo(widget) or isinstance(label, ElidedLabel)
+                or not label.text().strip()):
+            continue
+        if label.wordWrap():
+            if label.heightForWidth(label.width()) > label.height() + 1:
+                faults.append(label.text())
+        elif label.sizeHint().width() > label.width() + 1:
+            faults.append(label.text())
+    for button in widget.findChildren(QPushButton):
+        if button.isVisibleTo(widget) and button.sizeHint().width() > button.width() + 1:
+            faults.append(button.text())
+    return faults
+
+
+def test_ukrainian_history_localizes_known_stored_values_and_preserves_paths(qapp, monkeypatch):
+    """Targets, modes, and category ids are persisted in English.
+
+    Scope and mode are product vocabulary, so they render in the selected UI
+    language. A filesystem path is user data and must remain exactly stored.
+    """
+    previous_font = qapp.font()
+    load_fonts()
+    qapp.setFont(QFont(FONT_UI, 10))
+    set_language("Ukrainian")
+    monkeypatch.setattr(ss, "load_cleanup_records", lambda: [_rec(8, 0, 2, state="partial")])
+    monkeypatch.setattr(ss, "load_history", lambda: [{
+        "session_id": "all", "start_time": time.time(), "saved_at": time.time() + 60,
+        "target": "All drives", "scan_mode": "smart", "status": "stopped",
+        "display_count": 1_311, "total_size": 3_708_845,
+        "risk_totals": {"Review": 838, "Protected": 52, "Optional": 59},
+        "category_totals": {"Images": {"count": 1311, "size_bytes": 3_708_845}},
+    }, {
+        "session_id": "path", "start_time": time.time(), "saved_at": time.time() + 60,
+        "target": "D:/Projects/Podbye", "scan_mode": "all", "status": "completed",
+        "display_count": 4, "total_size": 20, "risk_totals": {}, "category_totals": {},
+    }])
+    screen = H.HistoryScreen()
+    screen.resize(1100, 700)
+    screen.refresh()
+    screen.show()
+    for _ in range(8):
+        qapp.processEvents()
+    try:
+        screen._toggle_sess_detail(0)
+        for _ in range(8):
+            qapp.processEvents()
+        text = "\n".join(_visible_texts(screen))
+        assert "Усі диски" in text and "All drives" not in text
+        assert "Адаптивний аналіз" in text
+        assert "Зупинено (частково)" in text
+        assert "Images" in text and "Зображення" not in text
+        assert "на перевірку: 838 · захищених: 52 · необов’язкових: 59" in text
+        assert "Повторити аналіз" in text
+        assert "сканувань:" not in text and "аналізів:" in text
+        assert _fit_faults(screen._sess_detail_widget) == []
+
+        # The table still contains an untouched actual path from the same
+        # stored index; only semantic values are passed through tr().
+        assert screen._sess_table.item(1, 1).toolTip() == "D:/Projects/Podbye"
+    finally:
+        screen.deleteLater()
+        qapp.processEvents()
+        set_language("English")
+        qapp.setFont(previous_font)
+
+
+def test_new_partly_successful_cleanup_is_stored_as_partial(tmp_path, monkeypatch):
+    """A saved result must not turn a partly successful cleanup into Attention."""
+    from app.services.cleanup_engine import CleanupResult
+
+    monkeypatch.setattr(ss, "_sessions_dir", lambda: tmp_path)
+    result = CleanupResult(succeeded=["C:/ok"], failed=["C:/failed"])
+    assert ss.save_cleanup_record("s", [], result, "recycle_bin")
+    record = ss.load_cleanup_records()[0]
+    assert record["result_state"] == "partial"
+    assert _cleanup_status(record)[0] == "Partial"

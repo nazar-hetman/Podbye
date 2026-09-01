@@ -2,7 +2,7 @@
 
 Measured on a real All-drives scan: 1,241 rows, of which Discord was 23 and
 AppData/Local/Packages about 120. Grouping exists so a user can act on those at
-once. What it must never do is hide anything — Nazar's call was explicitly that
+once. What it must never do is hide anything — ExampleUser's call was explicitly that
 small items stay reachable, because tidying them is something he wants to do.
 
 The shape of the answer changed on 2026-08-24 (see test_two_pane_findings):

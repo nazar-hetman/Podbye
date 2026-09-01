@@ -298,7 +298,7 @@ _MAX_ROWS = 6
 
 
 def walk_contents(root: str, budget_ms: int = DEFAULT_BUDGET_MS,
-                  rules=None, should_stop=None) -> Contents:
+                  rules=None, should_stop=None, exclude=None) -> Contents:
     """Measure what is inside *root*, one level down, rules applied.
 
     Buckets by the deepest matching rule, falling back to the top-level child
@@ -340,6 +340,12 @@ def walk_contents(root: str, budget_ms: int = DEFAULT_BUDGET_MS,
     if not root_norm or not os.path.isdir(root):
         return Contents()
 
+    # Findings nested inside this one are owned by their own row and are not
+    # removed with it, so they are not part of what this section describes.
+    # Without this the section measured the physical folder and its total
+    # disagreed with every other number for the same finding.
+    skip = {p.replace("\\", "/").rstrip("/").lower() for p in (exclude or []) if p}
+
     # (absolute path, path relative to root, the top-level child it is under)
     stack = [(root, "", "")]
     while stack:
@@ -354,6 +360,8 @@ def walk_contents(root: str, budget_ms: int = DEFAULT_BUDGET_MS,
         for entry in entries:
             child_rel = f"{relative}/{entry.name}".strip("/")
             child_top = top or entry.name
+            if skip and entry.path.replace("\\", "/").rstrip("/").lower() in skip:
+                continue
             try:
                 is_dir = entry.is_dir(follow_symlinks=False)
             except OSError:

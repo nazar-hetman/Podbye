@@ -94,7 +94,7 @@ def build_tree(entities: list[dict]) -> PathNode:
 
 
 def collapse_single_child_chains(node: PathNode, _depth: int = 0) -> PathNode:
-    """Fold ``C: → Users → Nazar → AppData → Roaming`` into one row.
+    """Fold ``C: → Users → ExampleUser → AppData → Roaming`` into one row.
 
     A chain of folders with one child each carries no information and costs
     five clicks to walk. Explorer-style breadcrumbs do the same thing. The
