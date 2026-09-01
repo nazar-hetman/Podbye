@@ -437,7 +437,7 @@ class StartupListRow(QFrame):
         center.setSpacing(3)
 
         # Same reasoning as the meta line below. Real entry names run to
-        # "OneDrive Startup Task-S-1-5-21-3897710897-..." - one unbreakable
+        # "OneDrive Startup Task-S-1-5-21-1111111111-..." - one unbreakable
         # token far wider than any row - and an Ignored policy on a plain
         # QLabel let the layout cut it off mid-word with nothing to show for
         # it. The head of the name is the identifying part.
@@ -705,7 +705,7 @@ class StartupInspectorPanel(QFrame):
         # Elided, not wrapped. Wrapping was the previous attempt at the same
         # problem and could not work: a wrapping QLabel reports its longest
         # unbreakable word as its *minimum* width, and these names are one
-        # token — "OneDrive Startup Task-S-1-5-21-3897710897-…" asks for 405px,
+        # token — "OneDrive Startup Task-S-1-5-21-1111111111-…" asks for 405px,
         # which pushed the panel to 576px inside a 533px viewport and cut every
         # line in it at the right edge.
         self._name_lbl = ElidedLabel(tr("Select a startup entry"),

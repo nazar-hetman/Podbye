@@ -2275,7 +2275,7 @@ class _PreallocDetailPanel(QWidget):
 
         # Elided, not wrapped. A wrapping QLabel reports its longest
         # unbreakable word as its *minimum* width, and an entity name is often
-        # one token — "OneDrive Startup Task-S-1-5-21-3897710897-…" asks for
+        # one token — "OneDrive Startup Task-S-1-5-21-1111111111-…" asks for
         # 405px. The panel's minimum went to 567px inside a 533px viewport with
         # horizontal scrolling off, so every line in the inspector was cut at
         # the right edge. Elided in the middle keeps the head and the tail,

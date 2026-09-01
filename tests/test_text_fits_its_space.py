@@ -30,7 +30,7 @@ from app.themes.theme_manager import build_qss
 from app.widgets.controls import ElidedLabel
 
 
-LONG_NAME = "OneDrive Startup Task-S-1-5-21-3897710897-563188546-1453878363-1001"
+LONG_NAME = "OneDrive Startup Task-S-1-5-21-1111111111-222222222-3333333333-1001"
 LONG_PATH = ("C:/Users/ExampleUser/AppData/Local/Programs/SomeVendor/Application"
              "/resources/app.asar.unpacked/node_modules/@scope/package/dist")
 LONG_PROSE = ("This program registers a helper that starts with the session and "
