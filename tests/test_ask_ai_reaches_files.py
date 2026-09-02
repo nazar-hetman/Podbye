@@ -10,6 +10,7 @@ listing, which were never findings at all.
 import os
 
 import pytest
+from PySide6.QtCore import QObject, Signal
 
 from app.screens.findings_dashboard import _finding_for_path
 
@@ -59,8 +60,14 @@ def test_ask_ai_on_a_restored_session_still_opens(qapp, tmp_path, monkeypatch):
 
     asked = {}
 
-    class _StubDialog:
+    class _StubDialog(QObject):
+        # A QObject with the real signal: the view connects
+        # ai_settings_requested through to its own before exec(), so a plain
+        # object stops standing in for the dialog the moment that exists.
+        ai_settings_requested = Signal()
+
         def __init__(self, item, explainer, parent=None, facts=None):
+            super().__init__()
             asked["item"] = item
             asked["facts"] = facts
 

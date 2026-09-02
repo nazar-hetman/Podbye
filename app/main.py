@@ -261,6 +261,7 @@ class PodbyeWindow(QMainWindow):
         # Same handler as the Home screen's Resume Scan: one resume flow,
         # reached from wherever a stopped run is visible.
         findings.resume_requested.connect(self._on_resume_requested)
+        findings.ai_settings_requested.connect(self._navigate_to_ai_settings)
 
         analyze_screen = self._screens["Analyze"]
         analyze_screen.category_clicked.connect(
@@ -622,6 +623,18 @@ class PodbyeWindow(QMainWindow):
         findings = self._screens.get("Findings")
         if findings and hasattr(findings, 'open_category'):
             findings.open_category(category)
+
+    def _navigate_to_ai_settings(self):
+        """Open Settings on the AI section.
+
+        Ask AI's no-model state offers this. Settings has six sections, so
+        landing on General would leave the user hunting for the one setting
+        they were just told to change.
+        """
+        self._navigate("Settings")
+        settings = self._screens.get("Settings")
+        if settings and hasattr(settings, "open_section"):
+            settings.open_section("ai")
 
     # ── Background / tray ─────────────────────────────────────────
 

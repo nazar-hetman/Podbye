@@ -4505,6 +4505,11 @@ class FolderTreeView(QFrame):
 class CategoryDetailView(QFrame):
     """Category drill-down using a calmer list with right-side inspection."""
 
+    #: Raised by the Ask AI dialog when no model is configured. Forwarded to
+    #: the dashboard and on to the shell, which is the only object that knows
+    #: where Settings is.
+    ai_settings_requested = Signal()
+
     def __init__(self, parent=None, on_back: Callable = None):
         super().__init__(parent)
         self.on_back = on_back
@@ -5263,7 +5268,9 @@ class CategoryDetailView(QFrame):
         # Stamp the session so the streamed result isn't discarded as stale.
         ai._session_id = getattr(self._scan_state, "_session_id", "")
         from app.widgets.ask_ai_dialog import AskAIDialog
-        AskAIDialog(live, ai, parent=self, facts=facts).exec()
+        dialog = AskAIDialog(live, ai, parent=self, facts=facts)
+        dialog.ai_settings_requested.connect(self.ai_settings_requested)
+        dialog.exec()
 
     # ── Selection & cleanup ───────────────────────────────────────
 
@@ -6283,6 +6290,10 @@ class FindingsDashboard(QWidget):
     # data this screen is offering to keep.
     resume_requested = Signal(dict)
 
+    # Ask AI has nothing to ask until a model is chosen, and says so. This
+    # carries the offer to go and choose one out to main.py.
+    ai_settings_requested = Signal()
+
     def __init__(self, scan_state=None, parent=None):
         super().__init__(parent)
         self._scan_state = scan_state
@@ -6397,6 +6408,8 @@ class FindingsDashboard(QWidget):
 
         # View 5: Category detail
         self._category_view = CategoryDetailView(on_back=self._on_back_to_dashboard)
+        self._category_view.ai_settings_requested.connect(
+            self.ai_settings_requested)
         self._stack.addWidget(self._category_view)
 
         # View 6: By folder — the escape hatch when a classification is wrong.

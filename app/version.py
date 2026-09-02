@@ -21,6 +21,14 @@ BUILD = "2026.08"
 REPO_URL = "https://github.com/nazar-hetman/Podbye"
 RELEASES_URL = f"{REPO_URL}/releases"
 
+# The two local runtimes Podbye can talk to, for the one state where the user
+# has neither and the app would otherwise say "install one" and stop helping.
+# Same rule as above: these are handed to the system browser and never fetched.
+# Official download pages only — a link Podbye offers has to be one the user
+# would have found themselves, not a mirror or a direct binary.
+OLLAMA_URL = "https://ollama.com/download"
+LM_STUDIO_URL = "https://lmstudio.ai"
+
 
 def short_version() -> str:
     """Compact form for the sidebar wordmark, e.g. 'v1.0.0-beta.2'."""

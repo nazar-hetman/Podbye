@@ -6,7 +6,7 @@ the answer streams back asynchronously via ``AIExplainer.finding_updated``.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit,
 )
@@ -20,6 +20,10 @@ class AskAIDialog(QDialog):
     The dialog holds the *live* Finding/SmartEntity so the explainer's result
     lands on the same object the rest of the UI reads from.
     """
+
+    #: Asked for when no model is configured. The shell answers it by opening
+    #: Settings on the AI section; the dialog does not know where that is.
+    ai_settings_requested = Signal()
 
     def __init__(self, item, explainer, parent=None, facts: dict | None = None):
         super().__init__(parent)
@@ -77,6 +81,15 @@ class AskAIDialog(QDialog):
         self._btn_again.setVisible(False)
         self._btn_again.clicked.connect(self._on_ask_again)
         btn_row.addWidget(self._btn_again)
+
+        # Shown only in the no-model state. "Select an AI model in Settings"
+        # named the destination and left the user to find it — Settings has
+        # six sections and the model lives in one of them.
+        self._btn_ai_settings = QPushButton(tr("Open AI Settings"))
+        self._btn_ai_settings.setCursor(Qt.PointingHandCursor)
+        self._btn_ai_settings.setVisible(False)
+        self._btn_ai_settings.clicked.connect(self._on_open_ai_settings)
+        btn_row.addWidget(self._btn_ai_settings)
         btn_row.addStretch()
         self._btn_close = QPushButton(tr("Close"))
         self._btn_close.setCursor(Qt.PointingHandCursor)
@@ -102,9 +115,7 @@ class AskAIDialog(QDialog):
         reason = self._explainer.explain_item(self._item, facts=self._facts)
         if reason == "no-model":
             self._disconnect()
-            self._status.setText(
-                tr("Select an AI model in Settings to use Ask AI.")
-            )
+            self._show_no_model()
             return
         self._status.setText(tr("Analyzing…"))
 
@@ -134,8 +145,23 @@ class AskAIDialog(QDialog):
         if reason == "no-model":
             self._disconnect()
             self._btn_again.setEnabled(True)
-            self._status.setText(
-                tr("Select an AI model in Settings to use Ask AI."))
+            self._show_no_model()
+
+    def _show_no_model(self):
+        """Both request paths land here: nothing was asked, and why."""
+        self._status.setText(
+            tr("Select an AI model in Settings to use Ask AI."))
+        self._btn_ai_settings.setVisible(True)
+
+    def _on_open_ai_settings(self):
+        """Close, then ask the shell to open Settings on the AI section.
+
+        The dialog is modal, so it has to be out of the way before anything
+        behind it is worth looking at. accept() rather than reject(): the user
+        asked for something and is getting it.
+        """
+        self.accept()
+        self.ai_settings_requested.emit()
 
     def _show_answer(self, text: str):
         self._disconnect()

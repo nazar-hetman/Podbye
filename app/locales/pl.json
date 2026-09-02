@@ -48,8 +48,6 @@
   "Apply": "Zastosuj",
   "Save changes": "Zapisz zmiany",
   "Delete": "Usuń",
-  "Delete from history": "Usuń z historii",
-  "Delete session": "Usuń sesję",
   "Confirm": "Potwierdź",
   "Back": "Wstecz",
   "Next": "Dalej",
@@ -388,7 +386,6 @@
   "Opening session…": "Otwieranie sesji…",
   "Not found": "Nie znaleziono",
   "Full session data is unavailable.": "Pełne dane sesji są niedostępne.",
-  "Remove this session from history? This cannot be undone.": "Usunąć tę sesję z historii? Tej operacji nie można cofnąć.",
   "Window": "Okno",
   "Podbye can ask, keep working in the system tray, or stop and quit.": "Podbye może zapytać, działać dalej w zasobniku systemowym albo zatrzymać pracę i zakończyć działanie.",
   "Local finds a model server already running on this machine — Ollama, LM Studio or llama.cpp — on its usual port. Server points Podbye at another machine on your network (LAN addresses only).": "Tryb lokalny wyszukuje Ollama, LM Studio lub llama.cpp na tym komputerze. Tryb serwera łączy Podbye z innym komputerem w sieci lokalnej.",
@@ -588,9 +585,7 @@
   "Reasoning will appear when analysis finishes.": "Uzasadnienie pojawi się po zakończeniu analizy.",
   "No AI reasoning yet — click Ask AI to explain this item.": "Nie ma jeszcze uzasadnienia AI — kliknij „Zapytaj AI”, aby wyjaśnić ten element.",
   "Select an AI model in Settings to use Ask AI.": "Wybierz model AI w Ustawieniach, aby użyć opcji „Zapytaj AI”.",
-  "Install Ollama or LM Studio, then press Test. Podbye only ever talks to your own machine or LAN.": "Zainstaluj Ollama lub LM Studio, a następnie kliknij Testuj. Podbye łączy się tylko z Twoim komputerem lub siecią lokalną.",
   "Check the machine is on, the runtime is running, and that it listens on the network rather than only on its own loopback.": "Sprawdź, czy komputer i środowisko uruchomieniowe działają oraz czy nasłuchuje ono w sieci, a nie tylko na localhost.",
-  "The server is running but has no models yet. Pull one, for example:  ollama pull llama3.2:3b": "Serwer działa, ale nie ma jeszcze modeli. Pobierz model, na przykład: ollama pull llama3.2:3b",
   "LM Studio is running but no model is loaded. Load one in its Developer tab, then press Test.": "LM Studio działa, ale nie załadowano modelu. Załaduj go na karcie Developer, a potem kliknij Testuj.",
   "could not start Ollama": "nie można uruchomić Ollama",
   "starting Ollama…": "uruchamianie Ollama…",
@@ -922,5 +917,10 @@
   "Settings could not be saved. Check access to {path}.": "Nie udało się zapisać ustawień. Sprawdź dostęp do {path}.",
   "Reset unavailable": "Nie można teraz zresetować ustawień",
   "Wait for current background work to finish before resetting settings.": "Poczekaj na zakończenie bieżącej pracy w tle, zanim zresetujesz ustawienia.",
-  "This folder holds several separate projects, so there is nothing here to remove as one piece. Open a project inside and decide about it on its own.": "Ten folder zawiera kilka osobnych projektów, więc nie ma tu nic do usunięcia jako całość. Otwórz projekt w środku i zdecyduj o nim osobno."
+  "This folder holds several separate projects, so there is nothing here to remove as one piece. Open a project inside and decide about it on its own.": "Ten folder zawiera kilka osobnych projektów, więc nie ma tu nic do usunięcia jako całość. Otwórz projekt w środku i zdecyduj o nim osobno.",
+  "Get Ollama": "Pobierz Ollama",
+  "Get LM Studio": "Pobierz LM Studio",
+  "Open AI Settings": "Otwórz ustawienia AI",
+  "Podbye needs one of these installed to explain anything. The buttons open their official sites in your browser — install either one, then press Test. Podbye only ever talks to your own machine or LAN.": "Podbye potrzebuje jednego z nich, aby cokolwiek wyjaśnić. Przyciski otwierają ich oficjalne strony w przeglądarce — zainstaluj dowolny z nich, a następnie naciśnij Testuj. Podbye łączy się wyłącznie z tym komputerem lub siecią lokalną.",
+  "The server is running but has no models yet. Open Terminal or PowerShell and run this command there — it is not something to type into Podbye:  ollama pull llama3.2:3b": "Serwer działa, ale nie ma jeszcze żadnych modeli. Otwórz Terminal lub PowerShell i uruchom to polecenie tam — nie wpisuj go w Podbye:  ollama pull llama3.2:3b"
 }

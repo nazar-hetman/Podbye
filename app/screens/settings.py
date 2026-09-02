@@ -649,6 +649,18 @@ class SettingsScreen(QWidget):
         # Default to General
         self._switch_section("general")
 
+    def open_section(self, sec_id: str):
+        """Show one settings section by id, for callers outside this screen.
+
+        Ask AI's "no model configured" state offers a way here, and landing on
+        General and leaving the user to find the AI tab is most of the problem
+        it was meant to solve. An unknown id is ignored rather than raising:
+        the caller is a UI action, and a wrong id should not take the window
+        down.
+        """
+        if sec_id in dict(_SECTIONS):
+            self._switch_section(sec_id)
+
     def _switch_section(self, sec_id: str):
         """Switch active section in nav rail and stacked widget."""
         for sid, btn in self._nav_btns.items():
@@ -787,6 +799,8 @@ class SettingsScreen(QWidget):
         return scroll
 
     def _build_ai(self) -> QWidget:
+        from app.version import LM_STUDIO_URL, OLLAMA_URL
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -878,6 +892,28 @@ class SettingsScreen(QWidget):
         self._btn_start_ollama.setVisible(False)
         self._btn_start_ollama.clicked.connect(self._start_ollama)
         conn_top.addWidget(self._btn_start_ollama)
+
+        # The one state the app used to abandon the user in. "Install Ollama or
+        # LM Studio" is correct and useless on its own: the reader who needs
+        # that sentence is exactly the reader who does not know where either
+        # lives, and Podbye offered nothing to click. These open the official
+        # download pages in the system browser and do nothing else — no
+        # download, no installer, no version check. Same guarantee as About's
+        # links, and the tooltip shows the address before it is opened.
+        self._runtime_links = []
+        for label, url in ((tr("Get Ollama"), OLLAMA_URL),
+                           (tr("Get LM Studio"), LM_STUDIO_URL)):
+            btn = QPushButton(label)
+            btn.setObjectName("Ghost")
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setMinimumHeight(_ACTION_HEIGHT)
+            btn.setStyleSheet(self._utility_btn_qss())
+            btn.setToolTip(url)
+            btn.setVisible(False)
+            btn.clicked.connect(lambda _=False, u=url: self._open_external(u))
+            conn_top.addWidget(btn)
+            self._runtime_links.append(btn)
+
         conn_top.addStretch()
         conn_v.addLayout(conn_top)
 
@@ -1676,8 +1712,12 @@ class SettingsScreen(QWidget):
             hint = (tr("LM Studio is running but no model is loaded. "
                        "Load one in its Developer tab, then press Test.")
                     if backend == oc.BACKEND_OPENAI else
-                    tr("The server is running but has no models yet. "
-                       "Pull one, for example:  ollama pull llama3.2:3b"))
+                    # Spelled out as a command for a terminal, because it read
+                    # as a value to paste into the Endpoint field above it.
+                    tr("The server is running but has no models yet. Open "
+                       "Terminal or PowerShell and run this command there — "
+                       "it is not something to type into Podbye:  "
+                       "ollama pull llama3.2:3b"))
             return (tr("connected · {backend} · no models installed", backend=label),
                     "review", hint)
         if status == oc.STATUS_NOT_RUNNING:
@@ -1686,7 +1726,9 @@ class SettingsScreen(QWidget):
                        "nothing here needs to be filled in."))
         if status == oc.STATUS_NOT_INSTALLED:
             return (tr("no local AI runtime on this machine"), "risk",
-                    tr("Install Ollama or LM Studio, then press Test. "
+                    tr("Podbye needs one of these installed to explain "
+                       "anything. The buttons open their official sites in "
+                       "your browser — install either one, then press Test. "
                        "Podbye only ever talks to your own machine or LAN."))
         if status == oc.STATUS_UNREACHABLE:
             return (tr("no answer from that address"), "risk",
@@ -1728,6 +1770,12 @@ class SettingsScreen(QWidget):
         self._ollama_exe = runtime_path
         self._btn_start_ollama.setVisible(status == oc.STATUS_NOT_RUNNING
                                           and bool(runtime_path))
+
+        # Only where there is nothing to talk to. Offering "Get Ollama" beside
+        # a connected server, or beside one that is merely stopped, would tell
+        # the user to install what they already have.
+        for btn in getattr(self, "_runtime_links", ()):
+            btn.setVisible(status == oc.STATUS_NOT_INSTALLED)
 
         if models:
             # Block signals so repopulating does not fire _save_model and
