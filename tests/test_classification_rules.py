@@ -36,9 +36,14 @@ def test_table_baseline_sizes():
     assert len(_APP_MARKERS) >= 69
     assert len(_DIR_ENTITY_MAP) >= 116
     assert len(_CACHE_SOURCE_HINTS) >= 150
-    assert len(_KNOWN_MONOLITH_PATTERNS) >= 36
-    assert len(_MONOLITH_DISPLAY_NAMES) >= 36
-    assert len(_MONOLITH_ENTITY_TYPES) >= 19
+    # 36/36/19 at externalization, less one: "r-" was withdrawn. Two
+    # characters matched by prefix, so it claimed every folder whose name
+    # began "r-" — r-projects, r-and-d-2024 — and typed each one Safe with a
+    # whole-folder recycle, contained so nothing inside could correct it.
+    # See tests/test_a_name_is_not_permission_to_delete.py.
+    assert len(_KNOWN_MONOLITH_PATTERNS) >= 35
+    assert len(_MONOLITH_DISPLAY_NAMES) >= 35
+    assert len(_MONOLITH_ENTITY_TYPES) >= 18
 
     from app.models.entity_contents import _rules
     assert len(_rules()) >= 23

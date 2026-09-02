@@ -1686,10 +1686,42 @@ def _installer_display_name(filename: str) -> str:
     return (stem or os.path.splitext(filename)[0])[:50]
 
 
+# A monolith match claims a whole tree and blocks any later reclassification
+# (the Containment Rule in _phase1_discovery), so a loose pattern is expensive:
+# nothing inside the folder can ever correct it. Two rules keep it honest.
+#
+# Length, because a short prefix matches far more than it means. "r-" claimed
+# every folder beginning "r-" — r-projects, r-and-d-2024, r-survey-kyiv — and
+# each one was typed dev_artifacts, which is Safe and offers a whole-folder
+# recycle. It has been removed from the data; this is the floor that stops the
+# next one being added.
+_MIN_MONOLITH_PATTERN = 4
+
+# Boundary, because a prefix should end where a name ends or where a separator
+# starts. "vcpkg" should match "vcpkg_colmap" and "python 3" should match
+# "python 3.12", but neither should reach a word that merely begins the same
+# way. A pattern already ending in a separator (e.g. "qgis ") carries its own
+# boundary.
+_MONOLITH_BOUNDARY = "-_. ()[]"
+
+
+def _monolith_pattern_hit(lower_name: str, pat: str) -> bool:
+    """True when *lower_name* is *pat*, or *pat* followed by a boundary."""
+    if len(pat) < _MIN_MONOLITH_PATTERN:
+        return False
+    if lower_name == pat:
+        return True
+    if not lower_name.startswith(pat):
+        return False
+    if not pat[-1].isalnum():
+        return True                     # the pattern supplies the boundary
+    return lower_name[len(pat)] in _MONOLITH_BOUNDARY
+
+
 def _matches_monolith(lower_name: str, extra: tuple = ()) -> bool:
-    """Return True if lower_name matches any known monolith pattern (exact or prefix)."""
+    """Return True if lower_name matches any known monolith pattern."""
     for pat in _KNOWN_MONOLITH_PATTERNS + extra:
-        if lower_name == pat or lower_name.startswith(pat):
+        if _monolith_pattern_hit(lower_name, pat):
             return True
     return False
 
@@ -1701,7 +1733,7 @@ def _monolith_display(lower_name: str, actual_name: str) -> str:
     (e.g. actual_name="QGIS 3.40.11" is more informative than label="QGIS").
     """
     for pat, label in _MONOLITH_DISPLAY_NAMES.items():
-        if lower_name == pat or lower_name.startswith(pat):
+        if _monolith_pattern_hit(lower_name, pat):
             return actual_name if len(actual_name) > len(label) else label
     return actual_name
 
@@ -1709,7 +1741,7 @@ def _monolith_display(lower_name: str, actual_name: str) -> str:
 def _monolith_type(lower_name: str) -> str:
     """Return the entity_type for a matched monolith root (defaults to 'application')."""
     for pat, etype in _MONOLITH_ENTITY_TYPES.items():
-        if lower_name == pat or lower_name.startswith(pat):
+        if _monolith_pattern_hit(lower_name, pat):
             return etype
     return "application"
 
@@ -1782,10 +1814,47 @@ _WEAK_NAME_FOLDER_TYPES = (
 )
 
 
+# Types a name alone may never award, because each one is Safe and offers a
+# whole-folder recycle. A substring is not evidence about contents: "TestApps"
+# contained "test", was typed dev_artifacts, and 27.4 GB — a Qt SDK install, a
+# git working copy and one genuine build folder — was offered as Safe with
+# nothing identified inside it. Podbye had no idea what was in there.
+#
+# Exact, unambiguous directory names are a different kind of evidence and are
+# not affected: node_modules, __pycache__, venv and the cache directories keep
+# their Safe classification, because those names mean one thing.
+_NAME_ONLY_FORBIDDEN_TYPES = frozenset({
+    "dev_artifacts", "build_folder", "venv", "node_modules",
+    "cache_folder", "temp_folder", "shader_cache", "log_folder",
+    "ai_cache", "game_cache",
+})
+
+# What a folder is when a word in its name was the only thing suggesting a
+# type we are not allowed to award on that evidence. "Unknown" is the honest
+# answer, it is Review, and it offers no whole-folder delete — the display
+# layer still gives the row a content hint instead of a bare name.
+_NAME_ONLY_FALLBACK = "unknown_folder"
+
+
+def _name_only_type(etype):
+    """Downgrade a type that a name alone is not allowed to award.
+
+    The rule this enforces: a name may suggest what a folder is, but only its
+    contents may license deleting it.
+    """
+    if etype in _NAME_ONLY_FORBIDDEN_TYPES:
+        return _NAME_ONLY_FALLBACK
+    return etype
+
+
 def _weak_name_folder_type(lower_name: str) -> tuple:
     """(entity_type, reason) suggested by a word inside the folder name."""
     for keywords, etype, reason in _WEAK_NAME_FOLDER_TYPES:
         if any(k in lower_name for k in keywords):
+            downgraded = _name_only_type(etype)
+            if downgraded != etype:
+                return downgraded, "Name suggests {0}, but the contents were not read".format(
+                    ENTITY_TYPES.get(etype, etype).lower())
             return etype, reason
     return None, ""
 
@@ -3811,7 +3880,8 @@ def _enrich_support_folders(entities: list) -> int:
     orphaned to the uninstall registry yet are plainly installed. UNKNOWN is
     surfaced as "could not confirm", never as "safe to delete".
     """
-    from app.services.app_presence import presence, describe, GENERIC
+    from app.models.smart_entity import actionability_for_type
+    from app.services.app_presence import presence, describe, GENERIC, PRESENT
 
     changed = 0
     for e in entities:
@@ -3839,6 +3909,31 @@ def _enrich_support_folders(entities: list) -> int:
                 e.name = f"{owner} (app data)"
                 e.summary = f"App data · {owner}"
         e.risk_reason = describe(leaf)
+
+        # The reason and the button have to agree. describe() returns "vscode
+        # appears to be installed (found in Start Menu) — keep this data" for
+        # a PRESENT owner, and that used to be written over the reason of a
+        # row still typed dev_artifacts: risk Safe, action recycle. The
+        # inspector then showed "keep this data" above a Move to Recycle Bin
+        # button, on 3.9 GB of VS Code extensions.
+        #
+        # The evidence is the same either way, so the row follows it: the
+        # owning application is installed, this is its live data, and Podbye
+        # does not offer to delete it wholesale.
+        #
+        # The type has to move, not only the risk. actionability_for_type()
+        # reads the *type*, so demoting risk alone left dev_artifacts in
+        # _RECYCLE_TYPES and the button exactly where it was — a Review badge
+        # above the same Move to Recycle Bin. Only Safe types are retyped, so
+        # a Review-risk specific type keeps its own action: .ollama stays
+        # ai_models, where recycling downloaded models is a real choice.
+        if state == PRESENT and e.risk == "Safe":
+            e.risk = "Review"
+            if actionability_for_type(e.entity_type, "Safe") == "recycle":
+                e.entity_type = "application_data"
+                if not e.name or e.name == leaf:
+                    e.name = f"{owner} (app data)"
+                e.summary = f"App data · {owner}"
         changed += 1
     return changed
 
@@ -4844,10 +4939,15 @@ _KEYWORD_FOLDER_TYPES = (
 
 
 def _keyword_folder_type(lower_name: str) -> str:
-    """Entity type suggested by a word in the folder name, or ""."""
+    """Entity type suggested by a word in the folder name, or "".
+
+    Reached only when the files inside said nothing at all, so the name is the
+    entire case — and _name_only_type refuses the types that would turn that
+    into a Safe whole-folder delete.
+    """
     for keywords, etype in _KEYWORD_FOLDER_TYPES:
         if any(k in lower_name for k in keywords):
-            return etype
+            return _name_only_type(etype)
     return ""
 
 
