@@ -344,6 +344,15 @@ class SmartEntity:
     confidence: str = "heuristic"       # heuristic | ai
     confidence_score: float = 0.0       # 0.0-1.0 — detection signal strength
 
+    # How this classification was reached. "" means unrecorded, which is what
+    # every entity in a session saved before this field existed will read as —
+    # absent, never assumed. See app/services/component_roles.py.
+    evidence: str = ""                  # "" | structure | registry | content | name | path
+    # The component_roles rule that produced this entity, when one did. Carried
+    # so a finding can explain itself and so post-processing can tell an
+    # extracted component apart from an ordinary sub-folder.
+    component_rule_id: str = ""
+
     # AI fields
     ai_status: str = "none"             # none | disabled | pending | analyzing | ready | failed | cancelled
     ai_explanation: str = ""
@@ -525,6 +534,8 @@ class SmartEntity:
             "confidence": self.confidence,
             "confidence_score": self.confidence_score,
             "confidence_label": self.confidence_label,
+            "evidence": self.evidence,
+            "component_rule_id": self.component_rule_id,
             "cloud_sync_provider": self.cloud_sync_provider,
             "last_access": self._safe_date(self.accessed),
             "first_seen": self._safe_date(self.modified),

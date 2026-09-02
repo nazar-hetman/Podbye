@@ -40,6 +40,10 @@ from __future__ import annotations
 import os
 
 
+class _Unwalkable(Exception):
+    """A directory on the way to an exclusion could not be enumerated."""
+
+
 def _norm(path: str) -> str:
     return (path or "").replace("\\", "/").rstrip("/").lower()
 
@@ -162,27 +166,86 @@ def expand_targets(root: str, excluded: list) -> list:
     """
     if not root:
         return []
-    keep = {_norm(p) for p in (excluded or []) if p}
+    root_norm = _norm(root)
+    if not root_norm:
+        return []
+
+    # Strict descendants only, de-duplicated. An exclusion that is the root
+    # itself, a parent of it, or somewhere else entirely is not something this
+    # root can carve around: keeping it in `keep` would either delete nothing
+    # or, worse, be silently ignored while the caller believed it was honoured.
+    # The root appearing in its own exclusions means the finding owns nothing.
+    prefix = root_norm + "/"
+    keep = set()
+    for candidate in (excluded or []):
+        norm = _norm(candidate)
+        if not norm:
+            continue
+        if norm == root_norm:
+            return []                 # owns nothing: take nothing
+        if norm.startswith(prefix):
+            keep.add(norm)
     if not keep:
         return [root]
 
+    # Fail closed: every exclusion must still be there to be carved around. If
+    # one has vanished or cannot be reached, the shape of the tree is not what
+    # this scope was computed against, and the safe answer is to take nothing
+    # rather than to take a parent whose contents we can no longer account for.
+    for excluded_path in keep:
+        if not os.path.exists(excluded_path):
+            return []
+
     def below(norm_path: str) -> bool:
-        prefix = norm_path + "/"
-        return any(k.startswith(prefix) for k in keep)
+        child_prefix = norm_path + "/"
+        return any(k.startswith(child_prefix) for k in keep)
+
+    def is_reparse(path: str) -> bool:
+        """A junction, symlink or mount point.
+
+        Never descended into and never taken: what lies under one is not
+        inside this folder at all, and deleting through it reaches data the
+        finding never measured and the user never saw.
+        """
+        try:
+            return os.path.islink(path) or os.path.ismount(path)
+        except OSError:
+            return True               # cannot tell: assume the dangerous one
 
     def walk(current: str) -> list:
         norm = _norm(current)
         if norm in keep:
             return []                 # owned by another finding
+        if is_reparse(current):
+            return []
         if not below(norm):
             return [current]          # nothing of anyone else's below here
         try:
             children = os.listdir(current)
         except OSError:
-            return []                 # cannot enumerate: take nothing
+            raise _Unwalkable(current)
         out = []
         for child in children:
             out.extend(walk(os.path.join(current, child).replace("\\", "/")))
         return out
 
-    return walk(root)
+    try:
+        targets = walk(root)
+    except _Unwalkable:
+        # A directory on the path to an exclusion could not be enumerated, so
+        # the carve-out cannot be proven. Refusing to delete is the cheap
+        # failure; deleting a parent because a child could not be listed is
+        # the one that loses data.
+        return []
+
+    # De-duplicate while keeping order, and never return a path twice under
+    # two spellings.
+    seen = set()
+    unique = []
+    for target in targets:
+        norm = _norm(target)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        unique.append(target)
+    return unique

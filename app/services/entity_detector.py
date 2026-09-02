@@ -2115,6 +2115,15 @@ def _phase1_discovery(ctx: "_DetectionContext", extra_pats: tuple):
             _f.path, _display, _etype, _children,
             f"Known monolith distribution: {_f.name}",
         )
+        # Before the containment rule closes over this subtree, take out the
+        # parts of it we understand *better* than "a vcpkg lives here". A
+        # claimed root is unreachable afterwards by design, so this is the
+        # only moment a stronger child role can be recorded at all.
+        #
+        # Extraction narrows ownership and nothing else: the parent keeps its
+        # type, its risk and its action, and _enforce_disjoint_sizes later
+        # subtracts the children from its size.
+        _emit_proven_components(ctx, _f.path)
         _fc = ctx.claim(_norm)
         ctx.emit_entity(_ent, _fc)
         p1_roots_found += 1
@@ -2122,6 +2131,155 @@ def _phase1_discovery(ctx: "_DetectionContext", extra_pats: tuple):
     t_p1_elapsed = int((_time.time() - t_p1_start) * 1000)
     ctx.log(f"[smart] phase 1: discovery — found {p1_roots_found} entity "
             f"roots · {t_p1_elapsed}ms")
+
+
+def _emit_proven_components(ctx: "_DetectionContext", root: str) -> int:
+    """Emit findings for verified components under *root*. Returns how many.
+
+    Path A of two (see _apply_component_roles for path B). This one runs
+    where a parent is about to be claimed whole, so the child has to be
+    created and claimed *first* or the containment rule buries it.
+
+    Nothing here consults which application *root* belongs to when deciding
+    the action. component_roles.prove() decides only whether a rule applies;
+    the role alone picks the entity type, and actionability comes from that
+    type exactly as it does for every other finding.
+    """
+    from app.services import component_roles as cr
+
+    found = cr.components_for(root)
+    if not found:
+        return 0
+
+    # One policy gate per role, applied before the type is used. Build output
+    # is only offered when the tree is visibly quiet; a re-downloadable cache
+    # says so in its own reason.
+    active = ""
+    if any(c.role == "build_output" for c in found):
+        active = cr.build_looks_active(root)
+
+    emitted = 0
+    for comp in found:
+        norm = comp.path.replace("\\", "/").lower().rstrip("/")
+        if norm in ctx.claimed_paths:
+            continue
+
+        if comp.role == "build_output":
+            if active:
+                # Conservative and deliberate: a tree that looks busy is left
+                # inside the parent rather than offered. This is a heuristic,
+                # not a guarantee — a build can start a moment later.
+                ctx.log(f"[smart]   component {comp.rule_id} left in place — {active}")
+                continue
+            reason = (f"{comp.label} — {comp.root} rebuilds this from sources "
+                      f"it still has. Verified by {comp.evidence}; no build "
+                      f"activity seen.")
+        else:
+            reason = (f"{comp.label} — removable, but these files are fetched "
+                      f"again over the network when they are next needed. "
+                      f"Verified by {comp.evidence}.")
+
+        ent = _build_entity(ctx, comp.path, comp.label, comp.entity_type,
+                            ctx.sample(norm), reason)
+        ent.evidence = "structure"
+        ent.component_rule_id = comp.rule_id
+        ent.confidence_score = 0.9
+        fc = ctx.claim(norm)
+        ctx.emit_entity(ent, fc)
+        emitted += 1
+    if emitted:
+        ctx.log(f"[smart]   extracted {emitted} verified component(s) from {root}")
+    return emitted
+
+
+def _apply_component_roles(entities: list) -> int:
+    """Retype already-independent entities that are proven components.
+
+    Path B of two. Where path A exists because a parent claims its whole
+    subtree, this exists because some parents never become entities at all:
+    AppData/Roaming is a container directory, so every child of
+    Roaming/Code is classified on its own and there is no claim to run
+    before. CachedExtensionVSIXs is already its own row — 1.3 GB of
+    downloaded .vsix packages typed application_data — and what it needs is
+    the right type, not extraction.
+
+    Follows the rule apply_known_path_rules already sets for post-process
+    retyping: this may change a *generic* classification, and it never
+    overrules a specific one.
+    """
+    from app.services import component_roles as cr
+
+    generic = {"application_data", "unknown_folder", "mixed_folder"}
+    by_parent: dict = {}
+    for e in entities:
+        parent = os.path.dirname((e.path or "").rstrip("/\\"))
+        if parent:
+            by_parent.setdefault(parent, []).append(e)
+
+    changed = 0
+    for parent, kids in by_parent.items():
+        candidates = [e for e in kids if e.entity_type in generic]
+        if not candidates:
+            continue
+        found = {c.path.replace("\\", "/").lower().rstrip("/"): c
+                 for c in cr.components_for(parent)}
+        if not found:
+            continue
+        for e in candidates:
+            comp = found.get((e.path or "").replace("\\", "/").lower().rstrip("/"))
+            if comp is None:
+                continue
+            if comp.role == "build_output" and cr.build_looks_active(parent):
+                continue
+            e.entity_type = comp.entity_type
+            e.risk = ""                       # re-derived from the new type
+            e.risk_reason = (
+                f"{comp.label} — removable, but these files are fetched again "
+                f"over the network when they are next needed. Verified by "
+                f"{comp.evidence}.")
+            e.__post_init__()
+            e.evidence = "structure"
+            e.component_rule_id = comp.rule_id
+            e.confidence_score = 0.9
+            changed += 1
+    return changed
+
+
+def _one_entity_per_root(entities: list, log_fn) -> list:
+    """At most one folder-backed entity per normalized path.
+
+    Two rows for one folder means two rows offering to recycle the same
+    bytes, and a selection that counts them twice. File-backed rows are
+    exempt: pass 8 buckets deliberately carry their enclosing directory as
+    their path and own only their own listed files.
+    """
+    from app.models.deletion_scope import is_folder_backed
+
+    seen: dict = {}
+    out = []
+    dropped = 0
+    for e in entities:
+        if not is_folder_backed(e.to_dict()):
+            out.append(e)
+            continue
+        norm = (e.path or "").replace("\\", "/").lower().rstrip("/")
+        if not norm:
+            out.append(e)
+            continue
+        if norm in seen:
+            # Keep the one that knows more: a proven component outranks a
+            # generic sweep result for the same folder.
+            kept = seen[norm]
+            if e.component_rule_id and not kept.component_rule_id:
+                out[out.index(kept)] = e
+                seen[norm] = e
+            dropped += 1
+            continue
+        seen[norm] = e
+        out.append(e)
+    if dropped:
+        log_fn(f"[smart] dropped {dropped} duplicate folder-backed entit(ies)")
+    return out
 
 
 def _pass_self(ctx: "_DetectionContext"):
@@ -4414,7 +4572,14 @@ def _postprocess(ctx: "_DetectionContext", t0: float) -> list:
                 return ap, atype
         return None
 
-    def _should_absorb(entity_path: str, entity_type: str) -> bool:
+    def _should_absorb(entity_path: str, entity_type: str,
+                       component_rule_id: str = "") -> bool:
+        # A component extracted before its parent was claimed is the one thing
+        # absorption may never undo. It exists precisely because the parent's
+        # claim was broader than what we understood about this folder, and
+        # folding it back would restore that.
+        if component_rule_id:
+            return False
         owner = _owning_absorber(entity_path)
         if owner is None:
             return False
@@ -4430,7 +4595,8 @@ def _postprocess(ctx: "_DetectionContext", t0: float) -> list:
 
     n_before = len(entities)
     entities = [e for e in entities
-                if not _should_absorb(e.path, e.entity_type)]
+                if not _should_absorb(e.path, e.entity_type,
+                                      getattr(e, "component_rule_id", ""))]
     absorbed = n_before - len(entities)
     if absorbed:
         log_fn(f"[smart] absorbed {absorbed} sub-folder entities into parent "
@@ -4462,6 +4628,16 @@ def _postprocess(ctx: "_DetectionContext", t0: float) -> list:
     # may raise protection; never talks a specific classification down.
     from app.services.known_paths import apply_known_path_rules
     apply_known_path_rules(entities)
+
+    # Path B: a proven component that is already its own row gets the type its
+    # role says it has. After the enrichment passes, so a folder they would
+    # have named generically is the one this can still improve.
+    retyped = _apply_component_roles(entities)
+    if retyped:
+        log_fn(f"[smart] retyped {retyped} proven component entit(ies)")
+
+    # One folder, one folder-backed row.
+    entities = _one_entity_per_root(entities, log_fn)
 
     # Downloads and Desktop are places, not content types — file their contents
     # under them instead of scattering each folder across the whole chip bar.

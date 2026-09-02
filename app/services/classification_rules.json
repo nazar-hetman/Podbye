@@ -665,5 +665,32 @@
     ".git/objects": "Version history",
     "target/debug": "Debug build output",
     "target/release": "Release build output"
-  }
+  },
+  "component_roles": {
+    "vcpkg.buildtrees": {
+      "root_proof": "vcpkg_root",
+      "relative": "buildtrees",
+      "role": "build_output",
+      "label": "vcpkg build trees"
+    },
+    "vcpkg.packages": {
+      "root_proof": "vcpkg_root",
+      "relative": "packages",
+      "role": "build_output",
+      "label": "vcpkg staged packages"
+    },
+    "vcpkg.downloads": {
+      "root_proof": "vcpkg_root",
+      "relative": "downloads",
+      "role": "download_cache",
+      "label": "vcpkg downloaded sources"
+    },
+    "vscode.cached_extension_vsixs": {
+      "root_proof": "vscode_user_data",
+      "relative": "CachedExtensionVSIXs",
+      "role": "download_cache",
+      "label": "Downloaded extension packages"
+    }
+  },
+  "component_roles_version": 1
 }

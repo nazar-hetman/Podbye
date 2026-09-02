@@ -21,6 +21,12 @@ _EXPECTED_KEYS = {
     # Relative paths inside an entity that name a component in the inspector
     # ("steamapps/common" -> Installed games). See app/models/entity_contents.
     "component_rules",
+    # Semantic roles for a few verified components inside a proven
+    # application root, keyed by stable rule id. Separate from
+    # component_rules on purpose: that table only labels the inspector
+    # breakdown, this one can produce a finding with an action.
+    "component_roles",
+    "component_roles_version",
 }
 
 
