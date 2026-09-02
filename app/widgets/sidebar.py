@@ -12,6 +12,31 @@ from app.widgets.logo import logo_pixmap
 from app.themes.theme_manager import get_palette, theme_signaller
 
 
+def _nav_label(name: str) -> str:
+    """The sidebar's label for a screen, which may be shorter than its name.
+
+    The nav column is 119px of a fixed 196px sidebar, and an inflected
+    language does not always have a word that fits: "Quick Cleanup" is 96px in
+    English, 126 in Ukrainian, 128 in German and 136 in Polish, so three
+    languages were cut mid-word with an ellipsis.
+
+    Shrinking the type was considered and rejected — per-language font sizes
+    are a trap the next locale falls into, and this is the most-read text in
+    the app. Shortening the shared string was rejected too: "Швидке очищення"
+    is the right phrase in a sentence about what the cleanup did, and only the
+    sidebar has 119px.
+
+    So a language may define ``nav:<screen>`` for a short form, and gets the
+    full name when it does not. English needs none.
+    """
+    key = "nav:" + name
+    short = tr(key)
+    # tr() returns the key when there is no entry. Falling back to *name* here
+    # would hand back the English screen name and undo the translation for
+    # every language that does not need a short form.
+    return tr(name) if short == key else short
+
+
 class SidebarButton(QPushButton):
     """A sidebar navigation button with icon + shortcut hint."""
 
@@ -173,7 +198,7 @@ class Sidebar(QFrame):
             layout.addWidget(sec_lbl)
 
             for name, icon, shortcut in items:
-                btn = SidebarButton(tr(name), icon, shortcut)
+                btn = SidebarButton(_nav_label(name), icon, shortcut)
                 btn.screen_name = name  # keep English key for routing
                 btn.clicked.connect(lambda checked=False, n=name: self._on_click(n))
                 self._buttons.append(btn)

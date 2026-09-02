@@ -8,7 +8,7 @@ itself was a filled red button that fired on a single click with no prompt.
 import pytest
 from PySide6.QtWidgets import QLabel, QMessageBox, QPushButton
 
-from app.screens.settings import SettingsScreen, _PATH_VALUE_WIDTH
+from app.screens.settings import SettingsScreen
 from app.themes import theme_manager as tm
 
 
@@ -26,6 +26,14 @@ def about(qapp):
 
 def _texts(root):
     return [l.text() for l in root.findChildren(QLabel)]
+
+
+def _storage_path_label(page):
+    return next(
+        label for label in page.findChildren(QLabel)
+        if "Podbye" in getattr(label, "full_text", label.text)()
+        and ":" in getattr(label, "full_text", label.text)()
+    )
 
 
 # ── the panel says what it holds ──────────────────────────────────
@@ -68,8 +76,7 @@ def test_a_real_windows_path_stays_on_one_line(qapp, width):
     qapp.processEvents()
     try:
         page = s._stack.currentWidget()
-        path = next(l for l in page.findChildren(QLabel)
-                    if "Podbye" in l.text() and ":" in l.text())
+        path = _storage_path_label(page)
         path.setText(real)
         path.updateGeometry()
         for _ in range(3):
@@ -80,21 +87,20 @@ def test_a_real_windows_path_stays_on_one_line(qapp, width):
         s.deleteLater()
 
 
-def test_the_path_column_is_a_minimum_not_a_cap(about):
-    """A word-wrapping QLabel reports a narrow size hint, so a maximumWidth
-    alone left the label at 484px and the path still wrapped."""
+def test_the_path_column_elides_instead_of_wrapping(about):
+    """A path is one value. At narrow widths it must stay one readable row,
+    with the full value offered on hover, rather than becoming a paragraph."""
     s, page = about
-    path = next(l for l in page.findChildren(QLabel)
-                if "Podbye" in l.text() and ":" in l.text())
-    assert path.minimumWidth() == _PATH_VALUE_WIDTH
+    path = _storage_path_label(page)
+    assert path.toolTip()
+    assert not path.wordWrap()
 
 
 def test_the_path_stays_selectable(about):
     """It is a value someone copies into Explorer."""
     from PySide6.QtCore import Qt
     s, page = about
-    path = next(l for l in page.findChildren(QLabel)
-                if "Podbye" in l.text() and ":" in l.text())
+    path = _storage_path_label(page)
     assert path.textInteractionFlags() & Qt.TextSelectableByMouse
 
 

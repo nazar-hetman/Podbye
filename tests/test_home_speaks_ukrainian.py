@@ -211,7 +211,7 @@ def test_the_ai_card_names_the_feature(screen):
 def test_nothing_is_abbreviated_that_fits_in_full(screen):
     s = screen()
 
-    assert "елементів видалено" in _all(s)
+    assert "елементів прибрано з диска" in _all(s)
     assert "елем." not in _all(s)
 
 

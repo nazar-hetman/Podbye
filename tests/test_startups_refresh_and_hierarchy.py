@@ -212,22 +212,28 @@ def test_re_analyze_is_still_the_full_run(screen, monkeypatch):
     assert sent.get("e", "missing") is None, "Re-analyze must not pass a subset"
 
 
-# -- the toggle is a control --------------------------------------
+# -- the state is a statement -------------------------------------
 
 @pytest.mark.parametrize("theme", _THEMES)
 @pytest.mark.parametrize("enabled", [True, False])
-def test_enable_disable_reads_as_a_button(qapp, theme, enabled):
+def test_the_state_never_reads_as_a_control(qapp, theme, enabled):
+    """The inverse of what this asserted before, for the reason the button
+    was removed: it is not a control, so it must not offer itself as one in
+    any theme."""
     tm._current_theme_key = theme
     qapp.setStyleSheet(build_qss(theme))
-    qss = st.StartupListRow._toggle_style(enabled)
-    assert "border: 1px solid" in qss, theme + ": no border, still reads as text"
-    assert "background: transparent" not in qss, theme + ": no fill"
-    assert "QPushButton:hover" in qss, theme + ": no hover affordance"
+    row = st.StartupListRow(_entry("X", enabled=enabled))
+    qss = row._state_badge.styleSheet()
+
+    assert "border: none" in qss, theme + ": a border makes it look pressable"
+    assert "hover" not in qss, theme + ": a hover affordance implies an action"
 
 
-def test_the_toggle_still_says_what_it_will_do(qapp):
-    assert st.StartupListRow(_entry("On", enabled=True))._toggle_btn.text() == "Disable"
-    assert st.StartupListRow(_entry("Off", enabled=False))._toggle_btn.text() == "Enable"
+def test_the_row_states_what_is_true_rather_than_what_it_would_do(qapp):
+    """It said "Disable"/"Enable" and its handler changed nothing outside
+    Podbye's memory. It now reports the entry's actual state."""
+    assert st.StartupListRow(_entry("On", enabled=True))._state_badge.text() == "ON"
+    assert st.StartupListRow(_entry("Off", enabled=False))._state_badge.text() == "OFF"
 
 
 # -- disabled and selected are visible states ---------------------

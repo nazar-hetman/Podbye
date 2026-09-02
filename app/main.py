@@ -239,6 +239,10 @@ class PodbyeWindow(QMainWindow):
         settings = SettingsScreen(
             theme_callback=self._apply_theme,
             settings_store=self._settings_store,
+            # A reset changes model, endpoint and language preferences.  It
+            # must wait for every screen-owned worker too, including a Startup
+            # AI explanation or cleanup dialog, not only the shared pipeline.
+            is_busy_callback=lambda: bool(self._busy_reason()),
         )
         self._add_screen("Settings", settings)
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime
 import os
 import time
+from dataclasses import replace
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -461,6 +462,38 @@ def _cleanup_status(record: dict) -> tuple[str, str]:
     }.get(state, (tr("Complete"), "safe"))
 
 
+def _cleanup_assessment_for_history(record: dict):
+    """Use a saved cleanup verdict when History has one.
+
+    New records persist their result state so a later classifier revision does
+    not silently rewrite history. Legacy records without that state are still
+    classified from their saved counters. If the two disagree, the detail
+    keeps the saved verdict and explains that the facts below are the counts
+    captured at the time, rather than presenting two outcomes for one run.
+    """
+    assessment = assess_cleanup_counts(
+        succeeded_count=record.get("succeeded_count", 0),
+        in_use_count=record.get("in_use_count", 0),
+        failed_count=record.get("failed_count", 0),
+        skipped_count=record.get("skipped_protected_count", 0),
+        category_label="Cleanup run",
+        retry_label="the cleanup",
+    )
+    stored = record.get("result_state")
+    if not stored or stored == assessment.state:
+        return assessment
+
+    label, _key = _cleanup_status(record)
+    return replace(
+        assessment,
+        state=stored,
+        explanation_text=tr(
+            "This cleanup was recorded as {status}. The saved item counts are shown below.",
+            status=label,
+        ),
+    )
+
+
 class _StatusBadge(QLabel):
     """Inline badge for how a cleanup run ended — theme-aware."""
 
@@ -510,14 +543,7 @@ class CleanupRecordDetail(QFrame):
         # for twelve files it had correctly declined to delete. What is worth a
         # second look is what was *meant* to go and did not.
         total_exceptions = in_use + failed
-        assessment = assess_cleanup_counts(
-            succeeded_count=succeeded,
-            in_use_count=in_use,
-            failed_count=failed,
-            skipped_count=skipped,
-            category_label="Cleanup run",
-            retry_label="the cleanup",
-        )
+        assessment = _cleanup_assessment_for_history(record)
 
         # ── Outcome row ───────────────────────────────────────────
         # Mirrors SessionDetail's metrics row exactly (same size/spacing, bold
@@ -535,7 +561,8 @@ class CleanupRecordDetail(QFrame):
         for lbl, val, col in [
             (tr("CLEANED") if mode == "permanent" else tr("RECYCLED"),
              _format_size(freed), p.get("safe", "#7aa88a")),
-            (tr("ITEMS"), f"{succeeded:,}", ""),
+            (tr("ITEMS MOVED") if mode == "recycle_bin" else tr("ITEMS REMOVED"),
+             f"{succeeded:,}", ""),
             (tr("NOT REMOVED"), f"{total_exceptions:,}" if total_exceptions else tr("None"),
              p.get("review", "#c7a66c") if total_exceptions else ""),
         ]:
@@ -643,7 +670,7 @@ class SessionDetail(QFrame):
                          p.get("safe", "#7aa88a")))
         rows += [
             (tr("FOUND"), items_val, ""),
-            (tr("REVIEW"), f"{attention:,}" if attention else tr("None"),
+            (tr("NEEDS REVIEW"), f"{attention:,}" if attention else tr("None"),
              p.get("review", "#c7a66c") if attention else ""),
             (tr("DURATION"), _format_duration(duration), ""),
         ]
@@ -673,7 +700,7 @@ class SessionDetail(QFrame):
         protected_count = int(risk_totals.get("Protected", 0) or 0)
         optional_count = int(risk_totals.get("Optional", 0) or 0)
         attention_text = (
-            tr("review: {review:,} · protected: {protected:,} · optional: {optional:,}",
+            tr("review only: {review:,} · protected: {protected:,} · optional: {optional:,}",
                review=review_count, protected=protected_count, optional=optional_count)
             if review_count or protected_count or optional_count
             else tr("No review-required items recorded")
@@ -1040,7 +1067,9 @@ class HistoryScreen(QWidget):
             ))
             return frame
 
-        # Table — WHEN / STATUS / FREED / ITEMS
+        # Table — WHEN / STATUS / FREED / ITEMS. ITEMS is the count that
+        # completed, matching the detail panel; attempted-but-not-completed
+        # items are shown there as NOT REMOVED.
         table = self._new_table(
             [tr("WHEN"), tr("STATUS"), tr("FREED"), tr("ITEMS")],
             [Qt.AlignLeft, Qt.AlignHCenter, Qt.AlignRight, Qt.AlignRight])
@@ -1066,8 +1095,8 @@ class HistoryScreen(QWidget):
             freed_item.setForeground(QBrush(QColor(p.get("safe", "#7aa88a"))))
             table.setItem(i, 2, freed_item)
 
-            items = rec.get("items", [])
-            count_item = QTableWidgetItem(f"{len(items):,}")
+            count_item = QTableWidgetItem(
+                f"{int(rec.get('succeeded_count', 0) or 0):,}")
             count_item.setFlags(count_item.flags() & ~Qt.ItemIsEditable)
             count_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             if rec.get("failed_count", 0):

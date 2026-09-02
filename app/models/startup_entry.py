@@ -22,7 +22,7 @@ class StartupEntry:
     enabled: bool               # Currently enabled?
 
     # Risk & impact
-    risk: str                   # "Safe" | "Optional" | "Review" | "Protected"
+    risk: str                   # "Safe" | "Optional" | "Review"
     risk_reason: str
     impact: str                 # Human-readable startup role / effect
     product_name: str = ""
@@ -35,8 +35,20 @@ class StartupEntry:
     # using — the one triage signal the list had no way to show.
     target_modified: float = 0.0
 
+    # Windows or a device vendor owns this one: a signed component in
+    # System32, a security product, a driver utility. It is still Review —
+    # Podbye changes no startup entry, so it can only advise — but the advice
+    # is already exact, and the deterministic reason says more than a small
+    # model would. Set by the classifier so the AI pass can skip it without
+    # pattern-matching on reason text.
+    system_managed: bool = False
+
     # AI fields
-    ai_status: str = "none"     # "none" | "pending" | "analyzing" | "ready" | "failed" | "disabled"
+    # "unconfigured" is not a failure: no model is chosen, so nothing was
+    # asked. Kept apart from "disabled" (startup AI switched off) and from
+    # "failed" (asked, and it went wrong) because the three need different
+    # answers from the user.
+    ai_status: str = "none"     # none | pending | analyzing | ready | failed | disabled | unconfigured
     ai_explanation: str = ""
     ai_error: str = ""
 

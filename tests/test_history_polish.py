@@ -130,6 +130,21 @@ def test_a_stored_verdict_wins_over_recomputation():
     assert _cleanup_status(rec)[0] == "Complete"
 
 
+def test_cleanup_detail_uses_a_stored_verdict_when_legacy_counts_disagree(qapp):
+    """A History row and its inspector cannot give one run two outcomes."""
+    rec = _rec(0, 0, 6, state="success")
+    panel = H.CleanupRecordDetail(rec)
+    panel.show()
+    qapp.processEvents()
+    try:
+        text = "\n".join(_label_texts(panel))
+        assert "recorded as Complete" in text
+        assert "unexpected cleanup error" not in text
+    finally:
+        panel.deleteLater()
+        qapp.processEvents()
+
+
 def test_a_record_without_a_stored_verdict_is_recomputed():
     """Four moved and six refused is Partial: something was achieved. Only a
     run that achieved nothing gets the red word."""
@@ -165,11 +180,17 @@ def test_the_cleanup_panel_opens_on_what_was_cleaned(screen, qapp):
     # RECYCLED, not CLEANED: this record's mode is recycle_bin, and moving a
     # file to the bin on the same volume frees nothing until the bin is
     # emptied. A permanent delete still says CLEANED.
-    assert keys[:3] == ["RECYCLED", "ITEMS", "NOT REMOVED"]
+    assert keys[:3] == ["RECYCLED", "ITEMS MOVED", "NOT REMOVED"]
     assert "IMPACT" not in keys and "RESULT" not in keys
     # "ATTENTION" counted protected paths Podbye had correctly refused to
     # touch, so a run that did exactly the right thing reported 170 of them.
     assert "ATTENTION" not in keys
+
+
+def test_cleanup_table_counts_completed_items_not_all_attempted_items(screen):
+    """A partial row's ITEMS value matches the inspector's successful count."""
+    # Fixture row 1 attempted 30 paths, of which 25 completed and 5 were in use.
+    assert screen._cleanup_table.item(1, 3).text() == "25"
 
 
 def test_the_session_panel_opens_on_what_can_be_reclaimed(screen, qapp):
@@ -178,7 +199,7 @@ def test_the_session_panel_opens_on_what_can_be_reclaimed(screen, qapp):
     keys = [k for k in _metric_keys(screen._sess_detail_widget) if k != "TARGET"]
     # FREED only appears once something from this session has been cleaned.
     assert [k for k in keys[:5] if k != "FREED"][:4] == [
-        "RECLAIMABLE", "FOUND", "REVIEW", "DURATION"]
+        "RECLAIMABLE", "FOUND", "NEEDS REVIEW", "DURATION"]
     assert "IMPACT" not in keys and "RESULT" not in keys
 
 

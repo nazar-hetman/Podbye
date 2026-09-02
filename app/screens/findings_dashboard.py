@@ -2627,6 +2627,12 @@ class _PreallocDetailPanel(QWidget):
         # What the button removes, stated where the button is. The row's
         # figure is this entity's *exclusive* share — correct for totals,
         # and not what recycling a folder takes.
+        self._workspace_lbl = QLabel("")
+        self._workspace_lbl.setObjectName("Dim")
+        self._workspace_lbl.setWordWrap(True)
+        self._workspace_lbl.setVisible(False)
+        action_stack.addWidget(self._workspace_lbl)
+
         self._scope_lbl = QLabel("")
         self._scope_lbl.setObjectName("Dim")
         self._scope_lbl.setWordWrap(True)
@@ -2766,6 +2772,27 @@ class _PreallocDetailPanel(QWidget):
         if self._current_path:
             self._copy_cb(self._current_path)
 
+    def _state_workspace_note(self, is_workspace: bool):
+        """Say why there is no button, where the button would have been.
+
+        A missing action with no explanation reads as a bug. This one is a
+        judgement: the folder holds several separate projects, so the thing to
+        act on is a project, not the folder around them.
+        """
+        lbl = getattr(self, "_workspace_lbl", None)
+        if lbl is None:
+            return
+        if not is_workspace:
+            lbl.setVisible(False)
+            return
+        p = get_palette()
+        lbl.setStyleSheet(f"font-size: 11px; color: {p.get('text_dim', '#8a9b8f')};")
+        lbl.setText(tr(
+            "This folder holds several separate projects, so there is nothing "
+            "here to remove as one piece. Open a project inside and decide "
+            "about it on its own."))
+        lbl.setVisible(True)
+
     def _state_scope(self, entity: dict, allow_recycle: bool):
         """Say what the button takes, whenever that is more than the row says.
 
@@ -2867,7 +2894,15 @@ class _PreallocDetailPanel(QWidget):
         # the parts list above, and this section 200px below it, same names and
         # same sizes. When they are all up there, this falls through to the
         # components view, which says something the panel above does not.
-        items = (items_summary(entity, world, exclude=self._shown_as_parts())
+        # Restricted to the findings that survive this one, so the section's
+        # count and the line under the button are the same number by
+        # construction rather than by two calculations agreeing.
+        from app.models.deletion_scope import contained_bytes, excluded_paths
+
+        kept = excluded_paths(entity)
+        items = (items_summary(entity, world, exclude=self._shown_as_parts(),
+                               restrict_to=kept or None,
+                               total_bytes=contained_bytes(entity) if kept else None)
                  if world else None)
         if mode == MODE_NONE and not items:
             # A single file, or a folder with nothing inside worth naming.
@@ -3735,8 +3770,20 @@ class _PreallocDetailPanel(QWidget):
         # action; recycle is offered only as a fallback when none is registered.
         if is_app and has_uninstaller:
             allow_recycle = False
+        # A workspace is not one thing to delete, and Podbye already says so:
+        # _retype_workspaces reclassifies "a folder that holds several
+        # separate projects rather than being one", and the assessment on
+        # screen reads "It is not one thing to delete — open the projects
+        # inside and decide about each of them". A full-width primary button
+        # offering to recycle 255 GB of someone's source code contradicted
+        # every other thing the panel said about it. The projects inside are
+        # each their own finding, with their own button.
+        is_workspace = entity.get("entity_type") == "dev_workspace"
+        if is_workspace:
+            allow_recycle = False
         self._btn_recycle.setVisible(allow_recycle)
         self._btn_recycle.setEnabled(allow_recycle)
+        self._state_workspace_note(is_workspace)
         self._state_scope(entity, allow_recycle)
         # Only offer Deep Uninstall when an uninstaller actually exists. Plenty
         # of Program Files folders (WSL, gstreamer, Fortinet, vendor

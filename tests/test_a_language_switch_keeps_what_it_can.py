@@ -76,6 +76,14 @@ def window(qapp, tmp_path, monkeypatch):
 
     from app.main import PodbyeWindow
     win = PodbyeWindow()
+    # No model pass. ai_startups_enabled defaults to True and _start_ai() does
+    # not check for a configured model, so navigating to Startups starts a real
+    # StartupAIWorker against a dead endpoint. Tearing the window down under a
+    # thread that will not stop in time disowns it, and a disowned worker
+    # emitting to deleted receivers is an access violation in a background
+    # thread — which is how it surfaced: intermittently, in whatever test was
+    # running when it landed. These tests are about carrying entries, not AI.
+    win._settings_store.set_and_save("ai_startups_enabled", False)
     win.resize(1400, 900)
     # Shown on purpose: showEvent is where a screen detects, adopts and
     # renders, and that is the whole subject here. Only the navigated-to

@@ -172,6 +172,7 @@ def test_startups_fits_a_longer_language(dressed):
         assert "Заплановане завдання" in screen._detail_widget._meta_lbl.text()
         assert screen._detail_widget._impact_lbl.text() == (
             "Служба віддаленого доступу")
+        assert screen._detail_widget._risk_badge.text() == "НЕОБОВ’ЯЗКОВО ПІД ЧАС ЗАПУСКУ"
     finally:
         screen.deleteLater()
         dressed.processEvents()
@@ -551,6 +552,28 @@ def test_the_startup_inspector_fits_its_sidebar(dressed, width):
     screen = _settled(dressed, _startups(dressed), width)
     try:
         assert _viewport_overflows(screen) == []
+    finally:
+        screen.deleteLater()
+        dressed.processEvents()
+
+
+@pytest.mark.parametrize("language", [
+    "English", "Ukrainian", "Spanish", "German", "French", "Polish",
+])
+def test_startup_inspector_actions_fit_every_shipped_locale_at_minimum_width(
+        dressed, language):
+    """The inspector must not regain a horizontal minimum through its actions.
+
+    Its viewport is only a little wider than 280px at the application's
+    1100px minimum window width.  This exercises the real populated state,
+    including the longest shipped Task Manager labels, rather than measuring
+    an empty panel.
+    """
+    set_language(language)
+    screen = _settled(dressed, _startups(dressed), 1100)
+    try:
+        assert _viewport_overflows(screen) == []
+        assert _faults(screen) == []
     finally:
         screen.deleteLater()
         dressed.processEvents()

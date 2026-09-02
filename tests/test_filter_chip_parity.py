@@ -6,8 +6,14 @@ Startups chips were radio buttons with an "All" in front. Same look, same
 labels, same place — so the same click filtered to one risk on one screen and
 removed one risk on the other.
 
-Both are now multi-select with an "All" that resets, and both take their risk
-list from RISK_ORDER rather than a private literal.
+Both are now multi-select with an "All" that resets.
+
+The two lists are no longer identical, and that is deliberate. Findings offers
+Protected because there it is enforceable — the item cannot be selected and the
+button is disabled. Startups does not: Podbye writes nothing to the registry,
+so it modifies no startup entry and can never refuse to, and everything Windows
+or a vendor owns is Review with a reason that says so. What is asserted here is
+that each screen offers its own full set and behaves the same way about it.
 """
 import os
 import pytest
@@ -15,6 +21,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from app.models.risk import RISK_ORDER
+from app.screens.startups import STARTUP_RISK_ORDER
 
 
 @pytest.fixture(scope="module")
@@ -41,7 +48,12 @@ def findings(qapp):
 # ── both screens offer the same chips ─────────────────────────────
 
 def test_startups_offers_every_risk(startups):
-    assert list(startups._risk_btns) == list(RISK_ORDER)
+    assert list(startups._risk_btns) == list(STARTUP_RISK_ORDER)
+
+
+def test_startups_optional_filter_uses_the_same_startup_scoped_wording_as_rows(startups):
+    """The backend keeps Optional; the UI consistently says what it means."""
+    assert startups._risk_btns["Optional"].text() == "Optional at startup"
 
 
 def test_findings_offers_every_risk(findings):
@@ -56,7 +68,7 @@ def test_both_screens_have_an_all_chip(startups, findings):
 # ── both start unfiltered ─────────────────────────────────────────
 
 def test_startups_starts_showing_everything(startups):
-    assert startups._risk_filter == set(RISK_ORDER)
+    assert startups._risk_filter == set(STARTUP_RISK_ORDER)
 
 
 def test_findings_starts_showing_everything(findings):
@@ -69,7 +81,7 @@ def test_findings_starts_showing_everything(findings):
 def test_a_startups_chip_click_removes_only_that_risk(startups):
     startups._toggle_risk_filter("Safe")
 
-    assert startups._risk_filter == {"Optional", "Review", "Protected"}, (
+    assert startups._risk_filter == {"Optional", "Review"}, (
         "clicking one chip filtered down to it — that is the old radio model")
 
 
@@ -84,9 +96,9 @@ def test_a_findings_chip_click_removes_only_that_risk(findings):
 def test_startups_chips_combine(startups):
     """Two risks at once — impossible under the radio model."""
     startups._toggle_risk_filter("Safe")
-    startups._toggle_risk_filter("Protected")
+    startups._toggle_risk_filter("Optional")
 
-    assert startups._risk_filter == {"Optional", "Review"}
+    assert startups._risk_filter == {"Review"}
 
 
 # ── "All" resets, on both ─────────────────────────────────────────
@@ -96,7 +108,7 @@ def test_all_restores_everything_on_startups(startups):
     startups._toggle_risk_filter("Review")
     startups._on_all_risks_clicked()
 
-    assert startups._risk_filter == set(RISK_ORDER)
+    assert startups._risk_filter == set(STARTUP_RISK_ORDER)
 
 
 def test_all_restores_everything_on_findings(findings):
@@ -122,13 +134,15 @@ def test_all_tracks_the_other_chips_on_findings(findings):
 
 def test_startups_refuses_to_hide_the_last_risk(startups):
     """An empty list with every chip off has no visible way back."""
-    for risk in ("Safe", "Optional", "Review"):
+    for risk in ("Safe", "Optional"):
         startups._toggle_risk_filter(risk)
-    assert startups._risk_filter == {"Protected"}
+    assert startups._risk_filter == {"Review"}
 
-    startups._toggle_risk_filter("Protected")
+    # Clicking the last one standing is refused: an empty list with every
+    # chip off has no visible way back.
+    startups._toggle_risk_filter("Review")
 
-    assert startups._risk_filter == {"Protected"}
+    assert startups._risk_filter == {"Review"}
 
 
 # ── chip labels are translatable ──────────────────────────────────

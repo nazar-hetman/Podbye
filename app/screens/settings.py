@@ -211,10 +211,12 @@ class SettingsScreen(QWidget):
 
     settings_saved = Signal()
 
-    def __init__(self, theme_callback=None, settings_store=None, parent=None):
+    def __init__(self, theme_callback=None, settings_store=None,
+                 is_busy_callback=None, parent=None):
         super().__init__(parent)
         self._theme_callback = theme_callback
         self._store = settings_store
+        self._is_busy_callback = is_busy_callback
         self._styled_panels: list[QFrame] = []
         self._styled_inputs: list[QLineEdit] = []
         self._styled_combos: list[TacticalComboBox] = []
@@ -457,8 +459,24 @@ class SettingsScreen(QWidget):
         self._endpoint_input.setEnabled(not local)
 
     def _on_endpoint_edited(self):
-        """Persist a hand-typed endpoint (Server mode only edits are possible)."""
+        """Validate and persist a hand-typed Server endpoint.
+
+        The runtime refuses public addresses as a final safety backstop, but a
+        Settings field should not silently save an address that can never be
+        used.  Keep the last valid LAN address intact when validation fails.
+        """
+        from app.services.ollama_client import is_local_endpoint
+
         text = self._endpoint_input.text().strip()
+        if not is_local_endpoint(text):
+            remembered = self._store.get("ai_server_endpoint", "") if self._store else ""
+            self._endpoint_input.setText(
+                remembered if is_local_endpoint(remembered) else "")
+            self._conn_status_lbl.setText(tr("refused · not a local address"))
+            self._conn_hint_lbl.setText(tr(
+                "Podbye only connects to this machine or your LAN, never to a cloud API."))
+            self._conn_hint_lbl.setVisible(True)
+            return
         self._save_value("ai_endpoint", text)
         if self._rb_ep_server.isChecked():
             # Remember it separately so a Local round-trip doesn't lose it.
@@ -499,8 +517,13 @@ class SettingsScreen(QWidget):
 
     def _save_value(self, key: str, value):
         if self._store:
-            self._store.set_and_save(key, value)
+            # Older lightweight stores used by integrations return None.  Only
+            # an explicit False means the real store could not persist.
+            if self._store.set_and_save(key, value) is False:
+                self._show_persistence_error()
+                return False
             self.settings_saved.emit()
+        return True
 
     def _persist_slider(self, key: str, slider: QSlider):
         """Save *slider* under *key* on any change, debounced.
@@ -514,8 +537,27 @@ class SettingsScreen(QWidget):
         timer.setSingleShot(True)
         timer.setInterval(400)
         timer.timeout.connect(lambda: self._save_value(key, slider.value()))
+        timer._settings_key = key
+        timer._settings_slider = slider
         slider.valueChanged.connect(lambda _: timer.start())
         self._slider_timers.append(timer)
+
+    def _flush_pending_sliders(self):
+        """Persist a just-adjusted slider before this screen is destroyed."""
+        for timer in self._slider_timers:
+            if timer.isActive():
+                timer.stop()
+                self._save_value(timer._settings_key,
+                                 timer._settings_slider.value())
+
+    def closeEvent(self, event):
+        self._flush_pending_sliders()
+        super().closeEvent(event)
+
+    def stop_background_work(self, _timeout_ms: int = 0) -> bool:
+        """Participate in the shell shutdown sweep by flushing UI-only work."""
+        self._flush_pending_sliders()
+        return True
 
     def _save_model(self):
         model_text = self._model_combo.currentText()
@@ -585,6 +627,16 @@ class SettingsScreen(QWidget):
             nav_row.addWidget(btn)
         nav_row.addStretch()
         outer.addLayout(nav_row)
+
+        # A failed write used to be entirely silent: the setting worked for
+        # this process, then disappeared on restart. Keep the warning close to
+        # the controls without turning every individual change into a dialog.
+        self._persistence_error_lbl = QLabel("")
+        self._persistence_error_lbl.setObjectName("Dim")
+        self._persistence_error_lbl.setStyleSheet("font-size: 11px; padding: 0 22px 8px;")
+        self._persistence_error_lbl.setWordWrap(True)
+        self._persistence_error_lbl.setVisible(False)
+        outer.addWidget(self._persistence_error_lbl)
 
         # Stacked sections
         self._stack = QStackedWidget()
@@ -1416,11 +1468,15 @@ class SettingsScreen(QWidget):
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(4)
 
-        path_lbl = QLabel(path or tr("unavailable"))
+        # A filesystem path is a single value, not paragraph prose. Middle
+        # elision preserves its meaningful beginning and end at the app's
+        # minimum width; the full value remains available on hover and can be
+        # opened directly from the adjacent action.
+        path_lbl = ElidedLabel(path or tr("unavailable"), mode=Qt.ElideMiddle)
         if key == "config":
             self._config_path_lbl = path_lbl
         path_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px;")
-        path_lbl.setWordWrap(True)
+        path_lbl.setToolTip(path or tr("unavailable"))
         # 380px broke "C:\Users\<name>\AppData\Roaming\Podbye\sessions"
         # across two lines, splitting one value at whatever character happened
         # to land on the boundary. A real path needs ~552px, so the cap is set
@@ -1431,7 +1487,6 @@ class SettingsScreen(QWidget):
         # label at 484px and the path still broke over two lines. The app's
         # window minimum is 1100px, which leaves ~609px for this column, so
         # 560 fits at every size the window can actually be.
-        path_lbl.setMinimumWidth(_PATH_VALUE_WIDTH)
         path_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
         col.addWidget(path_lbl)
 
@@ -1555,7 +1610,18 @@ class SettingsScreen(QWidget):
         if self._theme_callback:
             self._theme_callback(THEME_KEYS[index])
         if self._store:
-            self._store.set_and_save("theme", THEME_KEYS[index] if index < len(THEME_KEYS) else "forest")
+            if self._store.set_and_save(
+                    "theme", THEME_KEYS[index] if index < len(THEME_KEYS) else "forest") is False:
+                self._show_persistence_error()
+
+    def _show_persistence_error(self):
+        """Show that the active choice was not durably saved."""
+        if not hasattr(self, "_persistence_error_lbl"):
+            return
+        path = getattr(self._store, "config_path", "") or tr("unavailable")
+        self._persistence_error_lbl.setText(
+            tr("Settings could not be saved. Check access to {path}.", path=path))
+        self._persistence_error_lbl.setVisible(True)
 
     def _test_connection(self):
         """Test Ollama connection in background thread."""
@@ -1759,6 +1825,14 @@ class SettingsScreen(QWidget):
         """
         from PySide6.QtWidgets import QMessageBox
 
+        if self._is_busy_callback and self._is_busy_callback():
+            QMessageBox.information(
+                self,
+                tr("Reset unavailable"),
+                tr("Wait for current background work to finish before resetting settings."),
+            )
+            return
+
         answer = QMessageBox.question(
             self,
             tr("Reset all settings?"),
@@ -1772,12 +1846,19 @@ class SettingsScreen(QWidget):
             return
 
         if self._store:
-            self._store.reset()
+            saved = self._store.reset()
             self._load_from_store()
+            self._refresh_kept_paths()
             # Re-apply default theme
             default_theme = self._store.get("theme", "forest")
             if self._theme_callback:
                 self._theme_callback(default_theme)
+            if saved is False:
+                self._show_persistence_error()
+            # Resetting a preference must have the same live behavior as
+            # changing it normally; in particular, a reset language applies
+            # immediately once no work is running.
+            self.settings_saved.emit()
 
     def _settings_panel_qss(self) -> str:
         p = get_palette()

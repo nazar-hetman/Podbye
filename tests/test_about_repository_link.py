@@ -106,7 +106,10 @@ def test_a_store_set_after_construction_still_shows_its_path(qapp):
         store = SettingsStore()
         screen.set_settings_store(store)           # ...store arrives after
         assert screen._storage_targets["config"] == str(store.config_path)
-        assert screen._config_path_lbl.text() == str(store.config_path)
+        # full_text(), not text(): the row shows the path in an ElidedLabel,
+        # which middle-elides a real config path at this width and returns
+        # what survived. The value under it is what this is about.
+        assert screen._config_path_lbl.full_text() == str(store.config_path)
     finally:
         screen.close()
         screen.deleteLater()

@@ -19,9 +19,9 @@ _NAV_TEXT = {
     "English": _NAV,
     "Ukrainian": ("Головна", "Очищення", "Аналіз", "Знахідки", "Автозапуск", "Історія", "Налаштування"),
     "Spanish": ("Inicio", "Limpieza rápida", "Analizar", "Resultados", "Inicio automático", "Historial", "Configuración"),
-    "German": ("Startseite", "Schnellbereinigung", "Analyse", "Ergebnisse", "Autostart", "Verlauf", "Einstellungen"),
+    "German": ("Startseite", "Bereinigung", "Analyse", "Ergebnisse", "Autostart", "Verlauf", "Einstellungen"),
     "French": ("Accueil", "Nettoyage", "Analyser", "Résultats", "Démarrage", "Historique", "Paramètres"),
-    "Polish": ("Strona główna", "Szybkie czyszczenie", "Analiza", "Wyniki", "Autostart", "Historia", "Ustawienia"),
+    "Polish": ("Strona główna", "Czyszczenie", "Analiza", "Wyniki", "Autostart", "Historia", "Ustawienia"),
 }
 
 
@@ -42,9 +42,11 @@ def test_rendered_navigation_uses_the_active_ui_language(qapp, language):
     sidebar.show()
     qapp.processEvents()
     try:
-        # Sidebar names intentionally elide inside its fixed-width shell.  The
-        # underlying rendered value (and its tooltip when cut) is the locale
-        # value, never the English route key.
+        # Nothing elides here any more: a language whose full name does not
+        # fit 119px defines a shorter "nav:<screen>" form instead, which is
+        # why Ukrainian, German and Polish read shorter than their prose
+        # translations. The rendered value is always the locale's, never the
+        # English route key.
         assert tuple(button._name_lbl.full_text() for button in sidebar._buttons) == _NAV_TEXT[language]
     finally:
         sidebar.deleteLater()

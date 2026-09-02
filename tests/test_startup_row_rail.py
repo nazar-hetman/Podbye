@@ -134,9 +134,9 @@ def test_the_badge_column_is_the_same_width_on_every_row(qapp):
     assert len(widths) == 1, f"badge column varies by row: {widths}"
 
 
-def test_the_action_column_is_the_same_width_on_every_row(qapp):
-    """Disable/Enable differ in length; the column must not."""
-    widths = {r._toggle_btn.width() for r in _rows_for_alignment(qapp)}
+def test_the_state_column_is_the_same_width_on_every_row(qapp):
+    """ON and OFF differ in length; the column must not."""
+    widths = {r._state_badge.width() for r in _rows_for_alignment(qapp)}
     assert len(widths) == 1, f"action column varies by row: {widths}"
 
 
@@ -147,7 +147,7 @@ def test_the_controls_are_the_only_thing_in_their_column(qapp):
     row = _row(qapp, _entry())
 
     assert row._risk_badge.width() == StartupListRow._BADGE_W
-    assert row._toggle_btn.width() == StartupListRow._ACTION_W
+    assert row._state_badge.width() == StartupListRow._ACTION_W
 
 
 def test_the_columns_hold_their_longest_label(qapp):
@@ -165,12 +165,15 @@ def test_the_columns_hold_their_longest_label(qapp):
     load_fonts()
     qapp.setFont(QFont(FONT_UI, 10))
     try:
+        # Startups no longer offers Protected — Podbye modifies no startup
+        # entry, so it can never refuse to — but Findings still does and the
+        # Badge is shared, so the column is still sized for the longest word.
         widest_badge = max(Badge(t, "info").sizeHint().width()
-                           for t in ("PROTECTED", "OPTIONAL", "REVIEW", "SAFE"))
-        row = _row(qapp, _entry(risk="Protected", enabled=True))
+                           for t in ("PROTECTED", "OPTIONAL AT STARTUP", "REVIEW", "SAFE"))
+        row = _row(qapp, _entry(risk="Review", enabled=True))
         widest_action = max(
-            row._toggle_btn.fontMetrics().horizontalAdvance(t)
-            for t in ("Disable", "Enable"))
+            row._state_badge.fontMetrics().horizontalAdvance(t)
+            for t in ("ON", "OFF"))
     finally:
         qapp.setFont(previous)
 
@@ -178,26 +181,26 @@ def test_the_columns_hold_their_longest_label(qapp):
     assert StartupListRow._ACTION_W >= widest_action, "the action column clips"
 
 
-# ── the action is text, not a button box ──────────────────────────
+# ── the state is a statement, not a control ───────────────────────
 
-def test_the_action_is_a_compact_button(qapp):
-    """This used to assert the opposite, and the reasoning it recorded still
-    stands: twenty-five outlined buttons outweighed the entries they belonged
-    to. The answer was a smaller button, not the loss of the affordance - as
-    bare text the one control this screen exists to offer read as a label. It
-    keeps a border and a fill at 10px with tight padding.
+def test_the_state_reads_as_text_not_as_something_to_press(qapp):
+    """This used to assert the opposite, and the reasoning it recorded was
+    right for what it was: the one control the screen offered had to look
+    like a control. It turned out not to be a control at all — the handler
+    set entry.enabled in memory and repainted, and Podbye has no registry
+    write anywhere, so Windows was never touched.
 
-    Width is pinned with it: a styled QPushButton cannot shrink below its own
-    chrome, so at the old 54px column it overflowed and squeezed the name and
-    meta labels beside it into nothing.
+    So the column states the entry's state instead. "status" is the
+    borderless Badge variant, added for a badge that sits in a row of
+    controls and cannot be pressed.
     """
-    row = _row(qapp, _entry())
-    qss = row._toggle_btn.styleSheet()
+    from PySide6.QtWidgets import QAbstractButton
 
-    assert "border: 1px solid" in qss
-    assert "background: transparent" not in qss
-    assert "font-size: 10px" in qss
-    assert row._ACTION_W >= 80, "no room for the label in French"
+    row = _row(qapp, _entry())
+
+    assert not isinstance(row._state_badge, QAbstractButton)
+    assert "border: none" in row._state_badge.styleSheet()
+    assert row._ACTION_W >= 80
 
 
 # ── staleness ─────────────────────────────────────────────────────

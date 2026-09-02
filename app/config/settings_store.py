@@ -97,6 +97,7 @@ class SettingsStore:
     def __init__(self):
         self._data: dict = _fresh_defaults()
         self._path = _config_path()
+        self._last_save_error = ""
         self.load()
 
     def load(self):
@@ -114,14 +115,23 @@ class SettingsStore:
         # Permanent delete is not wired in the UI yet; keep cleanup Recycle Bin-only.
         self._data["perm_delete_enabled"] = False
 
-    def save(self):
-        """Persist current settings to disk."""
+    def save(self) -> bool:
+        """Persist current settings to disk and report whether it succeeded.
+
+        Settings apply immediately in memory, but that is not a substitute for
+        durable storage.  Callers that have a UI can now tell the user when a
+        permissions, disk, or file-system error means the choice will be lost
+        on the next launch.
+        """
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             with open(self._path, "w", encoding="utf-8") as f:
                 json.dump(self._data, f, indent=2)
-        except OSError:
-            pass
+        except OSError as exc:
+            self._last_save_error = str(exc)
+            return False
+        self._last_save_error = ""
+        return True
 
     def get(self, key: str, default: Any = None) -> Any:
         return self._data.get(key, default if default is not None else _DEFAULTS.get(key))
@@ -129,10 +139,10 @@ class SettingsStore:
     def set(self, key: str, value: Any):
         self._data[key] = value
 
-    def set_and_save(self, key: str, value: Any):
+    def set_and_save(self, key: str, value: Any) -> bool:
         """Set a value and immediately persist."""
         self._data[key] = value
-        self.save()
+        return self.save()
 
     def all(self) -> dict:
         return dict(self._data)
@@ -141,7 +151,20 @@ class SettingsStore:
     def config_path(self) -> str:
         return str(self._path)
 
-    def reset(self):
-        """Reset to defaults."""
+    @property
+    def last_save_error(self) -> str:
+        """The most recent persistence error, or an empty string."""
+        return self._last_save_error
+
+    def reset(self) -> bool:
+        """Reset ordinary preferences while retaining durable exclusions.
+
+        Kept paths are a standing cleanup safety instruction, not a cosmetic
+        preference.  The Settings confirmation promises they survive a reset,
+        and retaining them also prevents a reset from unexpectedly making
+        previously excluded data eligible for cleanup.
+        """
+        kept_paths = list(self._data.get("kept_paths", []) or [])
         self._data = _fresh_defaults()
-        self.save()
+        self._data["kept_paths"] = kept_paths
+        return self.save()

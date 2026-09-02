@@ -123,3 +123,22 @@ def test_ukrainian_startups_uses_windows_startup_terms_not_internal_labels():
         "Реєстр автозапуску поточного користувача")
     assert data["Scheduled task (logon)"] == (
         "Заплановане завдання (вхід у систему)")
+    # This is a recommendation reason for a Windows/vendor-owned entry, not
+    # Findings' Protected state: Startups cannot change Windows configuration.
+    assert data["SYSTEM-MANAGED"] == "КЕРУЄТЬСЯ СИСТЕМОЮ"
+
+
+def test_ukrainian_copy_names_the_actual_cleanup_and_startup_actions():
+    """Safety copy must not call a Recycle Bin move a permanent deletion.
+
+    The generic Optional risk also has a different practical meaning on the
+    Startups screen: users can start the program manually instead.
+    """
+    data = json.loads((_locales_dir() / "uk.json").read_text(encoding="utf-8"))
+    assert data["Quick Cleanup"] == "Швидке очищення"
+    assert data["items removed"] == "елементів прибрано з диска"
+    assert data["Optional at startup"] == "Необов’язково під час запуску"
+    assert data["OPTIONAL AT STARTUP"] == "НЕОБОВ’ЯЗКОВО ПІД ЧАС ЗАПУСКУ"
+    assert "жодна активна операція не переривається" in data[
+        "The system-wide Temp folder used by Windows services, background tasks, and installers. Clearing it frees space left behind after updates and software installs. Files locked by a running process are automatically skipped — no active operations are interrupted."
+    ]

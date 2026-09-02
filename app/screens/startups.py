@@ -14,6 +14,13 @@ from PySide6.QtCore import Qt, Signal, QThread, QTimer
 from PySide6.QtGui import QColor
 
 from app.models.risk import RISK_ORDER
+
+# Startups does not offer Protected. In Findings that tier is enforceable —
+# the item cannot be selected and the button is disabled — and Podbye has no
+# registry-write capability at all, so it changes no startup entry and can
+# never refuse to. Everything Windows or a vendor owns is Review with a reason
+# that says so. RISK_ORDER stays as Findings' vocabulary.
+STARTUP_RISK_ORDER = tuple(r for r in RISK_ORDER if r != "Protected")
 from app.models.startup_entry import StartupEntry
 from app.widgets.controls import (ask_ai_button_qss, ElidedLabel,
                                   restyle_needed, style_container)
@@ -42,6 +49,17 @@ _IMPACT_COLOR = {
     "Light utility": "#7cc596",
     "Startup item": "#8a9b8f",
 }
+
+
+def _startup_risk_label(risk: str) -> str:
+    """A startup-specific label for a risk value.
+
+    ``Optional`` is meaningful for a cleanup candidate, but on this screen it
+    describes whether Windows needs to launch the program automatically. The
+    presentation label makes that scope explicit without changing the
+    canonical backend state.
+    """
+    return tr("Optional at startup") if risk == "Optional" else tr(risk)
 
 
 def _startup_source_text(label: str) -> str:
@@ -138,8 +156,8 @@ def _rail_text(entry: StartupEntry) -> str:
     """What the row has to say under its action, which is usually nothing.
 
     It was the date the startup target was last touched, on every row: a dim
-    number sitting under the Enable/Disable button, aligned to nothing else on
-    the screen and reading as though it belonged to the button. The date is a
+    number sitting under what was then a Disable button, aligned to nothing
+    else on the screen and reading as though it belonged to it. The date is a
     fact about the executable, and it now has a proper place — the inspector's
     meta line, beside where the entry is registered.
 
@@ -180,9 +198,9 @@ def _startup_recommendation(entry: StartupEntry) -> tuple[str, str, str, str]:
     accent_risk = p.get("risk", "#d68a78")
     accent_info = p.get("accent", "#7ab8d4")
 
-    if entry.risk == "Protected":
+    if getattr(entry, "system_managed", False):
         return (
-            tr("PROTECTED"),
+            tr("SYSTEM-MANAGED"),
             tr("Recommendation: keep this enabled unless you are deliberately changing a security, driver, or hardware workflow."),
             tr(entry.risk_reason) or tr("This startup entry is tied to protected system or device behavior."),
             accent_risk,
@@ -218,7 +236,7 @@ def _startup_recommendation(entry: StartupEntry) -> tuple[str, str, str, str]:
         )
     if entry.risk == "Optional":
         return (
-            tr("OPTIONAL"),
+            tr("OPTIONAL AT STARTUP"),
             tr("Recommendation: keep enabled only if you use this immediately after Windows starts."),
             tr(entry.recommendation) or tr(entry.risk_reason)
             or tr("Manual launch is usually enough for this item."),
@@ -353,9 +371,11 @@ class StartupAIWorker(QThread):
             for entry in self._entries:
                 if self._cancel.is_set():
                     break
-                if entry.risk == "Protected":
+                if getattr(entry, "system_managed", False):
                     entry.ai_status = "disabled"
-                    entry.ai_explanation = entry.explanation_fallback or "Protected startup entry — no extra analysis needed."
+                    entry.ai_explanation = (
+                        entry.explanation_fallback
+                        or "Managed by Windows or the device vendor — the reason above is exact.")
                     self.entry_updated.emit(entry)
                     continue
 
@@ -396,20 +416,18 @@ class StartupAIWorker(QThread):
 
 class StartupListRow(QFrame):
     clicked = Signal(str)
-    toggle_requested = Signal(str, bool)
 
-    # Ukrainian "НЕОБОВ’ЯЗКОВО" is the widest shipped risk label (111px with
-    # the badge chrome). A fixed badge column keeps every row aligned, but it
-    # must be large enough for that legitimate state rather than clipping it.
-    # Polish "DO SPRAWDZENIA" is slightly wider than the English Review badge.
-    # Risk labels are product states, not terse action verbs.  The review
-    # state needs enough room for localized wording such as Spanish
-    # “Requiere revisión”; keep the column aligned and sized to its content.
-    _BADGE_W = 144
-    # Wide enough for the toggle as a button, in every shipped language:
-    # "Disable" needs 62px, Ukrainian 74px and French 80px once the border and
-    # padding are counted. At 54 the styled button could not shrink to fit, so
-    # it overflowed its column and squeezed the name and meta labels beside it
+    # “Optional at startup” describes the assessment, rather than a startup
+    # mechanism.  Its localized forms are deliberately longer than the old
+    # one-word label (Ukrainian needs 223px including badge chrome). Keep a
+    # single, locale-safe badge column instead of truncating a product state.
+    _BADGE_W = 230
+    # The column now holds the ON/OFF state badge, which needs far less. The
+    # width is kept because it is what aligns the badge column down the list,
+    # and because of what it was sized for: a Disable button needed 62px in
+    # English, 74 in Ukrainian and 80 in French once border and padding were
+    # counted. At 54 the styled button could not shrink to fit, so it
+    # overflowed its column and squeezed the name and meta labels beside it
     # into ellipses - the button clipped, and took the row's text with it.
     # German "Deaktivieren" requires more room than the English action label.
     _ACTION_W = 100
@@ -422,11 +440,14 @@ class StartupListRow(QFrame):
         self.setObjectName("StartupListRow")
         self.setCursor(Qt.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        # Wide enough for the longest label each column can hold — "PROTECTED"
-        # and "Disable" — so the columns never resize with the content.
-        # Two stacked lines on each side, and the toggle button's stylesheet
-        # padding makes it taller than its unpolished sizeHint suggests — at 52
-        # the rail text was drawn through the button above it.
+        # Wide enough for the longest label each column can hold, so the
+        # columns never resize with the content. "PROTECTED" is Findings'
+        # word; Startups tops out at "REVIEW" but shares the Badge.
+        # Two stacked lines on each side. The height was set when this column
+        # held a styled button whose padding made it taller than its
+        # unpolished sizeHint suggested — at 52 the rail text was drawn through
+        # it. The badge that replaced it is shorter, but the two-line rail
+        # still needs the room.
         self.setMinimumHeight(64)
 
         layout = QHBoxLayout(self)
@@ -452,13 +473,19 @@ class StartupListRow(QFrame):
             f"font-family: 'JetBrains Mono'; font-size: 9px; color: {get_palette().get('text_dim', '#8a9b8f')};"
         )
 
-        self._state_lbl = QLabel()
-        self._state_lbl.setAlignment(Qt.AlignCenter)
-
         self._risk_badge = Badge("", "info")
-        self._toggle_btn = QPushButton()
-        self._toggle_btn.setCursor(Qt.PointingHandCursor)
-        self._toggle_btn.clicked.connect(self._on_toggle_clicked)
+        # A statement, not a control. This was a Disable/Enable button whose
+        # handler set entry.enabled in memory and repainted: the row flipped
+        # to "Enable" and Windows was untouched. Podbye contains no registry
+        # write of any kind, so it cannot change a startup entry — and a
+        # button that reports a change it did not make is the worst thing a
+        # tool like this can do.
+        #
+        # "status" is the borderless Badge variant, added for exactly this:
+        # every other variant draws a border and reads as something you can
+        # press. Changing the entry is offered where the user is deciding —
+        # the inspector's "Open Task Manager" — not on every row.
+        self._state_badge = Badge("", "status")
 
         # Elides rather than clips. "Microsoft Corporation - System startup
         # registry (64-bit)" is longer than any row is wide, and an Ignored
@@ -475,26 +502,18 @@ class StartupListRow(QFrame):
         center.addWidget(self._meta_lbl)
         layout.addLayout(center, stretch=1)
 
-        # Fixed columns. This cluster used to size itself per row, so its width
-        # was max(badge + action, rail text) — and all three of those vary by
-        # row ("OPTIONAL"/"PROTECTED", "Disable"/"Enable", "Creative helper" vs
-        # "Remote access service"). Right-aligned against the row edge, that put
-        # every row's badge at a different x: a ~112px swing down the list,
-        # which is what made the column look scattered.
+        # Fixed, stacked columns. This used to put the assessment and state
+        # side by side. That made the wide localized assessment compete with
+        # the state at the minimum window width. Stacking them retains the
+        # aligned rail while leaving every locale enough room for its full
+        # user-facing assessment.
         right = QVBoxLayout()
         right.setSpacing(2)
         right.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
         self._risk_badge.setFixedWidth(self._BADGE_W)
-        self._toggle_btn.setFixedWidth(self._ACTION_W)
-        badges = QHBoxLayout()
-        badges.setSpacing(_RAIL_GAP)
-        # The toggle button already says Enable/Disable, so the separate
-        # ON ENABLED / OFF DISABLED pill is redundant noise in the row — the
-        # full state is still shown in the inspector. Keep action + risk only.
-        self._state_lbl.setVisible(False)
-        badges.addWidget(self._risk_badge, alignment=Qt.AlignVCenter)
-        badges.addWidget(self._toggle_btn, alignment=Qt.AlignVCenter)
-        right.addLayout(badges)
+        self._state_badge.setFixedWidth(self._ACTION_W)
+        right.addWidget(self._risk_badge, alignment=Qt.AlignRight)
+        right.addWidget(self._state_badge, alignment=Qt.AlignRight)
         # Second line of the rail, mirroring the Findings rows' size/last-active
         # column. A startup entry has no size, so it carries what it does have:
         # the role it plays at login, and how old the binary behind it is.
@@ -516,12 +535,13 @@ class StartupListRow(QFrame):
     def update_entry(self, entry: StartupEntry):
         self._entry = entry
         self._name_lbl.setText(entry.name)
-        self._state_lbl.setText(
-            f"{'ON' if entry.enabled else 'OFF'} {entry.status_label.upper()}"
-        )
-        self._state_lbl.setStyleSheet(_state_pill_style(entry.enabled))
-        self._toggle_btn.setText(tr("Disable") if entry.enabled else tr("Enable"))
-        self._risk_badge.set_badge(tr(entry.risk), _RISK_VARIANT.get(entry.risk, "info"))
+        # Its own keys. "Enabled"/"Disabled" are the state *filter* chips and
+        # read as plurals in several languages ("Увімкнені" = the enabled
+        # ones); this states one entry's state and has a 66px column.
+        self._state_badge.set_badge(
+            tr("On") if entry.enabled else tr("Off"), "status")
+        self._risk_badge.set_badge(_startup_risk_label(entry.risk),
+                                   _RISK_VARIANT.get(entry.risk, "info"))
         parts = [entry.publisher_display, _startup_source_text(entry.source_label), tr(entry.impact)]
         # Only while it is actually doing something. "AI disabled" on every row
         # is noise; the inspector states per-entry AI state and offers the
@@ -563,9 +583,6 @@ class StartupListRow(QFrame):
         if event.button() == Qt.LeftButton:
             self.clicked.emit(self._entry.key)
         super().mousePressEvent(event)
-
-    def _on_toggle_clicked(self):
-        self.toggle_requested.emit(self._entry.key, not self._entry.enabled)
 
     def _apply_style(self):
         p = get_palette()
@@ -649,33 +666,12 @@ class StartupListRow(QFrame):
         self._ai_lbl.setStyleSheet(
             f"font-family: 'JetBrains Mono'; font-size: 9px; color: {secondary};"
         )
-        self._toggle_btn.setStyleSheet(self._toggle_style(self._entry.enabled))
-
-    @staticmethod
-    def _toggle_style(enabled: bool) -> str:
-        """A compact button, not a line of text.
-
-        This was deliberately styled as bare text once, because twenty-five
-        outlined buttons down the page outweighed the entries they belonged
-        to. The answer to that is a smaller button, not the loss of the
-        affordance: as text it read as a label, on the one control the screen
-        exists to offer. So it keeps a border and a fill, at 10px with tight
-        padding, quiet enough to repeat twenty-five times.
-        """
-        p = get_palette()
-        fg = p.get("safe", "#7cc596") if enabled else p.get("text_dim", "#8a9b8f")
-        border = _rgba(fg, 110)
-        panel_alt = p.get("panel_alt", "#19231c")
-        panel_hover = p.get("panel_hover", "#1d2c25")
-        return (
-            f"QPushButton {{ font-family: 'JetBrains Mono'; font-size: 10px; "
-            f"padding: 3px 8px; border-radius: 2px; color: {fg}; "
-            f"border: 1px solid {border}; background: {panel_alt}; }}"
-            f"QPushButton:hover {{ border-color: {fg}; background: {panel_hover}; }}"
-        )
-
+        self._state_badge.refresh_style()
 
 class StartupInspectorPanel(QFrame):
+    # Emitted when the user asks for the place the change is actually made.
+    task_manager_requested = Signal()
+
     def __init__(self, parent=None, compact: bool = False, ask_ai_cb=None):
         super().__init__(parent)
         self._compact = compact
@@ -711,12 +707,27 @@ class StartupInspectorPanel(QFrame):
         self._name_lbl = ElidedLabel(tr("Select a startup entry"),
                                      mode=Qt.ElideMiddle)
         self._name_lbl.setStyleSheet("font-size: 13px; font-weight: 700;")
-        # The state and the risk sit beside the name, where the Findings
-        # inspector puts them, instead of on a row of their own underneath.
+        # Keep the name on its own line. The assessment wording is localized
+        # product copy and can be much wider than a startup name at the
+        # minimum inspector width.
         self._name_row = QHBoxLayout()
         self._name_row.setSpacing(8)
         self._name_row.addWidget(self._name_lbl, stretch=1)
         layout.addLayout(self._name_row)
+
+        # A single horizontal badge row would require the longest localized
+        # assessment plus the state label to fit beside the name. Put the two
+        # read-only states on an aligned vertical rail instead, so no locale
+        # loses meaningful status text at the supported minimum width.
+        badge_column = QVBoxLayout()
+        badge_column.setSpacing(3)
+        badge_column.setAlignment(Qt.AlignRight)
+        self._state_lbl = QLabel()
+        self._state_lbl.setAlignment(Qt.AlignCenter)
+        badge_column.addWidget(self._state_lbl, alignment=Qt.AlignRight)
+        self._risk_badge = Badge("", "info")
+        badge_column.addWidget(self._risk_badge, alignment=Qt.AlignRight)
+        layout.addLayout(badge_column)
 
         self._publisher_lbl = QLabel(tr("Choose an entry on the left to inspect impact and recommendation."))
         self._publisher_lbl.setObjectName("Dim")
@@ -734,16 +745,6 @@ class StartupInspectorPanel(QFrame):
         # never filled it, so it read as an unfinished table. The keys said
         # nothing the values do not: "User startup registry" is obviously a
         # source, a path is obviously a path.
-        badge_row = QHBoxLayout()
-        badge_row.setSpacing(5)
-        badge_row.addStretch()
-        self._state_lbl = QLabel()
-        self._state_lbl.setAlignment(Qt.AlignCenter)
-        badge_row.addWidget(self._state_lbl)
-        self._risk_badge = Badge("", "info")
-        badge_row.addWidget(self._risk_badge)
-        self._name_row.addLayout(badge_row)
-
         # One unbreakable token, elided in the middle so the drive and the
         # executable both survive. Wrapping it would make it the panel's
         # minimum width — measured at 1056px against a ~500px sidebar.
@@ -834,14 +835,19 @@ class StartupInspectorPanel(QFrame):
         expl_hdr_row.addWidget(self._ai_status_lbl)
         expl_hdr_row.addStretch()
         # On-demand "Ask AI" — explain this one entry even when startup AI is
-        # off. Shown only when there is no AI answer yet (set in set_entry()).
+        # off. It has its own compact line: localized assessment headings plus
+        # localized action labels otherwise form three fixed-width controls in
+        # a narrow inspector header.
         self._ask_ai_btn = QPushButton(tr("Ask AI"))
         self._ask_ai_btn.setCursor(Qt.PointingHandCursor)
         self._ask_ai_btn.setStyleSheet(ask_ai_button_qss())
         self._ask_ai_btn.setVisible(False)
         self._ask_ai_btn.clicked.connect(self._on_ask_ai_clicked)
-        expl_hdr_row.addWidget(self._ask_ai_btn)
         expl_layout.addLayout(expl_hdr_row)
+        ask_ai_row = QHBoxLayout()
+        ask_ai_row.addStretch()
+        ask_ai_row.addWidget(self._ask_ai_btn)
+        expl_layout.addLayout(ask_ai_row)
 
         # A QTextEdit, as the Findings inspector uses for the same kind of
         # content, because generated prose can contain a token no line break
@@ -882,25 +888,46 @@ class StartupInspectorPanel(QFrame):
         action_layout.setContentsMargins(0, 6, 0, 0)
         action_layout.setSpacing(5)
 
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(6)
+        # Three real actions do not fit side by side in the inspector at the
+        # application's minimum width (and translated Task Manager labels are
+        # wider still).  Keep the file actions together and give the Windows
+        # hand-off its own line instead of letting the whole scroll area demand
+        # more width than it has.
+        file_actions = QHBoxLayout()
+        file_actions.setSpacing(6)
         self._open_btn = QPushButton(tr("Open in Explorer"))
         self._open_btn.setObjectName("Subtle")
         self._open_btn.setStyleSheet("font-size: 10px; padding: 3px 8px;")
         self._open_btn.setCursor(Qt.PointingHandCursor)
         self._open_btn.clicked.connect(self._on_open_location)
-        btn_row.addWidget(self._open_btn)
+        file_actions.addWidget(self._open_btn)
 
         self._copy_btn = QPushButton(tr("Copy path"))
         self._copy_btn.setObjectName("Subtle")
         self._copy_btn.setStyleSheet("font-size: 10px; padding: 3px 8px;")
         self._copy_btn.setCursor(Qt.PointingHandCursor)
         self._copy_btn.clicked.connect(self._on_copy_path)
-        btn_row.addWidget(self._copy_btn)
-        btn_row.addStretch()
-        action_layout.addLayout(btn_row)
+        file_actions.addWidget(self._copy_btn)
+        file_actions.addStretch()
 
-        note = QLabel(tr("Podbye explains startup impact, but changes stay manual."))
+        # The one route to an actual change. The row used to carry a
+        # Disable button that changed nothing outside Podbye's memory; this
+        # is where the change is really made, offered next to the entry the
+        # user has just read about.
+        self._tm_btn = QPushButton(tr("Change in Task Manager ↗"))
+        self._tm_btn.setObjectName("Subtle")
+        self._tm_btn.setStyleSheet("font-size: 10px; padding: 3px 8px;")
+        self._tm_btn.setCursor(Qt.PointingHandCursor)
+        self._tm_btn.clicked.connect(self.task_manager_requested.emit)
+        task_manager_action = QHBoxLayout()
+        task_manager_action.addWidget(self._tm_btn)
+        task_manager_action.addStretch()
+        action_layout.addLayout(file_actions)
+        action_layout.addLayout(task_manager_action)
+
+        note = QLabel(tr("Podbye does not change startup entries. It explains "
+                         "what each one does so you can decide, and Windows "
+                         "makes the change."))
         note.setObjectName("Muted")
         note.setWordWrap(True)
         note.setStyleSheet("font-size: 9px;")
@@ -1123,7 +1150,8 @@ class StartupInspectorPanel(QFrame):
         self._state_lbl.setText(tr(entry.status_label).upper())
         self._state_lbl.setStyleSheet(_state_pill_style(entry.enabled))
         self._risk_badge.setVisible(True)
-        self._risk_badge.set_badge(tr(entry.risk), _RISK_VARIANT.get(entry.risk, "info"))
+        self._risk_badge.set_badge(_startup_risk_label(entry.risk),
+                                   _RISK_VARIANT.get(entry.risk, "info"))
         rec_status, rec_text, rec_evidence, rec_accent = _startup_recommendation(entry)
         self._rec_status_lbl.setText(rec_status)
         self._rec_text_lbl.setText(rec_text)
@@ -1134,6 +1162,7 @@ class StartupInspectorPanel(QFrame):
             "analyzing": tr("Analyzing startup behavior…"),
             "failed": tr("AI unavailable · using fallback explanation"),
             "disabled": tr("AI disabled for this entry"),
+            "unconfigured": tr("No AI model configured · not analyzed"),
         }.get(entry.ai_status, ""))
         explanation = self._resolve_explanation(entry)
         self._explanation_lbl.setText(self._compact_text(explanation))
@@ -1159,7 +1188,7 @@ class StartupInspectorPanel(QFrame):
     def _resolve_explanation(entry: StartupEntry) -> str:
         if entry.ai_status == "ready" and entry.ai_explanation:
             return entry.ai_explanation
-        if entry.ai_status == "disabled" and entry.ai_explanation:
+        if entry.ai_status in ("disabled", "unconfigured") and entry.ai_explanation:
             return entry.ai_explanation
         if entry.ai_status == "failed":
             return entry.explanation_fallback or entry.ai_error or tr("Startup explanation failed.")
@@ -1284,7 +1313,7 @@ class StartupsScreen(QWidget):
         # this used to be a single string, so the identical-looking chip row
         # behaved as radio buttons here and as toggles there. All four present
         # means "no filter".
-        self._risk_filter: set[str] = set(RISK_ORDER)
+        self._risk_filter: set[str] = set(STARTUP_RISK_ORDER)
         self._status_filter = "All"
         self._search = ""
         self._risk_btns: dict[str, QPushButton] = {}
@@ -1440,7 +1469,7 @@ class StartupsScreen(QWidget):
         entries = self._entries
         total = len(entries)
         enabled = sum(1 for e in entries if e.enabled)
-        needs_review = sum(1 for e in entries if e.risk in ("Review", "Protected"))
+        needs_review = sum(1 for e in entries if e.risk == "Review")
         optional_count = sum(1 for e in entries if e.risk == "Optional")
 
         p = get_palette()
@@ -1451,8 +1480,8 @@ class StartupsScreen(QWidget):
             (tr("TOTAL ENTRIES"), str(total), tr("detected"), ""),
             (tr("ENABLED"), str(enabled), tr("of {total}", total=total), ""),
             (tr("NEEDS REVIEW"), str(needs_review),
-             tr("need review or are protected"), p.get("review", "#d8b46a")),
-            (tr("OPTIONAL"), str(optional_count), tr("manual launch is fine"), p.get("accent", "#7ab8d4")),
+             tr("need review"), p.get("review", "#d8b46a")),
+            (tr("OPTIONAL AT STARTUP"), str(optional_count), tr("manual launch is fine"), p.get("accent", "#7ab8d4")),
         ]:
             card = Panel()
             cl = card.with_layout(vertical=True, margins=(14, 10, 14, 10), spacing=2)
@@ -1522,6 +1551,8 @@ class StartupsScreen(QWidget):
         body_layout.addWidget(left_panel, stretch=7)
 
         self._right_sidebar = StartupRightSidebar(ask_ai_cb=self._on_ask_ai_startup)
+        self._right_sidebar.detail_widget.task_manager_requested.connect(
+            self._open_task_manager)
         self._detail_widget = self._right_sidebar.detail_widget
         body_layout.addWidget(self._right_sidebar, stretch=3)
         self._apply_detail_widget_style()
@@ -1572,9 +1603,13 @@ class StartupsScreen(QWidget):
         row.setContentsMargins(14, 10, 14, 8)
         row.setSpacing(8)
 
-        top = QHBoxLayout()
-        top.setSpacing(10)
-        top.setAlignment(Qt.AlignVCenter)
+        # Keep the search field separate from the risk chips.  A localized
+        # assessment such as “Opcjonalne przy uruchamianiu” must not force the
+        # whole left pane wider than the supported application width just to
+        # share a line with a fixed-width search field.
+        search_row = QHBoxLayout()
+        search_row.setSpacing(10)
+        search_row.setAlignment(Qt.AlignVCenter)
 
         self._search_input = QLineEdit()
         self._search_input.setPlaceholderText(tr("Search startups…"))
@@ -1588,16 +1623,24 @@ class StartupsScreen(QWidget):
             f"background: {get_palette().get('panel', '#141d18')};"
         )
         self._search_input.textChanged.connect(self._on_search_typed)
-        top.addWidget(self._search_input)
-        top.addSpacing(4)
+        search_row.addWidget(self._search_input)
+        search_row.addStretch()
+        row.addLayout(search_row)
+
+        top = QHBoxLayout()
+        top.setSpacing(10)
+        top.setAlignment(Qt.AlignVCenter)
 
         self._all_risks_btn = self._filter_btn(tr("All"), True)
         self._all_risks_btn.clicked.connect(self._on_all_risks_clicked)
         top.addWidget(self._all_risks_btn)
 
         self._risk_btns = {}
-        for key in RISK_ORDER:
-            btn = self._filter_btn(tr(key), key in self._risk_filter)
+        for key in STARTUP_RISK_ORDER:
+            # Optional is a cleanup-oriented classifier name. On Startups it
+            # means automatic launch is not normally required; the rows,
+            # inspector, and summary card use the same startup-scoped label.
+            btn = self._filter_btn(_startup_risk_label(key), key in self._risk_filter)
             btn.clicked.connect(lambda _=False, k=key: self._toggle_risk_filter(k))
             self._risk_btns[key] = btn
             top.addWidget(btn)
@@ -1627,7 +1670,7 @@ class StartupsScreen(QWidget):
 
     def _on_all_risks_clicked(self):
         """'All' means no filter — turn every risk chip back on."""
-        self._risk_filter = set(RISK_ORDER)
+        self._risk_filter = set(STARTUP_RISK_ORDER)
         self._refresh_risk_chips()
         self._reapply_filters()
 
@@ -1650,7 +1693,7 @@ class StartupsScreen(QWidget):
         for key, btn in self._risk_btns.items():
             btn.setStyleSheet(self._btn_active_style() if key in self._risk_filter
                               else self._btn_inactive_style())
-        showing_everything = len(self._risk_filter) == len(RISK_ORDER)
+        showing_everything = len(self._risk_filter) == len(STARTUP_RISK_ORDER)
         self._all_risks_btn.setStyleSheet(
             self._btn_active_style() if showing_everything else self._btn_inactive_style())
 
@@ -1736,7 +1779,6 @@ class StartupsScreen(QWidget):
             else:
                 row = StartupListRow(entry)
                 row.clicked.connect(self._select_entry)
-                row.toggle_requested.connect(self._set_entry_enabled)
                 self._row_pool.append(row)
                 # Before the trailing stretch, so the list stays top-aligned.
                 self._list_layout.insertWidget(
@@ -1771,15 +1813,6 @@ class StartupsScreen(QWidget):
     def _sync_row_selection(self):
         for row_key, row in self._row_widgets.items():
             row.set_selected(row_key == self._selected_key and bool(self._selected_key))
-
-    def _set_entry_enabled(self, key: str, enabled: bool):
-        entry = next((e for e in self._entries if e.key == key), None)
-        if entry is None:
-            return
-        entry.enabled = enabled
-        if self._selected_key == key and self._right_sidebar is not None:
-            self._right_sidebar.set_entry(entry)
-        self._show_results()
 
     def _show_detail_sidebar(self, entry: StartupEntry):
         if self._right_sidebar is None:
@@ -2003,8 +2036,28 @@ class StartupsScreen(QWidget):
             self._reapply_filters()
             return
 
+        # The same rule the per-item Ask AI path has always applied: with no
+        # model chosen there is nothing to ask. This path did not check, so
+        # opening Startups on a stock install started a worker that walked
+        # every entry against an endpoint that was not there — one failed
+        # request per program, a thread doing nothing useful for as long as
+        # the timeouts took, and every row ending on "failed" as though the
+        # analysis had been tried and gone wrong. Not configured is not a
+        # failure, and it is not the same state.
+        if not self._settings_store.get("ai_model", ""):
+            for e in self._entries:
+                e.ai_status = "unconfigured"
+            self._reapply_filters()
+            return
+
         targets = self._entries if entries is None else entries
         if not targets:
+            return
+
+        # One at a time. Re-analyze, the refresh on open and an adopted list
+        # can each land here, and two workers over the same entries race each
+        # other onto the same rows.
+        if self._ai_worker is not None and self._ai_worker.isRunning():
             return
 
         self._ai_worker = StartupAIWorker(targets, self._settings_store, parent=self)

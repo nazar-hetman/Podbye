@@ -224,14 +224,24 @@ def _classify_risk(name: str, path: str, publisher: str, product_name: str) -> t
     # Protected: Microsoft system component running from system dirs
     is_msft = _contains_any(_search_space(publisher or "", name), ("microsoft",))
     is_syspath = "system32" in lo_path or "syswow64" in lo_path
+    # Review, not Protected. In Findings, Protected is enforceable: the item
+    # cannot be selected and the button is disabled. Here it never meant that
+    # — Podbye has no registry-write capability at all, so it changes no
+    # startup entry, and the strongest thing it can honestly say about any of
+    # them is "look at this carefully before you change it in Task Manager".
+    # Borrowing a word that means "we will refuse" for a screen where nothing
+    # is refused taught users the wrong thing about the one that does.
+    #
+    # The reasons are unchanged, and they are what actually carries the
+    # warning.
     if is_msft and is_syspath:
-        return "Protected", "Windows system component — leave managed by Windows"
+        return "Review", "Windows system component — leave managed by Windows"
     if _contains_any(name_space, _PROTECTED_NAME_KEYS):
-        return "Protected", "Windows security component — leaving it enabled is recommended"
+        return "Review", "Windows security component — leaving it enabled is recommended"
     if role == "Security component":
-        return "Protected", "Security component — disabling can reduce active protection"
+        return "Review", "Security component — disabling can reduce active protection"
     if role == "Hardware utility":
-        return "Protected", "Hardware-sensitive utility — manages device or driver features"
+        return "Review", "Hardware-sensitive utility — manages device or driver features"
 
     # Review: unknown publisher or unusual location
     suspicious_dirs = ("\\temp\\", "\\tmp\\", "\\downloads\\", "\\desktop\\", "\\recycle.bin\\")
@@ -259,17 +269,36 @@ def _classify_risk(name: str, path: str, publisher: str, product_name: str) -> t
     return "Review", "Purpose is not fully clear — review before changing it"
 
 
+# The reasons _classify_risk gives an entry that Windows or a device vendor
+# owns. They are all Review — Podbye modifies no startup entry — but the
+# advice is already exact and a small model adds nothing to it.
+_SYSTEM_MANAGED_REASONS = frozenset({
+    "Windows system component — leave managed by Windows",
+    "Windows security component — leaving it enabled is recommended",
+    "Security component — disabling can reduce active protection",
+    "Hardware-sensitive utility — manages device or driver features",
+})
+
+
+def is_system_managed(reason: str) -> bool:
+    """True when *reason* is one the classifier gives a system-owned entry."""
+    return reason in _SYSTEM_MANAGED_REASONS
+
+
 def _classify_impact(name: str, path: str, publisher: str, product_name: str) -> str:
     return _infer_role(name, path, publisher, product_name)
 
 
 def _build_recommendation(risk: str, role: str) -> str:
-    if risk == "Protected":
-        if role == "Security component":
-            return "Leaving it enabled is usually recommended for ongoing protection."
-        if role == "Hardware utility":
-            return "Keep it only if you rely on its hardware features after login."
-        return "Treat this as a protected startup entry and change it carefully."
+    # Keyed on the role, not on a tier. The advice for a security component or
+    # a driver utility is the same whatever bucket it is filed under, and it
+    # used to be reachable only through the retired Protected tier — folding
+    # that into Review would have silently replaced this with the generic
+    # "review the publisher and path" line.
+    if role == "Security component":
+        return "Leaving it enabled is usually recommended for ongoing protection."
+    if role == "Hardware utility":
+        return "Keep it only if you rely on its hardware features after login."
     if risk == "Optional":
         if role == "Background sync":
             return "If you use it daily, keeping it enabled is more convenient."
@@ -571,6 +600,7 @@ def _read_run_key(hive, key_path: str, source: str, source_label: str,
                         source_label=source_label,
                         enabled=enabled,
                         risk=risk,
+                        system_managed=is_system_managed(reason),
                         risk_reason=reason,
                         impact=impact,
                         recommendation=_build_recommendation(risk, impact),
@@ -616,6 +646,7 @@ def _read_startup_folder(folder: str, source: str, source_label: str) -> list[St
                     source_label=source_label,
                     enabled=True,  # items in startup folder are always enabled
                     risk=risk,
+                    system_managed=is_system_managed(reason),
                     risk_reason=reason,
                     impact=impact,
                     recommendation=_build_recommendation(risk, impact),
@@ -779,6 +810,7 @@ def _read_scheduled_tasks() -> list[StartupEntry]:
             source_label=label,
             enabled=info["enabled"],
             risk=risk,
+            system_managed=is_system_managed(reason),
             risk_reason=reason,
             impact=impact,
             recommendation=_build_recommendation(risk, impact),

@@ -18,9 +18,30 @@ APP = pathlib.Path(__file__).resolve().parents[1] / "app"
 LOCALES = APP / "locales"
 
 
-def _tr_keys() -> set[str]:
-    """Every literal string passed to tr() anywhere in the app."""
+def _runtime_tr_keys() -> set[str]:
+    """Strings that reach tr() from a table rather than as a literal.
+
+    The sidebar renders its sections and nav items with ``tr(section)`` and
+    ``tr(name)``, so the AST scan below — which only sees ``tr("...")`` —
+    never knew those keys existed. Three of them shipped untranslated behind
+    a coverage report that read 100%: WORKSTATION and SYSTEM in Spanish,
+    German and Polish.
+
+    Any other table fed straight to tr() belongs here too.
+    """
+    from app.widgets.sidebar import Sidebar
+
     keys: set[str] = set()
+    for section, items in Sidebar.NAV_ITEMS.items():
+        keys.add(section)
+        keys.update(name for name, _icon, _shortcut in items)
+    return keys
+
+
+def _tr_keys() -> set[str]:
+    """Every string the app asks tr() for — literals plus the table-driven
+    ones that an AST scan cannot see."""
+    keys: set[str] = _runtime_tr_keys()
     for path in APP.rglob("*.py"):
         if "__pycache__" in str(path):
             continue

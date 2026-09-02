@@ -170,7 +170,8 @@ def child_entities(entity: dict, everything: list) -> list:
     return kept
 
 
-def items_summary(entity: dict, everything: list, exclude=None) -> Contents:
+def items_summary(entity: dict, everything: list, exclude=None,
+                  restrict_to=None, total_bytes=None) -> Contents:
     """The ITEMS section: what lives inside, each its own decision.
 
     Its own total, deliberately. A parent's size has its children subtracted
@@ -185,6 +186,19 @@ def items_summary(entity: dict, everything: list, exclude=None) -> Contents:
     is left is what the parts list does not already say.
     """
     children = child_entities(entity, everything)
+    if restrict_to is not None:
+        # Exactly the findings that survive removing this one. Without it the
+        # section counted every nested finding within MAX_ITEM_DEPTH while the
+        # line below the button counted every finding that is kept, at any
+        # depth — "6 items · 8.7 GB" above "13 finding(s) … will be kept
+        # (12.5 GB)", two numbers for one idea, fifteen pixels apart.
+        #
+        # It also stops the section promising to keep something it will not:
+        # a nested *bucket* stands for files inside this folder and goes with
+        # it, so it is not one of the survivors and does not belong in a list
+        # of them.
+        keep = {_norm(p) for p in restrict_to if p}
+        children = [c for c in children if _norm(c.get("path", "")) in keep]
     if exclude:
         skip = {_norm(p) for p in exclude if p}
         children = [c for c in children if _norm(c.get("path", "")) not in skip]
@@ -195,8 +209,13 @@ def items_summary(entity: dict, everything: list, exclude=None) -> Contents:
                        path=child.get("path", ""), named=True,
                        file_count=int(child.get("file_count", 0) or 0))
             for child in children]
+    # The caller may know the real total. Summing the rows understates it for
+    # a nested chain: A keeps B, and B's row shows B's *own* size, which has
+    # B's own children subtracted out — but those go on surviving too, because
+    # they are findings of their own. What A gives up is B's whole subtree.
+    summed = sum(r.size_bytes for r in rows)
     return Contents(mode=MODE_ITEMS, rows=rows,
-                    total_bytes=sum(r.size_bytes for r in rows),
+                    total_bytes=total_bytes if total_bytes is not None else summed,
                     total_files=sum(r.file_count for r in rows))
 
 
