@@ -75,7 +75,9 @@ def test_a_historical_session_relocalizes_canonical_values(qapp, language, scope
         "category_totals": {"Images": {"count": 7, "size_bytes": 10_000}},
     }
     set_language(language)
-    panel = SessionDetail(record, lambda *_: None, lambda *_: None, lambda *_: None)
+    # Three callbacks became two when Delete from history was removed; the
+    # fourth positional is `parent` now, so it has to be named or dropped.
+    panel = SessionDetail(record, lambda *_: None, lambda *_: None)
     panel.show()
     qapp.processEvents()
     try:

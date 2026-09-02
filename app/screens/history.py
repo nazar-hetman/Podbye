@@ -75,14 +75,10 @@ class _RowHoverFilter(QObject):
         """Update cell-widget backgrounds; delegate handles QTableWidgetItems."""
         if row < 0:
             return
-        p = get_palette()
-        selected = self._table.selectionModel().isRowSelected(row, self._table.rootIndex())
-        if selected:
-            bg = p.get("accent_soft", "#1b2e22")
-        elif hovered:
-            bg = self._color.name()
-        else:
-            bg = "transparent"
+        # Hover only. A selected row is no longer filled (see _table_qss), so
+        # there is nothing here to keep in step with it — which is what left a
+        # stale block on the row selected before this one.
+        bg = self._color.name() if hovered else "transparent"
         for col in range(self._table.columnCount()):
             w = self._table.cellWidget(row, col)
             if w is not None:
@@ -624,7 +620,7 @@ class CleanupRecordDetail(QFrame):
 class SessionDetail(QFrame):
     """Compact contextual detail for a scan session."""
 
-    def __init__(self, record: dict, on_open, on_rerun, on_delete, parent=None):
+    def __init__(self, record: dict, on_open, on_rerun, parent=None):
         super().__init__(parent)
         self.setObjectName("PanelAlt")
         p = get_palette()
@@ -726,27 +722,13 @@ class SessionDetail(QFrame):
             btn.clicked.connect(cb)
             btn_row.addWidget(btn)
 
-        # Delete carried the same weight as the two actions people actually
-        # come here for, while being the only one that cannot be undone. It
-        # keeps its place and its size — losing a destructive control is worse
-        # than over-showing it — but drops the border and fill so the eye
-        # reaches the other two first, and warms to the risk colour on hover so
-        # it says what it is at the moment of pressing it.
+        # No delete. History keeps the five most recent sessions and drops
+        # the rest on its own, so a manual removal saved nothing a minute of
+        # ordinary use would not — and it existed only on this panel, so the
+        # cleanup list beside it offered no such thing. An irreversible action
+        # that is optional, half-present and already automatic is worth less
+        # than the risk of reaching for it by accident.
         btn_row.addStretch()
-        p_del = get_palette()
-        faint = p_del.get("text_faint", "#57685e")
-        risk = p_del.get("risk", "#c67a69")
-        btn_del = QPushButton(tr("Delete from history"))
-        btn_del.setObjectName("Ghost")
-        btn_del.setStyleSheet(
-            f"QPushButton#Ghost {{ font-size: 10px; padding: 4px 10px; "
-            f"background: transparent; border: none; color: {faint}; }} "
-            f"QPushButton#Ghost:hover {{ color: {risk}; "
-            f"background: {_rgba(risk, 0.10)}; }}"
-        )
-        btn_del.setCursor(Qt.PointingHandCursor)
-        btn_del.clicked.connect(on_delete)
-        btn_row.addWidget(btn_del)
         layout.addLayout(btn_row)
 
 
@@ -854,10 +836,18 @@ class HistoryScreen(QWidget):
             f"QTableWidget#HistoryTable {{ "
             f"background: {p.get('panel_alt', '#18241e')}; "
             f"border: 1px solid {p.get('border', '#213028')}; "
-            f"selection-background-color: {p.get('accent_soft', '#1b2e22')}; "
+            # No selected fill. Selecting a row opens the detail panel below,
+            # which is where the feedback belongs and where the eye already is;
+            # painting the row as well left a heavy block of accent_soft across
+            # the table — and, because the cell-widget half of the highlight is
+            # only resynced on hover, the *previous* selection kept its block
+            # until the pointer happened to pass over it. Two filled rows, one
+            # open panel. Transparent, so the row keeps the table's own
+            # background, and selection-color holds the ordinary text colour so
+            # nothing shifts when a row is picked.
+            f"selection-background-color: transparent; "
             f"selection-color: {p.get('text', '#d6e2da')}; }} "
             f"QTableWidget#HistoryTable::item {{ padding: 6px 8px; border: none; }} "
-            f"QTableWidget#HistoryTable::item:selected {{ background: {p.get('accent_soft', '#1b2e22')}; }} "
             f"QHeaderView::section {{ background: {p.get('panel', '#141d18')}; "
             f"color: {p.get('text_faint', '#57685e')}; border: none; "
             f"border-bottom: 1px solid {p.get('border', '#213028')}; padding: 8px 6px; "
@@ -1322,7 +1312,6 @@ class HistoryScreen(QWidget):
                 record,
                 on_open=lambda: self._open_findings(sid),
                 on_rerun=lambda: self.rerun_requested.emit(record.get("target", "")),
-                on_delete=lambda: self._delete_session(sid),
             )
             widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
             self._sess_detail_widget = self._set_detail_widget(
@@ -1375,16 +1364,3 @@ class HistoryScreen(QWidget):
             return
         self.open_session_requested.emit(data)
 
-    def _delete_session(self, session_id: str):
-        reply = QMessageBox.question(
-            self,
-            tr("Delete session"),
-            tr("Remove this session from history? This cannot be undone."),
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if reply != QMessageBox.Yes:
-            return
-        from app.state.session_store import delete_session_from_history
-        delete_session_from_history(session_id)
-        self.refresh()

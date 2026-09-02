@@ -222,26 +222,6 @@ def test_no_impact_bucket_survives_anywhere():
     assert "_impact_color" not in src
 
 
-# ── weight ────────────────────────────────────────────────────────
-
-def test_delete_is_quieter_than_the_other_actions(screen, qapp):
-    screen._toggle_sess_detail(0)
-    qapp.processEvents()
-    buttons = {b.text(): b for b in screen._sess_detail_widget.findChildren(QPushButton)}
-    delete = buttons["Delete from history"]
-    assert delete.objectName() != buttons["Open findings"].objectName()
-    assert "border: none" in delete.styleSheet()
-    assert "background: transparent" in delete.styleSheet()
-
-
-def test_delete_is_still_there_and_still_connected(screen, qapp):
-    """Quieter, not hidden — a destructive action people cannot find is worse."""
-    screen._toggle_sess_detail(0)
-    qapp.processEvents()
-    texts = [b.text() for b in screen._sess_detail_widget.findChildren(QPushButton)]
-    assert "Delete from history" in texts
-
-
 def test_the_detail_panel_sits_below_the_table_surface(screen):
     """Both used panel_alt, so the annotation had the weight of the data."""
     for area in (screen._cleanup_detail_area, screen._sess_detail_area):

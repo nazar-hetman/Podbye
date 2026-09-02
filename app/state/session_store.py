@@ -759,20 +759,6 @@ def load_session_by_id(session_id: str) -> dict | None:
     return _load_session_file(_session_file_path(session_id))
 
 
-def delete_session_from_history(session_id: str) -> bool:
-    """Remove a session from the history index and delete its data file."""
-    try:
-        history = load_history()
-        history = [r for r in history if r.get("session_id") != session_id]
-        _write_json_atomic(_history_path(), history)
-        full_path = _session_file_path(session_id)
-        if full_path.exists():
-            full_path.unlink()
-        return True
-    except OSError:
-        return False
-
-
 def build_snapshot(
     session_id: str,
     target: str,

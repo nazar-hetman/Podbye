@@ -63,8 +63,11 @@ def _dialogs(qapp):
 def _message_box(qapp):
     from PySide6.QtWidgets import QMessageBox
     box = QMessageBox()
-    box.setWindowTitle("Delete session")
-    box.setText("Remove this session from history? This cannot be undone.")
+    # A message box Podbye actually raises. It was the delete-session
+    # confirmation until History stopped offering one; this file is about how
+    # a QMessageBox is styled, so it only needs real text of a real length.
+    box.setWindowTitle("Not found")
+    box.setText("Full session data is unavailable.")
     box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
     return box
 
