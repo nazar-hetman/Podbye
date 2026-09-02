@@ -1993,6 +1993,12 @@ class _DetectionContext:
                         folders += cs[2]
                         mtime = max(mtime, cs[3])
                         atime = max(atime, cs[4])
+                    # A directory the scan measured but did not walk — .git and
+                    # friends. It has no stats entry because it has no recorded
+                    # children, so without this it contributed nothing and the
+                    # parent's size stopped matching what deleting it takes.
+                    size += c.undescended_bytes
+                    files += c.undescended_files
                 else:
                     files += 1
                     size += c.size_bytes

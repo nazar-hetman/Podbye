@@ -648,6 +648,19 @@ class Finding:
     accessed: float
     parent: str
 
+    # A subtree that was measured but deliberately not walked. .git is
+    # recorded so the detector can recognise a project, and not descended
+    # because its object store is thousands of files nobody triages — but
+    # those bytes are still on the disk and still go when the folder is
+    # recycled. Without them the row under-reported: irizi-unex-client showed
+    # 3.89 GB and recycling it took 5.58 GB.
+    #
+    # Two slots, weighed against the memory note above: ~16 bytes on each of
+    # ~1.8M findings in a full C:/ scan, ~29 MB worst case. That is the price
+    # of a row that means what the button does.
+    undescended_bytes: int = 0
+    undescended_files: int = 0
+
     category: str = ""
     risk: str = ""
     source_rule: str = ""

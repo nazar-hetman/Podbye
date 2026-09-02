@@ -236,10 +236,19 @@ class ScanWorker(QThread):
                                 # Recorded, not descended: one finding that
                                 # names the parent a project, without the
                                 # object store behind it.
+                                #
+                                # Measured all the same. Not descending keeps
+                                # thousands of object files out of the finding
+                                # list; it must not keep their bytes out of the
+                                # parent's size, because recycling the parent
+                                # takes them regardless. See _measure_subtree.
                                 vcs_finding = self._finding_from_entry(
                                     entry, is_dir=True)
                                 if vcs_finding and not self._should_skip(
                                         vcs_finding.path):
+                                    size, files = self._measure_subtree(entry.path)
+                                    vcs_finding.undescended_bytes = size
+                                    vcs_finding.undescended_files = files
                                     batch.append(vcs_finding)
                                     self._scanned += 1
                                 continue
@@ -424,6 +433,39 @@ class ScanWorker(QThread):
             self._record_skipped(entry.path, SKIP_REASON_PERMISSION)
             return None
         return self._make_finding(entry.path, entry.name, st, is_dir)
+
+    def _measure_subtree(self, path: str) -> tuple:
+        """(bytes, files) under *path*, without recording anything.
+
+        For a directory the walk deliberately does not enter. Cheap next to
+        the scan around it — a scandir walk with no Finding construction, no
+        batching and no signals — and it honours halt() so a cancelled scan
+        does not sit inside a large object store.
+
+        Symlinks are not followed and unreadable directories are skipped: an
+        approximate total is worth more than none, and the alternative is the
+        under-report this exists to fix.
+        """
+        total = files = 0
+        stack = [path]
+        while stack:
+            if self._halt:
+                break
+            current = stack.pop()
+            try:
+                entries = list(os.scandir(current))
+            except OSError:
+                continue
+            for entry in entries:
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(entry.path)
+                        continue
+                    total += entry.stat(follow_symlinks=False).st_size
+                    files += 1
+                except OSError:
+                    continue
+        return total, files
 
     def _crosses_volume(self, path: str) -> bool:
         """True if *path* sits on a volume that was not one of the scan roots.
