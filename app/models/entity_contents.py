@@ -275,6 +275,104 @@ def measure_files(paths: list, should_stop=None) -> Contents:
                     total_files=len(rows))
 
 
+# ── the removal split ─────────────────────────────────────────────
+
+# How many preserved findings are worth listing. C:/Windows keeps 59 and
+# E:/Work/Projects 13; enumerating them buries the branch that actually
+# answers "what am I about to lose". The *total* stays exact whatever the cap
+# hides — the guarantee is the number, not the list.
+REMAIN_ROWS_SHOWN = 4
+
+
+@dataclass
+class Branch:
+    """One side of the split: a total, and rows that explain it."""
+
+    total_bytes: int = 0
+    rows: list = field(default_factory=list)
+    hidden: int = 0                 # rows the cap left out
+
+
+@dataclass
+class RemovalSplit:
+    """What the cleanup takes, what it leaves, and the sum of the two.
+
+    The invariant this exists to hold:
+
+        in_folder == removed.total_bytes + remain.total_bytes
+
+    Both totals come from the model — ``own_bytes`` and ``contained_bytes``,
+    which ``_enforce_disjoint_sizes`` already guarantees are disjoint — never
+    from summing the rows. Rows explain a number; they do not produce it, and
+    that distinction is what lets a truncated walk still be honest.
+
+    A snapshot of the scan model, not a live comparison with the disk. A
+    session stored before the scanner counted undescended object stores will
+    carry its old figures, and re-measuring here would only disagree with the
+    row above it.
+    """
+
+    in_folder: int = 0
+    removed: Branch = field(default_factory=Branch)
+    remain: Branch = field(default_factory=Branch)
+    truncated: bool = False
+
+    @property
+    def balances(self) -> bool:
+        return self.in_folder == self.removed.total_bytes + self.remain.total_bytes
+
+
+def removal_split(entity: dict, contents: "Contents", world: list,
+                  remain_cap: int = REMAIN_ROWS_SHOWN) -> RemovalSplit:
+    """Split *contents* into what this cleanup removes and what it leaves.
+
+    *contents* must be a walk of the entity that already excluded the nested
+    findings (``walk_contents(root, exclude=excluded_paths(entity))``), so no
+    byte can appear on both sides.
+
+    The removed branch is totalled from ``own_bytes`` and then made to account
+    for it. Two different residuals can appear under it, and they mean
+    different things:
+
+    * the unnamed "Other" row ``_condense`` already produces — measured, just
+      too small to name;
+    * "Rest of this folder", emitted here when the walk ran out of budget —
+      *not measured at all*. Without it C:/Windows showed 10.9 GB of itemised
+      content beneath a 46.4 GB heading and left the reader to notice the
+      35 GB that had gone unmentioned.
+    """
+    from app.i18n import tr
+    from app.models.deletion_scope import (
+        contained_bytes, excluded_paths, own_bytes)
+
+    removed_total = own_bytes(entity)
+    remain_total = contained_bytes(entity)
+
+    rows = list(contents.rows if contents else [])
+    measured = sum(r.size_bytes for r in rows)
+    shortfall = removed_total - measured
+    truncated = bool(contents and contents.truncated)
+    if truncated and shortfall > 0:
+        rows.append(ContentRow(label=tr("Rest of this folder — not itemised"),
+                               size_bytes=shortfall, named=True))
+
+    kept = excluded_paths(entity)
+    remain_rows = []
+    if kept and world:
+        summary = items_summary(entity, world, restrict_to=kept,
+                               total_bytes=remain_total)
+        remain_rows = list(summary.rows)
+    hidden = max(0, len(remain_rows) - remain_cap)
+
+    return RemovalSplit(
+        in_folder=removed_total + remain_total,
+        removed=Branch(total_bytes=removed_total, rows=rows),
+        remain=Branch(total_bytes=remain_total,
+                      rows=remain_rows[:remain_cap], hidden=hidden),
+        truncated=truncated,
+    )
+
+
 # ── component rules ───────────────────────────────────────────────
 
 def _rules() -> tuple:

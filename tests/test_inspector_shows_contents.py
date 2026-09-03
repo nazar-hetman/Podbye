@@ -102,7 +102,10 @@ def test_a_file_collection_lists_its_files_without_a_tab(view, tmp_path):
 
     panel = _panel(view, entity)
     assert not panel._contents_section.isHidden()
-    assert panel._contents_title.text() == "FILES"
+    # The heading names the action now, not the shape of the list. The files
+    # really are what gets recycled, and no root row appears — a bucket takes
+    # the files it names and the folder they sit in stays.
+    assert panel._contents_title.text() == "WILL BE MOVED TO RECYCLE BIN"
     assert {r._name.text() for r in _rows(panel)} == {"big.zip", "small.zip"}
 
 
@@ -124,7 +127,10 @@ def test_the_folder_summary_arrives_without_being_asked(view, tmp_path):
     worker.wait(4000)
     QCoreApplication.processEvents()
 
-    assert panel._contents_title.text() == "CONTENTS"
+    # "CONTENTS" until the panel started saying what pressing the button
+    # does. The rows below it are unchanged, which is what this test is
+    # actually about.
+    assert panel._contents_title.text() == "WILL BE MOVED TO RECYCLE BIN"
     assert "Installed games" in {r._name.text() for r in _rows(panel)}
 
 

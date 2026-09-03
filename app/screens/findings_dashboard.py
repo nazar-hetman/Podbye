@@ -17,6 +17,7 @@ Architecture:
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 import os
 import time
 from typing import Callable, Optional
@@ -283,7 +284,7 @@ def _duplicate_title(entity: dict) -> str:
 def _short_parent(path: str, segments: int = 2) -> str:
     """Collapse a long absolute path to its last few segments for display.
 
-    e.g. ``E:/My Projects/irizi-odm-dev/lib/.../site-packages/cv2`` →
+    e.g. ``E:/My Projects/client-odm-dev/lib/.../site-packages/cv2`` →
     ``…/site-packages/cv2``. Keeps the readable tail, drops the noisy prefix.
     """
     norm = str(path or "").replace("\\", "/").rstrip("/")
@@ -1880,13 +1881,18 @@ class ContentsWalkWorker(QThread):
 
     measured = Signal(str, object)      # path, Contents
 
-    def __init__(self, path: str, file_paths=None, exclude=None):
+    def __init__(self, path: str, file_paths=None, exclude=None,
+                 budget_ms: int = 0):
         super().__init__()
         self._path = path
         self._file_paths = list(file_paths or [])
         # Nested findings are owned by their own rows and stay put, so the
         # section must not measure them into this one's total.
         self._exclude = list(exclude or [])
+        # 0 keeps entity_contents' own default — the budget the list is tuned
+        # for. Only the inspector's second look raises it, and only for the
+        # one folder the user is actually reading.
+        self._budget_ms = int(budget_ms or 0)
         self._stop = False
 
     def cancel(self):
@@ -1899,9 +1905,11 @@ class ContentsWalkWorker(QThread):
                 contents = measure_files(self._file_paths,
                                          should_stop=lambda: self._stop)
             else:
-                contents = walk_contents(self._path,
-                                         should_stop=lambda: self._stop,
-                                         exclude=self._exclude)
+                kwargs = {"should_stop": lambda: self._stop,
+                          "exclude": self._exclude}
+                if self._budget_ms:
+                    kwargs["budget_ms"] = self._budget_ms
+                contents = walk_contents(self._path, **kwargs)
         except Exception:
             return
         if not self._stop:
@@ -2026,7 +2034,10 @@ class ContentRowWidget(QFrame):
 
     def bind(self, content_row, *, selectable: bool, checked: bool = False,
              provisional: bool = False, drillable: bool = False,
-             analysed: bool = False):
+             analysed: bool = False, indent: int = 0, strong: bool = False):
+        """*indent* nests this row under the one above; *strong* marks the
+        root — the finding the whole section is about, which reads as a
+        heading with a size rather than as one more child."""
         from app.models.finding import _format_size
         self._path = content_row.path
         label = content_row.label or tr("Other data")
@@ -2067,27 +2078,51 @@ class ContentRowWidget(QFrame):
         if self._drillable:
             self._name.setToolTip(
                 tr("Inspect {name}", name=label) + "\n" + (content_row.path or ""))
+        self._indent = int(indent)
+        self._strong = bool(strong)
         self.apply_style(named=content_row.named)
 
     def apply_style(self, named: bool = False):
         p = get_palette()
-        if not restyle_needed(self, (bool(named), self._drillable, id(p))):
+        indent = getattr(self, "_indent", 0)
+        strong = getattr(self, "_strong", False)
+        if not restyle_needed(self, (bool(named), self._drillable, id(p),
+                                     indent, strong)):
             return
-        colour = p.get("text" if named else "text_dim", "#d6e2da")
-        self._name.setStyleSheet(f"font-size: 12px; color: {colour};")
+        # The eye should read ACTION -> OBJECT + TOTAL -> WHAT IS INSIDE IT.
+        # The root gets a little more air and a hairline under it, so the rows
+        # beneath read as *its* contents rather than its peers; the children
+        # are indented and a step quieter. Weight, spacing and one rule do the
+        # work — a second accent colour or a filled box here would compete
+        # with the button directly below.
+        row_layout = self.layout()
+        if row_layout is not None:
+            row_layout.setContentsMargins(2 + indent * 18, 5 if strong else 1,
+                                          2, 5 if strong else 1)
+        colour = p.get("text" if (named or strong) else "text_dim", "#d6e2da")
+        weight = "600" if strong else "normal"
+        self._name.setStyleSheet(
+            f"font-size: {13 if strong else 12}px; font-weight: {weight}; "
+            f"color: {colour};")
         self._chevron.setStyleSheet(
             f"font-size: 13px; color: {p.get('text_faint', '#57685e')};")
         self._size.setStyleSheet(
-            f"font-family: 'JetBrains Mono'; font-size: 11px; "
-            f"color: {p.get('text_dim', '#8a9b8f')};")
+            f"font-family: 'JetBrains Mono'; font-size: {12 if strong else 11}px; "
+            f"font-weight: {weight}; "
+            f"color: {colour if strong else p.get('text_dim', '#8a9b8f')};")
         # The same button the Entity inspector and Startups use, so the action
         # is recognisable as the one action it is wherever it appears.
         self._btn_ask.setStyleSheet(ask_ai_button_qss())
         # Padding, font and language all live in what was just applied, and all
         # three decide how wide the slot has to be.
         self._reserve_action_slot(drillable=self._drillable)
-        self.setStyleSheet("QFrame#ContentRow { background: transparent; "
-                           "border: none; }")
+        if strong:
+            self.setStyleSheet(
+                "QFrame#ContentRow { background: transparent; border: none; "
+                f"border-bottom: 1px solid {p.get('border', '#213028')}; }}")
+        else:
+            self.setStyleSheet("QFrame#ContentRow { background: transparent; "
+                               "border: none; }")
 
     def _reveal_action(self, shown: bool):
         self._btn_ask.setVisible(bool(shown) and self._askable)
@@ -2229,6 +2264,11 @@ class _PreallocDetailPanel(QWidget):
         self._contents_expanded = False
         self._checked_files: set = set()
         self._contents_worker = None
+        # Per-selection state for the inspector's one deeper walk.
+        self._deep_walk_for = ""
+        self._measuring_more = False
+        self._contents_file_paths: list = []
+        self._contents_exclude: list = []
         self._activity_lbl_text = ""
 
         p = get_palette()
@@ -2394,6 +2434,34 @@ class _PreallocDetailPanel(QWidget):
         self._contents_rows.setSpacing(2)
         contents_l.addWidget(self._contents_rows_host)
         self._content_row_pool: list = []
+
+        # The second branch of the split: what a separately listed finding
+        # keeps. Built once and hidden, like everything else on this panel —
+        # it appears only where something material is genuinely preserved,
+        # which on a real scan is 4% of findings.
+        remain_hdr = QHBoxLayout()
+        remain_hdr.setSpacing(8)
+        self._remain_title = QLabel("")
+        apply_tactical_label(self._remain_title, font_size=8, letter_spacing=2)
+        remain_hdr.addWidget(self._remain_title)
+        self._remain_meta = QLabel("")
+        self._remain_meta.setObjectName("Muted")
+        self._remain_meta.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 10px;")
+        remain_hdr.addWidget(self._remain_meta)
+        remain_hdr.addStretch()
+        self._remain_hdr_host = QWidget()
+        self._remain_hdr_host.setLayout(remain_hdr)
+        contents_l.addWidget(self._remain_hdr_host)
+        self._remain_hdr_host.setVisible(False)
+
+        self._remain_rows_host = QWidget()
+        self._remain_rows = QVBoxLayout(self._remain_rows_host)
+        self._remain_rows.setContentsMargins(0, 0, 0, 0)
+        self._remain_rows.setSpacing(2)
+        contents_l.addWidget(self._remain_rows_host)
+        self._remain_rows_host.setVisible(False)
+        self._remain_row_pool: list = []
 
         # Said out loud, computed, and never behind a model that may not have
         # run: this is the line that stops a deletion someone would regret.
@@ -2881,6 +2949,12 @@ class _PreallocDetailPanel(QWidget):
         )
         self._stop_contents_walk()
         self._contents_expanded = False
+        # Per-selection state for the deeper walk. Cleared here so moving to
+        # another row cannot inherit the previous one's escalation.
+        self._deep_walk_for = ""
+        self._measuring_more = False
+        self._contents_file_paths = []
+        self._contents_exclude = []
 
         mode = mode_for(entity)
         world = self._entities_cb() if self._entities_cb else []
@@ -2919,12 +2993,14 @@ class _PreallocDetailPanel(QWidget):
         self._render_contents()
         if mode == MODE_FILES:
             from app.models.entity_contents import file_paths_of
+            self._contents_file_paths = file_paths_of(entity)
             self._start_contents_walk(entity.get("path", ""),
-                                      file_paths_of(entity))
+                                      self._contents_file_paths)
         elif entity.get("path"):
             from app.models.deletion_scope import excluded_paths
+            self._contents_exclude = excluded_paths(entity)
             self._start_contents_walk(entity["path"],
-                                      exclude=excluded_paths(entity))
+                                      exclude=self._contents_exclude)
 
     # ── Parts ─────────────────────────────────────────────────────────
 
@@ -3042,7 +3118,19 @@ class _PreallocDetailPanel(QWidget):
         """
         return tuple(e.get("path", "") for _sr, e in self._parts if e.get("path"))
 
-    def _start_contents_walk(self, path: str, file_paths=None, exclude=None):
+    # One longer look, for the item the user has open. The list's budget is
+    # untouched: DEFAULT_BUDGET_MS is tuned so a category of 250 rows still
+    # opens promptly, and raising it there would slow every row to help one.
+    # Here exactly one folder is on screen and the walk is already off the UI
+    # thread, so a few seconds costs nothing the user can feel.
+    #
+    # Bounded on purpose. C:/Windows does not finish at any budget worth
+    # waiting for, so truncation stays a legitimate final answer and the
+    # "Rest of this folder" row stays with it.
+    _DEEP_CONTENTS_BUDGET_MS = 6000
+
+    def _start_contents_walk(self, path: str, file_paths=None, exclude=None,
+                             budget_ms: int = 0):
         """Start measuring, with the thread deliberately unparented.
 
         Parenting it to this panel is the obvious thing and it crashes: Qt
@@ -3053,7 +3141,7 @@ class _PreallocDetailPanel(QWidget):
         suite with it). Parentless, the thread outlives the widget harmlessly
         and Qt drops the signal connection when the receiver goes.
         """
-        worker = ContentsWalkWorker(path, file_paths, exclude)
+        worker = ContentsWalkWorker(path, file_paths, exclude, budget_ms)
         worker.measured.connect(self._on_contents_measured)
         # Python has to hold it too: drop the last reference and PySide
         # destroys the C++ QThread, which is the same crash by another route.
@@ -3086,7 +3174,27 @@ class _PreallocDetailPanel(QWidget):
         if path != self._current_path:
             return                      # the user moved on
         self._contents = contents
+
+        # A truncated fast walk earns one longer look — once per selection,
+        # folders only, and only while this row is still the one on screen.
+        # measure_files() answers about a fixed list and has nothing more to
+        # find, so it never escalates.
+        deepen = (contents.truncated
+                  and not self._contents_file_paths
+                  and self._deep_walk_for != path)
+        self._measuring_more = deepen
         self._render_contents()
+        if deepen:
+            self._deep_walk_for = path
+            self._start_contents_walk(
+                path, exclude=self._contents_exclude,
+                budget_ms=self._DEEP_CONTENTS_BUDGET_MS)
+
+    def _hide_remain(self):
+        self._remain_hdr_host.setVisible(False)
+        self._remain_rows_host.setVisible(False)
+        for spare in self._remain_row_pool:
+            spare.setVisible(False)
 
     def _hide_contents(self):
         """Put the section away and unbind what it was showing.
@@ -3099,6 +3207,7 @@ class _PreallocDetailPanel(QWidget):
         """
         self._contents = None
         self._contents_section.setVisible(False)
+        self._hide_remain()
         for spare in self._content_row_pool:
             spare.setVisible(False)
         self._contents_title.setText("")
@@ -3106,14 +3215,150 @@ class _PreallocDetailPanel(QWidget):
         self._consequence_lbl.setText("")
         self._consequence_lbl.setVisible(False)
 
-    def _render_contents(self):
+    def _destructive_action(self, entity: dict) -> str:
+        """"recycle", "uninstall", or "" — what this panel actually offers.
+
+        The single source for both the button and the wording above the
+        contents. They were computed separately for one release and
+        immediately disagreed: a dev_workspace has its recycle button
+        suppressed on purpose — "a folder that holds several separate
+        projects" is not one thing to delete — and the contents section still
+        announced WILL BE REMOVED over 255 GB of source code that no button
+        would have touched. A panel may claim only what it can do, so there is
+        one function and two callers.
+        """
+        path = entity.get("path", "")
+        has_path = bool(path and path != "—")
+        is_app = _is_application_action_target(entity)
+        has_uninstaller = _has_uninstaller(entity)
+        actionability = _entity_actionability(entity)
+        is_group = bool(entity.get("is_group"))
+
+        allow_recycle = (
+            has_path and self._recycle_cb is not None
+            and not is_group
+            and actionability not in ("protected", "kept")
+        )
+        if is_app and has_uninstaller:
+            allow_recycle = False
+        if entity.get("entity_type") == "dev_workspace":
+            allow_recycle = False
+        if allow_recycle:
+            return "recycle"
+
+        can_uninstall = (is_app and has_uninstaller
+                         and actionability != "kept"
+                         and self._uninstall_cb is not None)
+        return "uninstall" if can_uninstall else ""
+
+    def _action_header(self, action: str) -> str:
+        """What the section is about to do, in the words of the button.
+
+        No size: the authoritative figure belongs on the root row, beside the
+        name of the thing it is the size of.
+        """
+        if action == "recycle":
+            return tr("WILL BE MOVED TO RECYCLE BIN")
+        if action == "uninstall":
+            return tr("WILL BE UNINSTALLED")
+        return ""
+
+    def _removal_split(self, contents):
+        """The split for the current entity, or None when it does not apply.
+
+        Only a folder-backed finding that keeps something material can have
+        two branches — keeps_something_inside() is the same predicate that
+        decides whether the sentence under the button is worth saying, so the
+        two can never disagree about whether anything is preserved.
+
+        FILES and FINDINGS INSIDE modes are excluded: a file list already
+        names exactly what goes, and FINDINGS INSIDE *is* the preserved side
+        with nothing to put opposite it.
+        """
         from app.models.entity_contents import (
-            MODE_FILES, MODE_ITEMS, removal_consequence,
+            MODE_CONTENTS, removal_split)
+
+        entity = self._current_entity
+        if not entity or not contents or contents.mode != MODE_CONTENTS:
+            return None
+        # Nothing is removed here, so nothing "will remain" either. A
+        # workspace, a protected item and a kept one all reach this.
+        if self._destructive_action(entity) != "recycle":
+            return None
+        # Computed for every recycle-able folder, not only the ones that keep
+        # something: the removed branch is where "Rest of this folder — not
+        # itemised" comes from, and a truncated walk needs that row whether or
+        # not anything is preserved. Without it Miniconda showed a 24.3 GB
+        # root above 7.1 GB of children and left 17 GB unexplained — the same
+        # defect this work exists to remove.
+        #
+        # _render_remain decides whether the second branch is worth drawing;
+        # its total stays exact either way.
+        world = self._entities_cb() if self._entities_cb else []
+        if not world:
+            return None
+        return removal_split(entity, contents, world)
+
+    def _render_remain(self, split):
+        """The branch that says what stays behind, or nothing at all.
+
+        Silent when the preserved amount would not change what anyone does —
+        27 KB of __pycache__ inside 24.3 GB is true and is noise. The model
+        still counts those bytes on the remain side; only the line is withheld.
+        """
+        from app.models.deletion_scope import keeps_something_inside
+
+        entity = self._current_entity or {}
+        if (split is None or not split.remain.rows
+                or not keeps_something_inside(entity)):
+            self._remain_hdr_host.setVisible(False)
+            self._remain_rows_host.setVisible(False)
+            for spare in self._remain_row_pool:
+                spare.setVisible(False)
+            return
+
+        self._remain_title.setText(tr("WILL REMAIN"))
+        meta = [_format_size(split.remain.total_bytes)]
+        if split.remain.hidden:
+            # The cap hides rows, never bytes: the total above is every
+            # preserved finding, including the ones this list does not name.
+            meta.append(tr("+{n} more", n=split.remain.hidden))
+        self._remain_meta.setText(" · ".join(meta))
+        self._remain_hdr_host.setVisible(True)
+
+        for index, row in enumerate(split.remain.rows):
+            if index < len(self._remain_row_pool):
+                widget = self._remain_row_pool[index]
+            else:
+                widget = ContentRowWidget()
+                widget.clicked.connect(self._on_content_clicked)
+                self._remain_row_pool.append(widget)
+                self._remain_rows.addWidget(widget)
+            # Never selectable: each of these is a finding with its own row
+            # and its own button, and it is not part of this action.
+            widget.bind(row, selectable=False, checked=False,
+                        provisional=False, drillable=True, analysed=False)
+            widget.setVisible(True)
+        for spare in self._remain_row_pool[len(split.remain.rows):]:
+            spare.setVisible(False)
+        self._remain_rows_host.setVisible(True)
+
+    def _render_contents(self):
+        from app.models.deletion_scope import own_bytes
+        from app.models.entity_contents import (
+            MODE_FILES, MODE_ITEMS, ContentRow, removal_consequence,
         )
         contents = self._contents
         if not contents or self._repeats_what_is_above(contents):
             self._hide_contents()
             return
+
+        # The split. Present only where a separately listed finding keeps a
+        # material amount — 4% of findings on a real scan. Everywhere else
+        # this stays None and the section renders exactly as it always has.
+        split = self._removal_split(contents)
+        if split is not None:
+            contents = replace(contents, rows=split.removed.rows)
 
         is_files = contents.mode == MODE_FILES
         is_items = contents.mode == MODE_ITEMS
@@ -3122,29 +3367,77 @@ class _PreallocDetailPanel(QWidget):
         # unrelated to the header's figure. Reported as Projects showing
         # 255.4 GB above an ITEMS list of 8.7 GB. The gap is now stated by the
         # scope line on the button; this says what the list actually is.
+        # What pressing the button does, in the button's own words — or the
+        # neutral heading when there is no button to describe.
+        entity = self._current_entity or {}
+        action = self._destructive_action(entity)
+        # Never over FINDINGS INSIDE. Those rows are separate findings that
+        # this cleanup leaves alone — they are the *remain* side — so naming
+        # the action above them would say the exact opposite of what happens.
+        action_header = ("" if is_items else
+                         self._action_header(action) if action else "")
         self._contents_title.setText(
+            action_header if action_header else
             tr("FINDINGS INSIDE") if is_items else
             tr("FILES") if is_files else tr("CONTENTS"))
+
+        # The thing being acted on, as the root of what sits under it. Without
+        # it the rows float under a heading and the reader has to infer which
+        # object they belong to.
+        #
+        # Never in FILES mode: a bucket removes the files it lists and the
+        # folder they are in stays, so a root row would say the opposite of
+        # what happens. removal_consequence() says as much in words.
+        root_row = None
+        if action and not is_files and not is_items and entity.get("path"):
+            root_row = ContentRow(
+                label=entity.get("name") or os.path.basename(
+                    str(entity.get("path", "")).rstrip("/\\")),
+                size_bytes=own_bytes(entity),
+                path=entity.get("path", ""), named=True)
 
         shown = (contents.rows if self._contents_expanded
                  else contents.rows[:self._CONTENT_ROWS_SHOWN])
         hidden = len(contents.rows) - len(shown)
 
-        meta = [_format_size(contents.total_bytes)]
+        # A truncated walk must never print a bare total. Reported from a real
+        # screen: miniconda3 showed "CONTENTS 2.3 GB · PARTIAL" under a row
+        # reading 24.3 GB — the folder really is 24.3 GB, the walk ran out of
+        # budget at 2.3, and the two numbers were formatted identically. A
+        # tenfold discrepancy was left to a four-letter chip to explain.
+        #
+        # Said as coverage instead, against the row's own figure, which is
+        # the number this section sits underneath and is now trustworthy.
+        # PARTIAL goes with it: the sentence carries what the chip was
+        # carrying alone.
+        known = own_bytes(entity)
+        if root_row is not None and not is_items:
+            # The size moved to the root row, beside the name of the thing it
+            # is the size of. Repeating it here said one number twice and
+            # still left the reader to work out what it was the size *of*.
+            #
+            # While the longer walk runs the header says so, carefully: it
+            # promises a second look, not that the residual will disappear.
+            # For something the size of C:/Windows it will not.
+            meta = ([tr("Measuring more details…")]
+                    if getattr(self, "_measuring_more", False) else [])
+        elif contents.truncated and known > 0:
+            meta = [tr("{measured} of {total} measured so far",
+                       measured=_format_size(contents.total_bytes),
+                       total=_format_size(known))]
+        else:
+            meta = [_format_size(contents.total_bytes)]
+            if contents.truncated:
+                meta.append(tr("PARTIAL"))
         if is_files or is_items:
             meta.insert(0, tr("{n} items", n=len(contents.rows)))
-        if contents.truncated:
-            # A marker, not a paragraph. "The scan stopped measuring before it
-            # reached the end" is Podbye describing its own internals, and it
-            # made the size next to it look unreliable. The reason lives in
-            # the tooltip for anyone who wants it.
-            meta.append(tr("PARTIAL"))
         self._contents_meta.setText(" · ".join(meta))
         self._contents_meta.setToolTip(
             tr("Only part of this folder was measured, so the breakdown "
                "covers what was reached.") if contents.truncated else "")
 
-        for index, row in enumerate(shown):
+        drawn = ([(root_row, 0)] if root_row is not None else []) +                 [(row, 1 if root_row is not None else 0) for row in shown]
+        for index, (row, depth) in enumerate(drawn):
             if index < len(self._content_row_pool):
                 widget = self._content_row_pool[index]
             else:
@@ -3154,19 +3447,27 @@ class _PreallocDetailPanel(QWidget):
                 widget.ask_requested.connect(self._on_content_ask)
                 self._content_row_pool.append(widget)
                 self._contents_rows.addWidget(widget)
-            checked = row.path in self._checked_files if is_files else False
+            is_root = row is root_row
+            checked = (row.path in self._checked_files
+                       if is_files and not is_root else False)
             # No checkbox on an item: it is a finding in its own right, with
             # its own row and its own buttons one click away. Two ways to arm
-            # one thing is how a screen starts disagreeing with itself.
-            widget.bind(row, selectable=is_files, checked=checked,
-                        provisional=contents.provisional,
-                        drillable=is_items,
+            # one thing is how a screen starts disagreeing with itself. The
+            # root is the row already selected, so it is not armable here
+            # either.
+            widget.bind(row, selectable=is_files and not is_root,
+                        checked=checked,
+                        provisional=contents.provisional and not is_root,
+                        drillable=is_items and not is_root,
                         analysed=bool(self._analysed_cb
                                       and row.path
-                                      and self._analysed_cb(row.path)))
+                                      and self._analysed_cb(row.path)),
+                        indent=depth, strong=is_root)
             widget.setVisible(True)
-        for spare in self._content_row_pool[len(shown):]:
+        for spare in self._content_row_pool[len(drawn):]:
             spare.setVisible(False)
+
+        self._render_remain(split)
 
         self._btn_contents_more.setVisible(bool(hidden) or self._contents_expanded)
         self._btn_contents_more.setText(
@@ -3781,6 +4082,9 @@ class _PreallocDetailPanel(QWidget):
         is_workspace = entity.get("entity_type") == "dev_workspace"
         if is_workspace:
             allow_recycle = False
+        # Asserted rather than recomputed: _destructive_action is what the
+        # contents section reads, and the two must never part company.
+        assert allow_recycle == (self._destructive_action(entity) == "recycle")
         self._btn_recycle.setVisible(allow_recycle)
         self._btn_recycle.setEnabled(allow_recycle)
         self._state_workspace_note(is_workspace)

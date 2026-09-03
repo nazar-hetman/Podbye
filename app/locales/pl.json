@@ -922,5 +922,11 @@
   "Get LM Studio": "Pobierz LM Studio",
   "Open AI Settings": "Otwórz ustawienia AI",
   "Podbye needs one of these installed to explain anything. The buttons open their official sites in your browser — install either one, then press Test. Podbye only ever talks to your own machine or LAN.": "Podbye potrzebuje jednego z nich, aby cokolwiek wyjaśnić. Przyciski otwierają ich oficjalne strony w przeglądarce — zainstaluj dowolny z nich, a następnie naciśnij Testuj. Podbye łączy się wyłącznie z tym komputerem lub siecią lokalną.",
-  "The server is running but has no models yet. Open Terminal or PowerShell and run this command there — it is not something to type into Podbye:  ollama pull llama3.2:3b": "Serwer działa, ale nie ma jeszcze żadnych modeli. Otwórz Terminal lub PowerShell i uruchom to polecenie tam — nie wpisuj go w Podbye:  ollama pull llama3.2:3b"
+  "The server is running but has no models yet. Open Terminal or PowerShell and run this command there — it is not something to type into Podbye:  ollama pull llama3.2:3b": "Serwer działa, ale nie ma jeszcze żadnych modeli. Otwórz Terminal lub PowerShell i uruchom to polecenie tam — nie wpisuj go w Podbye:  ollama pull llama3.2:3b",
+  "{measured} of {total} measured so far": "zmierzono {measured} z {total}",
+  "WILL REMAIN": "POZOSTANIE",
+  "Rest of this folder — not itemised": "Reszta tego folderu — bez wyszczególnienia",
+  "Measuring more details…": "Mierzenie kolejnych szczegółów…",
+  "WILL BE MOVED TO RECYCLE BIN": "ZOSTANIE PRZENIESIONE DO KOSZA",
+  "WILL BE UNINSTALLED": "ZOSTANIE ODINSTALOWANE"
 }

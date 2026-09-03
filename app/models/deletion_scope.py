@@ -108,9 +108,33 @@ def deletion_scope_files(entity: dict) -> int:
     return int(entity.get("file_count", 0) or 0)
 
 
+# Below this a preservation notice is not worth a line of the panel. Measured
+# on a real screen: miniconda3 said "8 findings inside are listed separately
+# and will be kept (27 KB)" — 27 KB of __pycache__ inside 24.3 GB. True, and
+# noise. A notice that fires for a rounding error teaches the reader to skip
+# the one that matters, which is the case this sentence exists for.
+#
+# Relative and absolute together: 0.5% catches the big folders, the 10 MB
+# floor stops a small finding from being talked about in kilobytes.
+_MATERIAL_SHARE = 0.005
+_MATERIAL_FLOOR = 10 * 1024 * 1024
+
+
 def keeps_something_inside(entity: dict) -> bool:
-    """True when a separately listed finding lives inside and stays put."""
-    return bool(excluded_paths(entity))
+    """True when a separately listed finding lives inside and stays put.
+
+    Only when it is worth saying so. Something is always *technically* kept
+    whenever excluded_paths is non-empty; this asks whether the amount would
+    change what the reader does.
+    """
+    if not excluded_paths(entity):
+        return False
+    kept = contained_bytes(entity)
+    if kept <= 0:
+        return False
+    own = own_bytes(entity)
+    threshold = max(_MATERIAL_FLOOR, int(own * _MATERIAL_SHARE))
+    return kept >= threshold
 
 
 def contained_bytes(entity: dict) -> int:

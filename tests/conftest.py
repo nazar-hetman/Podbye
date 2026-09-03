@@ -110,3 +110,51 @@ def _drain_deferred_deletes(qapp):
         # an application already torn down, must never turn a passing test
         # into an error.
         pass
+
+
+@pytest.fixture(scope="module")
+def _shared_panel():
+    """One panel for the whole module, not one per test.
+
+    _PreallocDetailPanel is the heaviest tree in the app — it pre-builds every
+    widget it will ever need. Six of them per file, across three files, was
+    enough to push a full run into an access violation inside the garbage
+    collector, surfacing ~1500 tests away in ast.parse under a locale test.
+    conftest already drains deferred deletes after every test; what it cannot
+    do is stop the trees being built in the first place.
+
+    Rebinding is what the panel does on every row click anyway, so one
+    instance answers every case here.
+    """
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QApplication
+    from app.screens.findings_dashboard import _PreallocDetailPanel
+
+    app = QApplication.instance()
+    holder = {}
+
+    def make(world):
+        panel = holder.get("panel")
+        if panel is None:
+            panel = _PreallocDetailPanel(
+                lambda *_a: None, lambda *_a: None,
+                recycle_cb=lambda *_a: None,
+                entities_cb=lambda: holder.get("world") or [])
+            panel.resize(600, 900)
+            holder["panel"] = panel
+        holder["world"] = world
+        return panel
+
+    yield make
+
+    panel = holder.get("panel")
+    if panel is not None:
+        stop = getattr(panel, "_stop_contents_walk", None)
+        if callable(stop):
+            stop(200)
+        panel.close()
+        panel.setParent(None)
+        panel.deleteLater()
+        app.processEvents()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        app.processEvents()

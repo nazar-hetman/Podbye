@@ -1356,5 +1356,11 @@
   "Get LM Studio": "Отримати LM Studio",
   "Open AI Settings": "Відкрити налаштування AI",
   "Podbye needs one of these installed to explain anything. The buttons open their official sites in your browser — install either one, then press Test. Podbye only ever talks to your own machine or LAN.": "Podbye потребує одного з них, щоб щось пояснювати. Кнопки відкривають їхні офіційні сайти у вашому браузері — встановіть будь-який із них, потім натисніть «Перевірити». Podbye звертається лише до вашого комп'ютера або локальної мережі.",
-  "The server is running but has no models yet. Open Terminal or PowerShell and run this command there — it is not something to type into Podbye:  ollama pull llama3.2:3b": "Сервер працює, але ще не має моделей. Відкрийте Terminal або PowerShell і виконайте цю команду там — це не те, що треба вводити в Podbye:  ollama pull llama3.2:3b"
+  "The server is running but has no models yet. Open Terminal or PowerShell and run this command there — it is not something to type into Podbye:  ollama pull llama3.2:3b": "Сервер працює, але ще не має моделей. Відкрийте Terminal або PowerShell і виконайте цю команду там — це не те, що треба вводити в Podbye:  ollama pull llama3.2:3b",
+  "{measured} of {total} measured so far": "виміряно {measured} із {total}",
+  "WILL REMAIN": "ЗАЛИШИТЬСЯ",
+  "Rest of this folder — not itemised": "Решта цієї теки — без деталізації",
+  "Measuring more details…": "Вимірюємо детальніше…",
+  "WILL BE MOVED TO RECYCLE BIN": "БУДЕ ПЕРЕМІЩЕНО ДО КОШИКА",
+  "WILL BE UNINSTALLED": "БУДЕ ВИДАЛЕНО"
 }
