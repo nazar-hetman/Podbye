@@ -1,6 +1,7 @@
 """Startups screen — real Windows startup analysis with AI explanations."""
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import threading
@@ -28,6 +29,8 @@ from app.widgets.panels import Panel, apply_tactical_label, meta_caption
 from app.widgets.pills import Badge
 from app.themes.theme_manager import get_palette, theme_signaller
 from app.i18n import tr
+
+_log = logging.getLogger("podbye.startups")
 
 
 _RISK_VARIANT = {
@@ -1824,6 +1827,16 @@ class StartupsScreen(QWidget):
                 if row is not None:
                     self._list_scroll.ensureWidgetVisible(row, 0, 28)
         except Exception:
+            # Recovering silently makes a real failure inside set_entry()
+            # indistinguishable from "nothing is selected": the panel clears,
+            # the action buttons stay hidden, and nothing anywhere says why.
+            # That is the shape of a CI-only failure of
+            # test_the_startup_inspector_actions_read_as_buttons which does not
+            # reproduce locally, so record the cause before recovering. The
+            # recovery below is unchanged — this line adds a log record and
+            # nothing a user can see.
+            _log.exception("startup inspector failed to show entry %r",
+                           getattr(entry, "key", None))
             self._clear_detail_sidebar()
 
     def _clear_detail_sidebar(self):
