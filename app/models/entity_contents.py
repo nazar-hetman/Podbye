@@ -68,6 +68,12 @@ class Contents:
     # The walk hit its time budget, so the rows are a partial view and the
     # section has to say so rather than quietly under-report a folder.
     truncated: bool = False
+    # The walk was *asked to stop* — the row was deselected, the panel is
+    # being rebuilt. That is not an answer about the folder at all, and it
+    # must never be shown or committed as one. It looked identical to
+    # truncation for one release, and the inspector spent its single deeper
+    # measurement on results that had been abandoned.
+    cancelled: bool = False
     # True while only the free, no-I/O summary is available.
     provisional: bool = False
 
@@ -432,11 +438,12 @@ def walk_contents(root: str, budget_ms: int = DEFAULT_BUDGET_MS,
     started = time.perf_counter()
     buckets: dict[str, list] = {}      # key -> [bytes, files, label, named]
     total_bytes = total_files = 0
-    truncated = False
+    truncated = cancelled = False
+
+    def asked_to_stop() -> bool:
+        return should_stop is not None and should_stop()
 
     def out_of_time() -> bool:
-        if should_stop is not None and should_stop():
-            return True
         return (time.perf_counter() - started) * 1000 > budget_ms
 
     def add(key: str, label: str, named: bool, size: int, relative: str = ""):
@@ -466,6 +473,9 @@ def walk_contents(root: str, budget_ms: int = DEFAULT_BUDGET_MS,
     # (absolute path, path relative to root, the top-level child it is under)
     stack = [(root, "", "")]
     while stack:
+        if asked_to_stop():
+            cancelled = truncated = True
+            break
         if out_of_time():
             truncated = True
             break
@@ -508,7 +518,8 @@ def walk_contents(root: str, budget_ms: int = DEFAULT_BUDGET_MS,
             for (size, files, label, named, relative) in buckets.values()]
     rows = _condense(rows, total_bytes)
     return Contents(mode=MODE_CONTENTS, rows=rows, total_bytes=total_bytes,
-                    total_files=total_files, truncated=truncated)
+                    total_files=total_files, truncated=truncated,
+                    cancelled=cancelled)
 
 
 def _condense(rows: list, total: int) -> list:

@@ -2265,6 +2265,7 @@ class _PreallocDetailPanel(QWidget):
         self._checked_files: set = set()
         self._contents_worker = None
         # Per-selection state for the inspector's one deeper walk.
+        self._contents_inputs_seen: tuple = ()
         self._deep_walk_for = ""
         self._measuring_more = False
         self._contents_file_paths: list = []
@@ -2941,12 +2942,58 @@ class _PreallocDetailPanel(QWidget):
 
     _CONTENT_ROWS_SHOWN = 5
 
+    def _contents_inputs(self, entity: dict, mode: str) -> tuple:
+        """Everything that can change what a walk of this entity would find.
+
+        The path it walks, the mode that decides *how*, the nested findings it
+        must not measure, and the file list it measures instead. An AI status,
+        an explanation, a risk label — none of them move a byte on disk, so
+        none of them belong here.
+
+        Path alone does not identify an entity. A group's path is the folder
+        its parts happen to share, so a group and one of its members can carry
+        the same one — and they must not be treated as the same question: a
+        group's section deliberately omits the parts listed above it, while
+        the member's page lists its own children because nothing else does.
+        is_group and the parts already on the page are what tell them apart.
+        """
+        from app.models.deletion_scope import excluded_paths
+        from app.models.entity_contents import file_paths_of
+
+        return (entity.get("path", ""), mode,
+                bool(entity.get("is_group")), entity.get("name", ""),
+                self._shown_as_parts(),
+                tuple(excluded_paths(entity)), tuple(file_paths_of(entity)))
+
     def _populate_contents(self, entity: dict):
         """Show what is inside, immediately, then better once measured."""
         from app.models.entity_contents import (
             MODE_CONTENTS, MODE_FILES, MODE_NONE, items_summary, mode_for,
             quick_summary,
         )
+        mode = mode_for(entity)
+
+        # A metadata-only refresh must not throw the measurement away.
+        #
+        # AIExplainer.finding_updated -> _on_ai_finding_updated ->
+        # update_entity -> _show_detail_sidebar -> populate() lands here every
+        # time a model answers about the inspected row. Each arrival used to
+        # cancel the walk in flight, clear the escalation and start again from
+        # the fast budget — so miniconda3, whose deeper walk needs ~3 s, never
+        # got 3 s and sat on a 700 ms shape: pkgs 2.1 GB and 22 GB of "Rest of
+        # this folder". The walk was never the problem; being restarted was.
+        #
+        # Rows are still rebound, because a content row's own Ask AI / View
+        # result button does depend on AI state.
+        inputs = self._contents_inputs(entity, mode)
+        unchanged = (inputs == self._contents_inputs_seen
+                     and (self._contents is not None
+                          or self._contents_worker is not None))
+        if unchanged:
+            self._render_contents()
+            return
+
+        self._contents_inputs_seen = inputs
         self._stop_contents_walk()
         self._contents_expanded = False
         # Per-selection state for the deeper walk. Cleared here so moving to
@@ -2956,7 +3003,6 @@ class _PreallocDetailPanel(QWidget):
         self._contents_file_paths = []
         self._contents_exclude = []
 
-        mode = mode_for(entity)
         world = self._entities_cb() if self._entities_cb else []
         # Things that live inside win over parts that explain: if real
         # entities sit within this one, they are what a person needs to see,
@@ -3173,6 +3219,13 @@ class _PreallocDetailPanel(QWidget):
     def _on_contents_measured(self, path: str, contents):
         if path != self._current_path:
             return                      # the user moved on
+        # A walk that was asked to stop measured nothing it can be held to.
+        # Committing it would put a partial figure on screen and, worse, spend
+        # the one escalation this selection gets on an answer nobody waited
+        # for. The worker already declines to emit a cancelled result; this is
+        # the guard that does not depend on that timing.
+        if getattr(contents, "cancelled", False):
+            return
         self._contents = contents
 
         # A truncated fast walk earns one longer look — once per selection,
@@ -3206,6 +3259,11 @@ class _PreallocDetailPanel(QWidget):
         none is exactly that sequence.
         """
         self._contents = None
+        # _contents_inputs_seen is deliberately kept. It records what is being
+        # *measured*, not what is on screen, and _render_contents calls this
+        # whenever the provisional summary has nothing worth showing yet — so
+        # clearing it here wiped the memory a moment after it was set and the
+        # next refresh restarted the walk anyway.
         self._contents_section.setVisible(False)
         self._hide_remain()
         for spare in self._content_row_pool:
