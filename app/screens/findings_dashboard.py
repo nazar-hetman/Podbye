@@ -3359,6 +3359,11 @@ class _PreallocDetailPanel(QWidget):
         # decided to redo is what made Podbye look like it changed its mind.
         if getattr(self, "_measuring_more", False):
             return None
+        # Nor before the first walk has said anything. quick_summary is a
+        # sample, not a measurement, and a WILL REMAIN branch computed against
+        # it would be published and then withdrawn.
+        if contents.provisional:
+            return None
         world = self._entities_cb() if self._entities_cb else []
         if not world:
             return None
@@ -3468,7 +3473,21 @@ class _PreallocDetailPanel(QWidget):
         # about a folder it was about to offer to delete. The header and the
         # root row are already authoritative and stay put; only the part that
         # is still being measured says so.
-        measuring = getattr(self, "_measuring_more", False) and not is_items
+        # Two moments are "not an answer yet", and they are the same moment
+        # to a reader: before the first walk returns, and while the deeper one
+        # runs. quick_summary marks the first — it is the only thing that sets
+        # provisional, and what it offers for a folder is up to eight names
+        # out of children_sample, in scandir order, with no sizes. For
+        # miniconda3 that was ".condarc, .nonadmin,
+        # api-ms-win-core-console-l1-1-0.dll…" presented where the breakdown
+        # goes, replaced a moment later by the placeholder and again by the
+        # real figures. Three answers to one question.
+        #
+        # A file list is exempt: there, quick_summary's rows *are* the answer
+        # — the actual files, awaiting only their sizes — so showing them
+        # immediately is right and measurement only fills in the numbers.
+        measuring = (getattr(self, "_measuring_more", False)
+                     or (contents.provisional and not is_files)) and not is_items
         if measuring:
             shown = [ContentRow(label=tr("Measuring contents…"))]
             hidden = 0

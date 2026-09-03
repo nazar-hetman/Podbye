@@ -577,3 +577,107 @@ def test_a_truncated_walk_within_the_cap_is_untouched(panel, walks):
     assert labels[:3] == ["Thing", "envs", "pkgs"]
     assert any("not itemised" in l for l in labels)
     assert not p._btn_contents_more.isVisibleTo(p)
+
+
+# ── a sample is not a breakdown either ────────────────────────────
+#
+# Reported on the beta.5 build: selecting miniconda3 showed ".condarc,
+# .nonadmin, api-ms-win-core-console-l1-1-0.dll…" where the breakdown goes,
+# then "Measuring contents…", then the real figures. Three answers to one
+# question. Those names are children_sample — up to eight, in scandir order,
+# without sizes — and quick_summary is the only thing that sets provisional,
+# so the flag already marked them as "not a measurement".
+
+def _just_selected(panel, walks, own=int(24.3 * GB), kept=(), files=None):
+    """The instant after selection: a walk has started, nothing has returned."""
+    entity = _entity(own, kept=kept, files=files)
+    entity["children_sample"] = [".condarc", ".nonadmin",
+                                 "api-ms-win-core-console-l1-1-0.dll"]
+    world = [entity] + [_entity(int(2.0 * GB), path=p, name="nested")
+                        for p in kept]
+    p = panel(entity, world)
+    p._populate_contents(entity)
+    return p
+
+
+def test_sampled_names_are_never_shown_as_contents(panel, walks):
+    p = _just_selected(panel, walks)
+
+    for name in (".condarc", ".nonadmin", "api-ms-win-core-console-l1-1-0.dll"):
+        assert name not in _labels(p), _labels(p)
+
+
+def test_the_first_visible_state_is_the_root_and_the_placeholder(panel, walks):
+    p = _just_selected(panel, walks)
+
+    assert _labels(p) == ["Thing", "Measuring contents…"]
+
+
+def test_the_total_is_authoritative_from_the_first_frame(panel, walks):
+    """It never has to be corrected, so it must not wait."""
+    p = _just_selected(panel, walks)
+    rows = [w for w in p._content_row_pool if w.isVisibleTo(p)]
+
+    assert p._contents_title.text() == "WILL BE MOVED TO RECYCLE BIN"
+    assert rows[0]._size.text() == "24.3 GB"
+
+
+def test_nothing_provisional_is_published_before_a_measurement(panel, walks):
+    """No residual row, and no WILL REMAIN computed against a sample."""
+    p = _just_selected(panel, walks, kept=["C:/thing/nested"])
+
+    assert not any("not itemised" in l for l in _labels(p))
+    assert not p._remain_hdr_host.isVisibleTo(p)
+
+
+def test_the_measured_breakdown_replaces_the_placeholder(panel, walks):
+    p = _just_selected(panel, walks)
+
+    p._on_contents_measured("C:/thing", _walk(
+        int(24.3 * GB),
+        rows=[ContentRow(label="envs", size_bytes=int(14.7 * GB)),
+              ContentRow(label="pkgs", size_bytes=int(7.3 * GB))]))
+
+    assert _labels(p) == ["Thing", "envs", "pkgs"]
+    assert p._measuring_more is False
+
+
+def test_one_fast_complete_walk_is_the_only_change_of_state(panel, walks):
+    """A folder that measures quickly goes placeholder -> answer, and never
+    shows a sample in between."""
+    p = _just_selected(panel, walks, own=int(5.0 * GB))
+    assert _labels(p) == ["Thing", "Measuring contents…"]
+
+    p._on_contents_measured("C:/thing", _walk(
+        int(5.0 * GB),
+        rows=[ContentRow(label="src", size_bytes=int(3.0 * GB)),
+              ContentRow(label="dist", size_bytes=int(2.0 * GB))]))
+
+    assert _labels(p) == ["Thing", "src", "dist"]
+
+
+def test_a_file_list_still_shows_its_files_immediately(panel, walks):
+    """There the provisional rows *are* the answer — the real files, awaiting
+    only their sizes — so they must not be hidden behind a placeholder."""
+    p = _just_selected(panel, walks,
+                       files=["C:/thing/a.zip", "C:/thing/b.zip"])
+
+    labels = _labels(p)
+    assert "a.zip" in labels and "b.zip" in labels
+    assert "Measuring contents…" not in labels
+
+
+def test_a_truncated_final_result_still_pins_its_residual(panel, walks):
+    """The d8ac871 guarantee, unchanged by any of this."""
+    p = _just_selected(panel, walks)
+    p._on_contents_measured("C:/thing", _walk(int(2.2 * GB), truncated=True))
+    p._on_contents_measured("C:/thing", _walk(
+        int(19.45 * GB), truncated=True,
+        rows=[ContentRow(label="Installed packages", size_bytes=int(1.3 * GB)),
+              ContentRow(label="Package download cache", size_bytes=int(0.8 * GB)),
+              ContentRow(label="envs", size_bytes=int(9.8 * GB)),
+              ContentRow(label="pkgs", size_bytes=int(7.3 * GB)),
+              ContentRow(label="Other data", size_bytes=int(0.25 * GB))]))
+
+    assert any("not itemised" in l for l in _labels(p)), _labels(p)
+    assert p._btn_contents_more.text() == "+1 more"
