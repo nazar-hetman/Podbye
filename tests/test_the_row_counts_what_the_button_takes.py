@@ -1,6 +1,6 @@
 """A finding's size must equal what recycling it actually removes.
 
-Reported from a real screen: irizi-unex-client showing 3.89 GB with a CONTENTS
+Reported from a real screen: client-field-app showing 3.89 GB with a CONTENTS
 breakdown adding up to 5.58 GB. Measured, the folder holds 5.58 GB and nothing
 was being preserved — ``contained_paths`` was empty — so recycling that row
 took 5.58 GB while the row promised 3.89 GB. The gap was exactly ``.git``.
@@ -20,7 +20,7 @@ when nothing is excluded, and ``SHFileOperationW`` takes the subtree whole,
 It was systematic across the scan, and always in the dangerous direction —
 more removed than promised:
 
-    irizi-unex-client   row 3.89 GB   .git 1.69 GB   +43%
+    client-field-app   row 3.89 GB   .git 1.69 GB   +43%
     maplibre-native-qt  row 0.89 GB   .git 0.45 GB   +50%
     llama.cpp           row 2.21 GB   .git 0.39 GB   +18%
 

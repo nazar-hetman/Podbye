@@ -211,7 +211,7 @@ def test_every_repository_is_reachable_from_the_workspace():
 
 
 def test_a_project_of_its_own_is_not_relabelled():
-    """"irizi-odm-dev vendors two source checkouts and would otherwise be
+    """"client-odm-dev vendors two source checkouts and would otherwise be
     called a workspace, when it is a project that happens to contain them."
     Its own marker files are what say so."""
     class _F:

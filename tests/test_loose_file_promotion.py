@@ -59,10 +59,10 @@ def test_the_decision_goes_through_one_predicate():
 # ── promotion ─────────────────────────────────────────────────────
 
 def test_a_large_archive_gets_its_own_finding():
-    entities = _detect(_tree(("Cetus Photo brave1_logs.zip", 412 * MB),
-                             ("irizi-odm-dev.zip", 352 * MB)))
-    assert _named(entities, "Cetus Photo brave1_logs.zip") is not None
-    assert _named(entities, "irizi-odm-dev.zip") is not None
+    entities = _detect(_tree(("SiteA Photo drone1_logs.zip", 412 * MB),
+                             ("client-odm-dev.zip", 352 * MB)))
+    assert _named(entities, "SiteA Photo drone1_logs.zip") is not None
+    assert _named(entities, "client-odm-dev.zip") is not None
     assert not _buckets(entities), "large archives were still bucketed"
 
 

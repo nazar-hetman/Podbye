@@ -42,7 +42,7 @@ def _dir(path):
 
 def test_one_readme_does_not_speak_for_a_whole_drive():
     readme = _file("D:/RESULTS.md", 4096)
-    photos = [_file(f"D:/Cetus/img{i}.jpg", 2 * GB) for i in range(20)]
+    photos = [_file(f"D:/SiteA/img{i}.jpg", 2 * GB) for i in range(20)]
     assert not _direct_files_describe_folder([readme], [readme] + photos)
 
 

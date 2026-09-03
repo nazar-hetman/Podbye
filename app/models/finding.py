@@ -652,7 +652,7 @@ class Finding:
     # recorded so the detector can recognise a project, and not descended
     # because its object store is thousands of files nobody triages — but
     # those bytes are still on the disk and still go when the folder is
-    # recycled. Without them the row under-reported: irizi-unex-client showed
+    # recycled. Without them the row under-reported: client-field-app showed
     # 3.89 GB and recycling it took 5.58 GB.
     #
     # Two slots, weighed against the memory note above: ~16 bytes on each of

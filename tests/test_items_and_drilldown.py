@@ -3,7 +3,7 @@
 Two different questions wear the same word. "What is inside Adobe's cache?"
 means *parts of one thing* — media, previews, logs — and deleting the cache
 deletes all of them together. "What is inside E:\\Work\\Projects?" means
-*other things* — Focus, Podbye, Forge — each of which is a separate decision a
+*other things* — Atlas, Podbye, Workbench — each of which is a separate decision a
 person might make on a separate day. The first is CONTENTS. The second is
 ITEMS, and these tests hold the line between them.
 """
@@ -26,22 +26,22 @@ def entity(path, name=None, size=0, files=1, **extra):
 
 
 WORKSPACE = entity("E:/Work/Projects", size=261_000_000_000)
-FOCUS = entity("E:/Work/Projects/Focus", size=250_000_000_000)
+ATLAS = entity("E:/Work/Projects/Atlas", size=250_000_000_000)
 ANSOMATIC = entity("E:/Work/Projects/Ansomatic", size=5_000_000_000)
-NODE_MODULES = entity("E:/Work/Projects/Focus/app/node_modules",
+NODE_MODULES = entity("E:/Work/Projects/Atlas/app/node_modules",
                       name="node_modules", size=3_000_000_000)
-DEEP_DB = entity("E:/Work/Projects/Focus/run/a/b/c/d/database.db",
+DEEP_DB = entity("E:/Work/Projects/Atlas/run/a/b/c/d/database.db",
                  size=1_000_000_000)
 ELSEWHERE = entity("E:/Other", size=99)
 
-WORLD = [WORKSPACE, FOCUS, ANSOMATIC, NODE_MODULES, DEEP_DB, ELSEWHERE]
+WORLD = [WORKSPACE, ATLAS, ANSOMATIC, NODE_MODULES, DEEP_DB, ELSEWHERE]
 
 
 # ── which children are mine ───────────────────────────────────────
 
 def test_items_are_the_things_that_live_inside():
     names = [e["name"] for e in child_entities(WORKSPACE, WORLD)]
-    assert names == ["Focus", "Ansomatic"]
+    assert names == ["Atlas", "Ansomatic"]
 
 
 def test_a_grandchild_belongs_to_its_own_parent():
@@ -52,12 +52,12 @@ def test_a_grandchild_belongs_to_its_own_parent():
     stop trusting the rest of the screen.
     """
     assert NODE_MODULES not in child_entities(WORKSPACE, WORLD)
-    assert NODE_MODULES in child_entities(FOCUS, WORLD)
+    assert NODE_MODULES in child_entities(ATLAS, WORLD)
 
 
 def test_nothing_buried_deep_is_called_an_item():
     """A database six levels down is not an item of anything above it."""
-    assert DEEP_DB not in child_entities(FOCUS, WORLD)
+    assert DEEP_DB not in child_entities(ATLAS, WORLD)
     assert DEEP_DB not in child_entities(WORKSPACE, WORLD)
 
 
@@ -72,7 +72,7 @@ def test_a_thing_is_not_inside_itself():
 def test_windows_separators_and_case_do_not_hide_a_child():
     parent = entity("E:\\Work\\Projects")
     assert [e["name"] for e in child_entities(parent, WORLD)] == \
-        ["Focus", "Ansomatic"]
+        ["Atlas", "Ansomatic"]
 
 
 def test_two_buckets_in_one_folder_are_not_each_others_items():
@@ -107,7 +107,7 @@ def test_items_carry_their_own_total():
     """
     summary = items_summary(WORKSPACE, WORLD)
     assert summary.mode == MODE_ITEMS
-    assert summary.total_bytes == FOCUS["size_bytes"] + ANSOMATIC["size_bytes"]
+    assert summary.total_bytes == ATLAS["size_bytes"] + ANSOMATIC["size_bytes"]
     assert summary.total_bytes != WORKSPACE["size_bytes"]
 
 
@@ -120,7 +120,7 @@ def test_items_are_biggest_first():
 def test_items_keep_the_path_so_it_can_be_opened():
     rows = items_summary(WORKSPACE, WORLD).rows
     assert all(r.path for r in rows)
-    assert rows[0].path == FOCUS["path"]
+    assert rows[0].path == ATLAS["path"]
 
 
 def test_nothing_inside_means_no_items_section():
@@ -155,7 +155,7 @@ def view(qapp):
     v._app_index_cache = {}
     v.resize(1400, 900)
     v.set_category("Dev Artifacts",
-                   [_ui(e) for e in (WORKSPACE, FOCUS, ANSOMATIC,
+                   [_ui(e) for e in (WORKSPACE, ATLAS, ANSOMATIC,
                                      NODE_MODULES)])
     yield v
     v.stop_background_work()
@@ -183,7 +183,7 @@ def test_the_inspector_lists_items_not_a_file_breakdown(view):
     # and are *kept* when this one is removed, so a title implying a breakdown
     # of the header's figure was the Projects 255.4-vs-8.7 GB confusion.
     assert panel._contents_title.text() == "FINDINGS INSIDE"
-    assert [w._name.text() for w in _rows(panel)] == ["Focus", "Ansomatic"]
+    assert [w._name.text() for w in _rows(panel)] == ["Atlas", "Ansomatic"]
 
 
 def test_an_item_row_offers_no_checkbox(view):
@@ -197,24 +197,24 @@ def test_an_item_row_offers_no_checkbox(view):
 
 def test_clicking_an_item_inspects_it(view):
     view.select_by_path(WORKSPACE["path"])
-    _rows(_panel(view))[0].clicked.emit(FOCUS["path"])
+    _rows(_panel(view))[0].clicked.emit(ATLAS["path"])
     panel = _panel(view)
-    assert panel._current_entity["path"] == FOCUS["path"]
-    assert view._inspected_path == FOCUS["path"]
+    assert panel._current_entity["path"] == ATLAS["path"]
+    assert view._inspected_path == ATLAS["path"]
 
 
 def test_drilling_in_shows_the_way_back(view):
     view.select_by_path(WORKSPACE["path"])
     panel = _panel(view)
     assert panel._crumb_btn.isHidden()
-    view._drill_into(FOCUS["path"])
+    view._drill_into(ATLAS["path"])
     assert not panel._crumb_btn.isHidden()
     assert "Projects" in panel._crumb_btn.text()
 
 
 def test_the_way_back_goes_back(view):
     view.select_by_path(WORKSPACE["path"])
-    view._drill_into(FOCUS["path"])
+    view._drill_into(ATLAS["path"])
     _panel(view)._crumb_btn.click()
     assert _panel(view)._current_entity["path"] == WORKSPACE["path"]
     assert _panel(view)._crumb_btn.isHidden()
@@ -222,11 +222,11 @@ def test_the_way_back_goes_back(view):
 
 def test_the_trail_grows_and_shrinks_one_level_at_a_time(view):
     view.select_by_path(WORKSPACE["path"])
-    view._drill_into(FOCUS["path"])
+    view._drill_into(ATLAS["path"])
     view._drill_into(NODE_MODULES["path"])
-    assert view._trail_names() == ["Projects", "Focus"]
+    assert view._trail_names() == ["Projects", "Atlas"]
     view._drill_back()
-    assert view._inspected_path == FOCUS["path"]
+    assert view._inspected_path == ATLAS["path"]
     view._drill_back()
     assert view._inspected_path == WORKSPACE["path"]
     assert view._inspect_trail == []
@@ -234,7 +234,7 @@ def test_the_trail_grows_and_shrinks_one_level_at_a_time(view):
 
 def test_selecting_something_else_leaves_the_drill(view):
     view.select_by_path(WORKSPACE["path"])
-    view._drill_into(FOCUS["path"])
+    view._drill_into(ATLAS["path"])
     view.select_by_path(ANSOMATIC["path"])
     assert view._inspect_trail == []
     assert _panel(view)._crumb_btn.isHidden()
@@ -243,7 +243,7 @@ def test_selecting_something_else_leaves_the_drill(view):
 def test_drilling_only_ever_reaches_a_finding(view):
     """Not a file browser. A path that is not an entity does nothing."""
     view.select_by_path(WORKSPACE["path"])
-    view._drill_into("E:/Work/Projects/Focus/app/main.py")
+    view._drill_into("E:/Work/Projects/Atlas/app/main.py")
     assert view._inspected_path == WORKSPACE["path"]
     assert view._inspect_trail == []
 
@@ -251,13 +251,13 @@ def test_drilling_only_ever_reaches_a_finding(view):
 def test_the_tick_follows_the_inspector_down(view):
     """Armed inside Focus means Focus is armed, not the workspace."""
     view.select_by_path(WORKSPACE["path"])
-    view._drill_into(FOCUS["path"])
+    view._drill_into(ATLAS["path"])
     panel = _panel(view)
-    view._arm_path(FOCUS["path"], True)
+    view._arm_path(ATLAS["path"], True)
     view._sync_inspector_arm()
     assert panel._check_btn.isChecked()
     armed = {e["path"] for e in view._model.checked_entities()}
-    assert armed == {FOCUS["path"]}
+    assert armed == {ATLAS["path"]}
 
 
 def test_a_thing_with_no_items_still_explains_itself(view):

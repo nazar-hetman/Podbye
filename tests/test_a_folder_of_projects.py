@@ -112,10 +112,10 @@ def test_one_project_inside_a_folder_is_not_a_workspace():
 
 
 def test_a_project_that_vendors_source_stays_a_project():
-    """irizi-odm-dev, from the real scan: 3.4 GB with two source checkouts
+    """client-odm-dev, from the real scan: 3.4 GB with two source checkouts
     inside it. It is a project that vendors dependencies, not a place where
     projects live, and its own markers are what say so."""
-    root = "E:/dev/irizi-odm-dev"
+    root = "E:/dev/client-odm-dev"
     findings = [
         _f("E:/dev", is_dir=True), _f(root, is_dir=True),
         _f(f"{root}/requirements.txt", 4_000),  # its own project marker
@@ -126,7 +126,7 @@ def test_a_project_that_vendors_source_stays_a_project():
     findings += _project(root, "ODM-source", 20_000_000)
     findings += _project(root, "pypopsift-source", 10_000_000)
     entities = _detect(findings, "E:/dev")
-    project = _by_name(entities, "irizi-odm-dev")
+    project = _by_name(entities, "client-odm-dev")
     assert project is not None
     assert project.entity_type != "dev_workspace"
 
@@ -148,7 +148,7 @@ def test_a_package_cache_full_of_build_output_is_not_a_workspace():
 
 
 def test_a_photo_folder_with_projects_below_it_is_still_photos():
-    """Ivankiv060626-test is 52 GB of aerial imagery. Whatever sits inside it,
+    """Survey060626-test is 52 GB of aerial imagery. Whatever sits inside it,
     the folder is not a development anything."""
     root = "E:/dev/survey"
     findings = [_f("E:/dev", is_dir=True), _f(root, is_dir=True)]

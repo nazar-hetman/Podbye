@@ -123,7 +123,7 @@ def test_short_names_are_left_alone():
 
 def test_long_names_keep_both_ends():
     """Installers collide at the front and differ at the back, and vice versa."""
-    name = "Stream_Brave1_1.0.11-windows-x64-installer.exe"
+    name = "Stream_Drone1_1.0.11-windows-x64-installer.exe"
     out = _elide_middle(name, 20)
 
     assert len(out) <= 20
@@ -133,6 +133,6 @@ def test_long_names_keep_both_ends():
 
 
 def test_two_similar_names_stay_distinguishable():
-    a = _elide_middle("Stream_Brave1_1.0.8_installer_final.exe", 24)
-    b = _elide_middle("Stream_Brave1_1.0.11_installer_final.zip", 24)
+    a = _elide_middle("Stream_Drone1_1.0.8_installer_final.exe", 24)
+    b = _elide_middle("Stream_Drone1_1.0.11_installer_final.zip", 24)
     assert a != b

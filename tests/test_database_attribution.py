@@ -3,7 +3,7 @@
 Reported as "databases and saves can be improved". Measured on the reporting
 machine, the category held 28 entities and its labels were mostly invented:
 
-    C:/…/Temp/claude/e--Forge/<guid>      -> "Likely database for CPUID CPU-Z 2.17"
+    C:/…/Temp/claude/e--Workbench/<guid>      -> "Likely database for CPUID CPU-Z 2.17"
     C:/…/AppData/Local/Ollama             -> "Likely database for Windblown"
     C:/…/AppData/Local/FastStone/FSIV     -> "Likely database for LocalSend"
     C:/…/NVIDIA Corporation/…/NvBackend   -> "Likely database for LocalSend"
@@ -39,7 +39,7 @@ REAL = _registry(
 # ── the reported false attributions ───────────────────────────────
 
 @pytest.mark.parametrize("path,name", [
-    ("C:/Users/u/AppData/Local/Temp/claude/e--Forge/84fa135e/cpu.db", "cpu.db"),
+    ("C:/Users/u/AppData/Local/Temp/claude/e--Workbench/84fa135e/cpu.db", "cpu.db"),
     ("C:/Users/u/AppData/Local/FastStone/FSIV/FSIV.db", "FSIV.db"),
     ("C:/Users/u/AppData/Local/ConnectedDevicesPlatform/2cc5/A.db", "A.db"),
     ("C:/Users/u/AppData/Local/Microsoft/Edge/User Data/Default/x.db", "x.db"),

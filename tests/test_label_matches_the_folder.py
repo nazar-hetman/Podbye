@@ -5,12 +5,12 @@ drawn from a sample that is nothing like the tree being measured, the row is a
 confident statement about something that isn't there. Three of these were
 reported from one all-drives scan, and all three are the same defect:
 
-* ``E:/Ivankiv060626-test/coordinate_recovery_outputs`` — 187,555 files,
+* ``E:/Survey060626-test/coordinate_recovery_outputs`` — 187,555 files,
   97% of them PNG and 20 GB of JPEG — was labelled **Documents Folder**,
   because the only loose file at its top is one ``.md`` report.
 * ``D:/`` — nine drone-survey folders and a ``RESULTS.md`` — became a
   **Documents Folder** entity for the whole drive.
-* ``E:/Forge/investigations`` — 31 of its 38 GB are ``.tif`` and ``.dmap``
+* ``E:/Workbench/investigations`` — 31 of its 38 GB are ``.tif`` and ``.dmap``
   imagery — described itself as "mostly code & config", from the handful of
   ``.py`` scripts sitting at its top.
 
@@ -49,7 +49,7 @@ def test_a_photo_tree_is_not_documents_because_of_one_report():
 def test_a_drive_root_is_not_one_content_collection():
     """D:/ held nine survey folders and a RESULTS.md and became "Documents"."""
     findings = [mkdir("D:/"), mkfile("D:/RESULTS.md", 10_300)]
-    for name in ("Cetus", "Leleka", "Mara"):
+    for name in ("SiteA", "SiteB", "SiteC"):
         findings.append(mkdir(f"D:/{name}"))
         findings += [mkfile(f"D:/{name}/img{i}.jpg", 12 * MB) for i in range(6)]
 
@@ -65,12 +65,12 @@ def test_a_drive_root_is_not_one_content_collection():
 def test_the_folders_under_it_are_still_classified():
     """Skipping the root must not cost the rows a user actually wants."""
     findings = [mkdir("D:/"), mkfile("D:/RESULTS.md", 10_300)]
-    findings.append(mkdir("D:/Cetus"))
-    findings += [mkfile(f"D:/Cetus/img{i}.jpg", 12 * MB) for i in range(8)]
+    findings.append(mkdir("D:/SiteA"))
+    findings += [mkfile(f"D:/SiteA/img{i}.jpg", 12 * MB) for i in range(8)]
 
     entities = detect_entities(findings, "D:/", log_fn=lambda _m: None)
-    cetus = next(e for e in entities if e.path.lower().endswith("cetus"))
-    assert cetus.entity_type == "photo_collection"
+    site_a = next(e for e in entities if e.path.lower().endswith("sitea"))
+    assert site_a.entity_type == "photo_collection"
 
 
 # ── source trees are a kind, not an absence of one ────────────────
@@ -142,7 +142,7 @@ def test_a_description_counts_every_file_not_only_the_known_ones():
 
 
 def test_a_folder_of_unknown_extensions_says_so():
-    """77% of E:/Forge/investigations is .dat, .dmap, .result and .exif."""
+    """77% of E:/Workbench/investigations is .dat, .dmap, .result and .exif."""
     from app.services.entity_detector import _descriptive_folder_name
     files = ([mkfile(f"{ROOT}/runs/x{i}.dat", 1_000) for i in range(80)]
              + [mkfile(f"{ROOT}/runs/s{i}.py", 1_000) for i in range(20)])
@@ -157,12 +157,12 @@ def test_a_loose_file_bucket_never_absorbs_the_drive_under_it():
     unknown one does. A bucket standing for five stray files is not that
     folder, and treating it as one would swallow every entity below it.
     """
-    findings = [mkdir("E:/Forge")]
-    findings += [mkfile(f"E:/Forge/note{i}.qqq", 400) for i in range(5)]
-    findings.append(mkdir("E:/Forge/Photos"))
-    findings += [mkfile(f"E:/Forge/Photos/p{i}.jpg", 9 * MB) for i in range(9)]
+    findings = [mkdir("E:/Workbench")]
+    findings += [mkfile(f"E:/Workbench/note{i}.qqq", 400) for i in range(5)]
+    findings.append(mkdir("E:/Workbench/Photos"))
+    findings += [mkfile(f"E:/Workbench/Photos/p{i}.jpg", 9 * MB) for i in range(9)]
 
     entities = detect_entities(findings, "E:/", log_fn=lambda _m: None)
     paths = {e.path.replace("\\", "/").lower() for e in entities}
-    assert "e:/forge/photos" in paths, (
+    assert "e:/workbench/photos" in paths, (
         f"the photo folder was absorbed by a loose-file bucket: {sorted(paths)}")

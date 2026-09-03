@@ -670,7 +670,7 @@ def _content_confirms_type(children: list, etype: str, min_ratio: float = 0.3,
     documents?", but the number the entity then reports is its *size* — so a
     folder of 19 small .docx beside a .mp4 and a .zip passed at 66% by count
     while documents were 23% of its bytes, and the user was shown 2 GB labelled
-    "Documents". Reported as a bug against E:/Work/Projects/Focus/Docs. The
+    "Documents". Reported as a bug against E:/Work/Projects/Atlas/Docs. The
     label has to be justified by the same measure it is displayed with.
     """
     exts = _CONTENT_TYPE_EXTS.get(etype)
@@ -879,7 +879,7 @@ def _descriptive_folder_name(folder_name: str, folder_path: str, children: list)
     when available, so the user learns what is inside without raw filenames.
 
     When no kind reaches a share worth naming, why is worth saying. 77% of
-    E:/Forge/investigations is .dat, .dmap, .result and .exif — extensions
+    E:/Workbench/investigations is .dat, .dmap, .result and .exif — extensions
     Podbye has no rule for — and that, not "mostly code & config", is the
     reason the row sits in Unknown.
     """
@@ -1800,7 +1800,7 @@ def _last_chance_folder_classification(
 # _last_chance_folder_classification, whose other rules are exact names,
 # marker files or path structure — evidence of a different order.
 #
-# "Ivankiv060626-test" is a survey flight. It contains "test", so it was
+# "Survey060626-test" is a survey flight. It contains "test", so it was
 # classified dev_artifacts, which carries risk Safe: 53 GB of a photogrammetry
 # engineer's aerial imagery, presented as build output that is safe to delete.
 # A word in a name cannot outrank what is in the folder.
@@ -2032,7 +2032,7 @@ class _DetectionContext:
         The order matters because the sample is *evidence*. Depth-first spent
         the whole budget inside whichever subfolder happened to be last, so
         the label described one branch while the row reported the tree:
-        E:/Forge/investigations came back "mostly code & config" from the
+        E:/Workbench/investigations came back "mostly code & config" from the
         scripts at its top, and 31 of its 38 GB are .tif and .dmap imagery
         further down.
 
@@ -2547,7 +2547,7 @@ def _pass1_known_dirs(ctx: "_DetectionContext"):
             # far down that sits is an accident of where someone keeps code.
             #
             # Measured on this machine: seven repositories under
-            # E:/Work/Projects/Focus/irizi-eyesight sit at rel_depth 6 and were
+            # E:/Work/Projects/Atlas/client-vision sit at rel_depth 6 and were
             # all suppressed here. Only the one carrying requirements.txt was
             # detected at all - by the marker pass, not this one - so a folder
             # of seven projects showed one item in its drill-down while its
@@ -3999,13 +3999,13 @@ def _enrich_drive_root_apps(entities: list) -> int:
     """A drive-root folder that names a present application is its install dir.
 
     Plenty of software installs outside Program Files — measured on a real
-    machine: ffmpeg 11 GB, Qt 17 GB, PyCharm 1.9 GB, Webots 1 GB, two Irizi
+    machine: ffmpeg 11 GB, Qt 17 GB, PyCharm 1.9 GB, Webots 1 GB, two Client
     products 1.5 GB, all sitting directly under C:\\.
 
     "Contains executables" would be a weak signal (so does a download folder).
     Instead this asks the presence resolver whether an application of that name
     is actually on the machine — ffmpeg answers via PATH, PyCharm via the Start
-    Menu, Irizi via the registry. No evidence, no relabel: a plain data folder
+    Menu, Client via the registry. No evidence, no relabel: a plain data folder
     like C:\\symbols is left alone.
     """
     from app.services.app_presence import presence, PRESENT
@@ -4037,7 +4037,7 @@ def _enrich_support_folders(entities: list) -> int:
 
     A dotfolder in the user profile is support data for some program — one rule
     covering 34 folders / 14 GB on a real machine, including tools no curated
-    list would contain (.irizi, .nexe, .node-red).
+    list would contain (.clientx, .nexe, .node-red).
 
     The owner's status comes from app_presence, which reports PRESENT or
     UNKNOWN and never "absent": .vscode and .lmstudio (5.6 GB together) look
@@ -4307,8 +4307,8 @@ def _disambiguate_names(entities: list) -> int:
 def _trim_hint(hint: str, name_words: set[str]) -> str:
     """Drop from *hint* the words the name already says.
 
-    Two installers in Downloads produced "Installer (Stream_Brave1)
-    (Stream_Brave1_1.0.8.exe)" — the hint restated the product and buried the
+    Two installers in Downloads produced "Installer (Stream_Drone1)
+    (Stream_Drone1_1.0.8.exe)" — the hint restated the product and buried the
     only part that told them apart. What is left here is "1.0.8.exe".
     """
     if not hint:
@@ -4452,7 +4452,7 @@ def _retype_workspaces(ctx: "_DetectionContext", entities: list, log_fn):
 
     The test is the one a person would apply: does this folder hold several
     separate projects, and is it not itself one? The second half matters —
-    "irizi-odm-dev" vendors two source checkouts and would otherwise be
+    "client-odm-dev" vendors two source checkouts and would otherwise be
     called a workspace, when it is a project that happens to contain them.
     Its own project markers are what say so.
 
@@ -4565,7 +4565,7 @@ def _postprocess(ctx: "_DetectionContext", t0: float) -> list:
             # unknown one, and hides its noisy children the same way. Only a
             # *folder-backed* one: pass 8's "Misc files in X" buckets are
             # mixed_folder too, and they carry the enclosing directory as
-            # their path — as an absorber, five stray files in E:/Forge would
+            # their path — as an absorber, five stray files in E:/Workbench would
             # swallow every entity on the drive below it.
             absorbers.append((np, "unknown_folder"))
     absorbers.sort(key=lambda x: x[0].count("/"))
