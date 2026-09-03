@@ -75,12 +75,61 @@ def _loose_buckets(entities, root):
     return found
 
 
+def _diagnostic(entities, findings, root):
+    """Evidence for a failure that does not reproduce locally.
+
+    This scenario passes on every local configuration tried — including a venv
+    matching CI's exact PySide6/pytest/psutil versions, and the whole
+    alphabetical prefix of the suite in one process — but fails on GitHub
+    runners, where C:/Archive produces a bucket and C:/Work does not. The
+    assertion therefore has to carry its own evidence out of CI: every entity
+    the same call produced, and the entity each loose file ended up inside,
+    including the case where it was absorbed rather than bucketed.
+    """
+    out = ["", "entities from this detect_entities call:"]
+    for e in entities:
+        out.append("  name=%-32r type=%-20s path=%-24r files=%s removable=%d"
+                   % (e.name, getattr(e, "entity_type", "?"), e.path,
+                      e.file_count, len(e.removable_file_paths or [])))
+
+    own = [f.path for f in findings
+           if not f.is_dir and _norm(os.path.dirname(f.path)) == _norm(root)]
+    out += ["", "where each file directly in %s ended up:" % root]
+    for p in own:
+        leaf = os.path.basename(p)
+        owners = [e for e in entities if p in (e.removable_file_paths or [])]
+        if owners:
+            for e in owners:
+                out.append("  %-16s -> listed by %r (%s) at %r"
+                           % (leaf, e.name, getattr(e, "entity_type", "?"), e.path))
+            continue
+        itself = [e for e in entities if _norm(e.path) == _norm(p)]
+        if itself:
+            out.append("  %-16s -> emitted AS ITSELF: %r (%s)"
+                       % (leaf, itself[0].name,
+                          getattr(itself[0], "entity_type", "?")))
+            continue
+        # Absorbed: no entity lists it, but one contains it by path.
+        under = [e for e in entities
+                 if _norm(p).startswith(_norm(e.path) + "/")]
+        if under:
+            out.append("  %-16s -> absorbed under %s"
+                       % (leaf, ", ".join("%r (%s)"
+                                          % (e.name, getattr(e, "entity_type", "?"))
+                                          for e in under)))
+        else:
+            out.append("  %-16s -> NOT FOUND in any entity" % leaf)
+    return "\n".join(out)
+
+
 def test_loose_buckets_use_their_real_folder_not_the_scan_root():
     root = "C:/Work"
-    entities = _detect(_folder_with_loose_files(root))
+    findings = _folder_with_loose_files(root)
+    entities = _detect(findings)
 
     loose = _loose_buckets(entities, root)
-    assert loose, "no loose-file buckets produced — scenario no longer exercises pass 8"
+    assert loose, ("no loose-file buckets produced — scenario no longer "
+                   "exercises pass 8" + _diagnostic(entities, findings, root))
     for e in loose:
         assert _norm(e.path) != "c:", (
             f"{e.name!r} claims the drive root; the files live in {root}")
@@ -110,7 +159,10 @@ def test_unrelated_folders_are_not_merged_into_one_bucket():
     folders = {_norm(e.path) for e in docs}
     assert len(folders) >= 2, (
         "PDFs from two unrelated folders collapsed into one bucket: "
-        f"{[(e.name, e.path) for e in docs]}")
+        f"{[(e.name, e.path) for e in docs]}"
+        # On CI this reports only the C:/Archive bucket, so the question is
+        # what became of C:/Work's files in the same call.
+        + _diagnostic(entities, findings, "C:/Work"))
 
 
 def test_files_genuinely_at_the_drive_root_may_use_it():

@@ -127,6 +127,50 @@ def _populated_startups(qapp):
 
 # -- the reported case ---------------------------------------------
 
+def _visibility_chain(widget, root, screen, panel):
+    """Why isVisibleTo() said no, for a failure that only happens on CI.
+
+    isVisibleTo(root) is false when any widget between `widget` and `root` is
+    explicitly hidden, so the answer is always a single named ancestor. This
+    walks the chain and reports it, plus the selection state that decides
+    whether the action frame was ever shown. Diagnostic only — it runs after
+    the assertion has already failed and changes no timing.
+    """
+    out = ["", "visibility chain from the button up to the screen:"]
+    first_hidden = None
+    w = widget
+    while w is not None:
+        out.append("  %-22s objectName=%-14r isVisible=%-5s isHidden=%-5s "
+                   "isEnabled=%-5s%s"
+                   % (type(w).__name__, w.objectName(), w.isVisible(),
+                      w.isHidden(), w.isEnabled(),
+                      "   <-- screen" if w is root else ""))
+        if first_hidden is None and w.isHidden():
+            first_hidden = w
+        if w is root:
+            break
+        w = w.parentWidget()
+    if w is None:
+        out.append("  !! reached a top-level widget without passing the screen")
+
+    out.append("")
+    out.append("first hidden ancestor: %s" % (
+        "none — nothing in the chain reports isHidden()" if first_hidden is None
+        else "%s objectName=%r" % (type(first_hidden).__name__,
+                                   first_hidden.objectName())))
+
+    # If set_entry never ran with a real entry the action frame stays hidden
+    # from construction, which looks identical from the button's side.
+    entry = getattr(panel, "_current_entry", "<missing>")
+    out.append("panel._current_entry: %r" % (
+        getattr(entry, "key", entry) if entry not in (None, "<missing>") else entry))
+    out.append("screen._selected_key: %r" % getattr(screen, "_selected_key", "<missing>"))
+    out.append("len(screen._filtered): %r" % len(getattr(screen, "_filtered", []) or []))
+    out.append("len(screen._entries): %r" % len(getattr(screen, "_entries", []) or []))
+    out.append("screen.isVisible(): %r" % screen.isVisible())
+    return "\n".join(out)
+
+
 def test_the_startup_inspector_actions_read_as_buttons(qapp):
     """Reported twice: once against the panel's own stylesheet, and again
     against the copy its sidebar re-applies on every theme change."""
@@ -134,7 +178,8 @@ def test_the_startup_inspector_actions_read_as_buttons(qapp):
     try:
         panel = screen._right_sidebar.detail_widget
         for btn in (panel._open_btn, panel._copy_btn):
-            assert btn.isVisibleTo(screen)
+            assert btn.isVisibleTo(screen), _visibility_chain(
+                btn, screen, screen, panel)
             assert _edges(btn) - {"#000000"}, f"{btn.text()} paints no chrome"
     finally:
         screen.deleteLater()
