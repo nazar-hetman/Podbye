@@ -17,14 +17,11 @@ canonical name stays English: it is the value in the settings file, the
 argument to ``set_language()``, and the key in ``LANGUAGES``. Separating them
 is what lets the picker read correctly without changing what is stored.
 
-"Polski" was itself a stored value for a while, so it migrates rather than
-silently reverting a Polish user to English.
 """
 import pytest
 
 from app.i18n import (ENDONYMS, LANGUAGES, available_languages,
-                      canonical_language, display_name, get_language,
-                      init_language, set_language)
+                      display_name, get_language, set_language)
 
 
 # ── the list reads in its own languages ───────────────────────────
@@ -75,36 +72,6 @@ def test_an_endonym_is_never_also_a_stored_name():
         assert name in LANGUAGES
 
 
-# ── a setting written by an older build still works ───────────────
-
-def test_the_old_polski_setting_still_selects_polish():
-    class Store:
-        def get(self, key, default=None):
-            return "Polski" if key == "ui_language" else default
-
-    previous = get_language()
-    try:
-        init_language(Store())
-        assert get_language() == "Polish"
-    finally:
-        set_language(previous)
-
-
-def test_set_language_accepts_the_old_name():
-    """Callers written against the old key keep working."""
-    previous = get_language()
-    try:
-        set_language("Polski")
-        assert get_language() == "Polish"
-    finally:
-        set_language(previous)
-
-
-def test_a_name_that_was_never_legacy_is_left_alone():
-    assert canonical_language("German") == "German"
-    assert canonical_language("Klingon") == "Klingon"
-
-
 # ── and the picker itself behaves ─────────────────────────────────
 
 @pytest.fixture
@@ -151,17 +118,6 @@ def test_the_picker_stores_the_canonical_name(settings):
     screen._apply_language()
 
     assert screen._store.get("ui_language") == "Polish"
-
-
-def test_an_old_setting_preselects_without_asking_to_apply(settings):
-    """Reading "Polski" and offering English with Apply enabled would look
-    like Podbye had forgotten the choice."""
-    screen = settings("Polski")
-
-    assert screen._lang_combo.currentData() == "Polish"
-    assert screen._lang_combo.currentText() == "Polski"
-    assert not screen._lang_dirty
-    assert not screen._btn_apply_lang.isEnabled()
 
 
 def test_the_picker_still_fits_its_fixed_width(settings):
@@ -218,21 +174,6 @@ def test_the_two_lists_disagree_on_purpose(qapp):
         assert "Українська" in ui and "Ukraiński" in ai
     finally:
         set_language(previous)
-
-
-# ── the rename must not reach into what the model is told ─────────
-
-def test_a_stored_ai_language_from_an_older_build_still_steers_the_model():
-    """ai_explanation_language is stored separately from the UI language, so
-    it can still hold "Polski". The instruction map is keyed by name, and a
-    miss is silent: the model gets a generic English sentence instead of
-    "Odpowiadaj wyłącznie po polsku." and answers less reliably in the
-    language that was asked for.
-    """
-    from app.services.prompt_builder import _language_instruction
-
-    assert _language_instruction("Polish") == "Odpowiadaj wyłącznie po polsku."
-    assert _language_instruction("Polski") == _language_instruction("Polish")
 
 
 def test_every_offered_answer_language_has_a_native_instruction():

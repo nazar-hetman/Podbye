@@ -46,25 +46,9 @@ ENDONYMS: dict[str, str] = {
     "Polish": "Polski",
 }
 
-# Names that were once canonical and may still be sitting in a settings file.
-_LEGACY_NAMES: dict[str, str] = {
-    "Polski": "Polish",
-}
-
-
-def canonical_language(name: str) -> str:
-    """The stored name for *name*, migrating anything written by an older build.
-
-    "Polski" shipped briefly as a canonical key, so it is in real settings
-    files. Mapping it here means those users keep the language they chose
-    instead of silently reverting to English.
-    """
-    return _LEGACY_NAMES.get(name, name)
-
-
 def display_name(name: str) -> str:
     """What to show in the picker for a canonical language name."""
-    return ENDONYMS.get(canonical_language(name), name)
+    return ENDONYMS.get(name, name)
 
 _lang: str = "English"
 _cache: dict[str, dict[str, str]] = {}
@@ -134,12 +118,12 @@ def init_language(store) -> None:
     """Read ui_language from settings store and activate it."""
     global _lang
     if store:
-        _lang = canonical_language(store.get("ui_language", "English"))
+        _lang = store.get("ui_language", "English")
 
 
 def set_language(lang: str) -> None:
     global _lang
-    _lang = canonical_language(lang)
+    _lang = lang
 
 
 def get_language() -> str:

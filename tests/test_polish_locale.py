@@ -1,6 +1,6 @@
 """Polish is a shipped locale, with localized UI and preserved raw values."""
 from app.i18n import (LANGUAGES, available_languages, display_name,
-                      get_language, init_language, set_language, tr)
+                      set_language, tr)
 
 
 def test_polish_is_registered_and_ships_a_locale_file():
@@ -10,24 +10,6 @@ def test_polish_is_registered_and_ships_a_locale_file():
     assert LANGUAGES["Polish"] == "pl"
     assert "Polish" in available_languages()
     assert display_name("Polish") == "Polski"
-
-
-def test_polish_restores_from_a_setting_written_before_the_rename():
-    """"Polski" shipped briefly as the canonical name, so it is in real
-    settings files. Those users must keep the language they chose."""
-    class Store:
-        def get(self, key, default=None):
-            return "Polski" if key == "ui_language" else default
-
-    previous = get_language()
-    try:
-        init_language(Store())
-        assert get_language() == "Polish"
-        assert tr("Start scan") == "Rozpocznij analizę"
-        set_language("English")
-        assert tr("Start scan") == "Start scan"
-    finally:
-        set_language(previous)
 
 
 def test_polish_preserves_product_taxonomy_and_technical_values():

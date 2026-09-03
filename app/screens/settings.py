@@ -15,8 +15,8 @@ from app.widgets.panels import Panel, apply_tactical_label
 from app.widgets.controls import (ElidedLabel, TacticalCheckBox,
                                   TacticalComboBox, style_container)
 from app.themes.theme_manager import THEME_NAMES, THEME_KEYS, get_palette, theme_signaller
-from app.i18n import (available_languages, canonical_language, display_name,
-                      explanation_languages, tr)
+from app.i18n import (available_languages, display_name, explanation_languages,
+                      tr)
 from app.services.ollama_client import LOCAL_ENDPOINT
 
 
@@ -304,11 +304,7 @@ class SettingsScreen(QWidget):
                 break
 
         # AI explanation language
-        # Migrated like ui_language: this setting can also hold a name from
-        # an older build, and an unmatched value would leave the picker on
-        # English while the prompt still asked for the old one.
-        ai_lang = canonical_language(
-            self._store.get("ai_explanation_language", "English"))
+        ai_lang = self._store.get("ai_explanation_language", "English")
         for i in range(self._ai_lang_combo.count()):
             if self._ai_lang_combo.itemData(i) == ai_lang:
                 self._ai_lang_combo.setCurrentIndex(i)
@@ -330,9 +326,7 @@ class SettingsScreen(QWidget):
         self.reload_close_behavior()
 
         # UI language
-        # Migrated, so a settings file written when "Polski" was the stored
-        # name still selects Polish instead of falling through to English.
-        ui_lang = canonical_language(self._store.get("ui_language", "English"))
+        ui_lang = self._store.get("ui_language", "English")
         for i in range(self._lang_combo.count()):
             if self._lang_combo.itemData(i) == ui_lang:
                 self._lang_combo.setCurrentIndex(i)
@@ -568,7 +562,7 @@ class SettingsScreen(QWidget):
         if not self._store:
             return
         self._lang_dirty = (self._lang_combo.currentData()
-                            != canonical_language(self._store.get("ui_language", "English")))
+                            != self._store.get("ui_language", "English"))
         self._btn_apply_lang.setEnabled(self._lang_dirty)
 
     def _apply_language(self):

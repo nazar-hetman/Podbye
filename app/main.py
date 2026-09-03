@@ -833,17 +833,6 @@ class PodbyeWindow(QMainWindow):
 
 
 def main():
-    # Before anything reads a setting: an install that predates the rename
-    # keeps everything under %APPDATA%\Vigil, and starting against an empty
-    # Podbye directory would look exactly like losing every saved session and
-    # every Keep mark. Idempotent, and never fatal — see legacy_migration.
-    try:
-        from app.config.legacy_migration import migrate
-        migrate(log_fn=logging.getLogger("podbye.migrate").info)
-    except Exception:
-        logging.getLogger("podbye.migrate").exception(
-            "could not carry Vigil-era data over")
-
     # High-DPI attribute (Qt 5 compat, harmless on Qt 6)
     try:
         QApplication.setHighDpiScaleFactorRoundingPolicy(

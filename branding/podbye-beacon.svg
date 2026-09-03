@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor">
-  <!-- The Beacon: a vigil is a kept flame. Geometric, leaning tip = motion.
+  <!-- The Beacon: a kept flame. Geometric, leaning tip = motion.
        Outer body + inner core (opacity), so it glows on any theme. -->
   <path d="M138 32 C150 78 174 100 174 140 C174 176 152 204 128 206
            C102 204 82 176 82 140 C82 110 114 90 138 32 Z" opacity="0.55"/>

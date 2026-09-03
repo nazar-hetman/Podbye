@@ -1,6 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor">
-  <!-- The Keep: a flame held in a vessel — the kept watch (Vigil) over your
-       storage (the container). Bridges the name and the function. -->
+  <!-- The Keep: a flame held in a vessel over your storage. -->
   <path d="M86 172 L170 172 L156 210 L100 210 Z" opacity="0.5"/>
   <path d="M134 62 C142 92 158 104 158 130 C158 154 142 168 128 170
            C110 168 98 152 98 132 C98 110 120 98 134 62 Z" opacity="0.78"/>

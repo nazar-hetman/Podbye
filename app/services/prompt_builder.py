@@ -83,14 +83,7 @@ _LANGUAGE_INSTRUCTIONS = {
 
 def _language_instruction(language: str) -> str:
     """Build strict language constraint for the prompt."""
-    # Through canonical_language first: this reads ai_explanation_language,
-    # which is stored separately from the UI language and may still hold a
-    # name from an older build. A miss here is silent — the model just gets a
-    # generic English sentence and answers less reliably in the language the
-    # user asked for.
-    from app.i18n import canonical_language
-
-    key = canonical_language((language or "English").strip()).lower()
+    key = (language or "English").strip().lower()
     return _LANGUAGE_INSTRUCTIONS.get(key, f"Return explanation in {language} only. Do not use any other language.")
 
 
