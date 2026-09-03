@@ -8,10 +8,19 @@ a single cleanup click would recycle files from all over the disk.
 """
 import os
 
-from app.services.entity_detector import detect_entities
+from app.services.entity_detector import (
+    STANDALONE_LOOSE_FILE_BYTES,
+    detect_entities,
+)
 from app.models.finding import Finding
 
 MB = 1024 * 1024
+
+# Small enough that pass 8 groups these files instead of giving each one its
+# own finding. Derived from the threshold rather than written as a number, so
+# raising the threshold cannot quietly move the fixture out of the pass it
+# exists to test — which is exactly what happened when the threshold arrived.
+BUCKETABLE = STANDALONE_LOOSE_FILE_BYTES // 8
 
 
 def _f(path, is_dir=False, size=0, ext="", parent=""):
@@ -41,18 +50,36 @@ def _folder_with_loose_files(root: str):
         f.append(_f(f"{root}/{sub}", is_dir=True, parent=root))
         f += [_f(f"{root}/{sub}/f{j}{ext}", size=5 * MB, ext=ext,
                  parent=f"{root}/{sub}") for j in range(4)]
-    f += [_f(f"{root}/loose{i}.pdf", size=2 * MB, ext=".pdf", parent=root)
+    # Deliberately named nothing like "loose": the bucket has to be recognised
+    # by what it holds, not by a word the fixture put in the filename.
+    f += [_f(f"{root}/report{i}.pdf", size=BUCKETABLE, ext=".pdf", parent=root)
           for i in range(4)]
-    f += [_f(f"{root}/img{i}.png", size=1 * MB, ext=".png", parent=root)
+    f += [_f(f"{root}/photo{i}.png", size=BUCKETABLE, ext=".png", parent=root)
           for i in range(3)]
     return f
+
+
+def _loose_buckets(entities, root):
+    """The pass-8 buckets: several files that live directly in `root`.
+
+    Identified by their contents. Selecting them by name (``startswith
+    ("loose")``) matched the fixture's own ``loose0.pdf`` files, so the
+    "did pass 8 run at all" guard passed while pass 8 was never reached.
+    """
+    found = []
+    for e in entities:
+        paths = e.removable_file_paths or []
+        if len(paths) > 1 and all(
+                _norm(os.path.dirname(p)) == _norm(root) for p in paths):
+            found.append(e)
+    return found
 
 
 def test_loose_buckets_use_their_real_folder_not_the_scan_root():
     root = "C:/Work"
     entities = _detect(_folder_with_loose_files(root))
 
-    loose = [e for e in entities if e.name.lower().startswith("loose")]
+    loose = _loose_buckets(entities, root)
     assert loose, "no loose-file buckets produced — scenario no longer exercises pass 8"
     for e in loose:
         assert _norm(e.path) != "c:", (

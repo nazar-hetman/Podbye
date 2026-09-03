@@ -77,10 +77,31 @@ def test_the_installer_version_matches_the_app():
 
 
 def test_the_installer_deploys_the_whole_folder():
-    iss = _read("installer/Podbye.iss")
+    """The installer must ship the folder the spec builds, whole.
+
+    This used to pin the literal "..\\dist\\Podbye". That string is a build
+    convenience, not a contract: keeping a verified release build aside as
+    dist-beta5\\ renamed it and broke the test without anything about the
+    packaging having changed. What must not change is the shape — the source is
+    the spec's COLLECT folder, referenced by wildcard and recursed, so
+    _internal\\ and the replaceable Qt DLLs inside it arrive as ordinary files.
+    Comparing against the spec also catches the case a literal cannot: the
+    installer packaging a folder no build produces.
+    """
+    iss = _read("installer/Podbye.iss").replace("/", "\\")
+    spec = _read("podbye.spec")
+
+    collect = spec[spec.index("COLLECT("):]
+    built = re.search(r'name="([^"]+)"', collect).group(1)
+    source_dir = re.search(r'#define\s+SourceDir\s+"([^"]+)"', iss).group(1)
+
+    assert source_dir.split("\\")[-1] == built, (
+        f"installer packages {source_dir!r}, but the spec builds {built!r}")
+    assert re.search(r'Source:\s*"\{#SourceDir\}\\\*"', iss), (
+        "the whole folder must be the source, not a hand-picked file list")
     assert "recursesubdirs" in iss, (
         "the installer must deploy _internal\\ — including the replaceable Qt DLLs")
-    assert "..\\dist\\Podbye" in iss.replace("/", "\\")
+    assert "createallsubdirs" in iss
 
 
 def test_the_installer_does_not_silently_delete_user_data():
