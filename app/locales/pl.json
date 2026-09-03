@@ -926,7 +926,7 @@
   "{measured} of {total} measured so far": "zmierzono {measured} z {total}",
   "WILL REMAIN": "POZOSTANIE",
   "Rest of this folder — not itemised": "Reszta tego folderu — bez wyszczególnienia",
-  "Measuring more details…": "Mierzenie kolejnych szczegółów…",
   "WILL BE MOVED TO RECYCLE BIN": "ZOSTANIE PRZENIESIONE DO KOSZA",
-  "WILL BE UNINSTALLED": "ZOSTANIE ODINSTALOWANE"
+  "WILL BE UNINSTALLED": "ZOSTANIE ODINSTALOWANE",
+  "Measuring contents…": "Mierzenie zawartości…"
 }

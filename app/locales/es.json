@@ -944,7 +944,7 @@
   "{measured} of {total} measured so far": "{measured} de {total} medidos hasta ahora",
   "WILL REMAIN": "SE CONSERVARÁ",
   "Rest of this folder — not itemised": "Resto de esta carpeta — sin detallar",
-  "Measuring more details…": "Midiendo más detalles…",
   "WILL BE MOVED TO RECYCLE BIN": "SE MOVERÁ A LA PAPELERA",
-  "WILL BE UNINSTALLED": "SE DESINSTALARÁ"
+  "WILL BE UNINSTALLED": "SE DESINSTALARÁ",
+  "Measuring contents…": "Midiendo el contenido…"
 }

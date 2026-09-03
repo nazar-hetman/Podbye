@@ -258,7 +258,12 @@ def test_it_says_it_is_still_looking(panel, started):
 
     p._on_contents_measured("C:/thing", _walk(int(2.5 * GB), truncated=True))
 
-    assert "Measuring more" in p._contents_meta.text()
+    # It says so in the row where the breakdown will appear, not in the
+    # header — one statement, in the place it is about.
+    labels = [w._name.full_text() for w in p._content_row_pool
+              if w.isVisibleTo(p)]
+    assert any("Measuring contents" in l for l in labels), labels
+    assert p._contents_meta.text() == ""
 
 
 def test_the_notice_promises_a_look_not_an_outcome():
@@ -266,19 +271,35 @@ def test_the_notice_promises_a_look_not_an_outcome():
     when the deeper walk gives up."""
     from app.i18n import tr
 
-    text = tr("Measuring more details…")
+    text = tr("Measuring contents…")
     for overclaim in ("all", "everything", "complete", "full"):
         assert overclaim not in text.lower()
 
 
-def test_the_residual_row_survives_the_wait(panel, started):
-    """It is removed by a better measurement, never by the promise of one."""
+def test_the_residual_row_is_not_shown_while_it_may_still_change(panel, started):
+    """It accounts for what the walk did not reach, and the walk is not
+    finished. Publishing it against a measurement already scheduled to be
+    redone is what made the panel look like it changed its mind."""
     p = panel(_entity(int(24.3 * GB)))
 
     p._on_contents_measured("C:/thing", _walk(int(2.5 * GB), truncated=True))
     labels = [w._name.full_text() for w in p._content_row_pool
               if w.isVisibleTo(p)]
 
+    assert not any("not itemised" in l for l in labels), labels
+
+
+def test_a_final_truncated_result_does_show_the_residual(panel, started):
+    """C:/Windows: the deeper walk gives up too, and then the residual is the
+    honest answer rather than a promise."""
+    p = panel(_entity(int(46.0 * GB)))
+
+    p._on_contents_measured("C:/thing", _walk(int(2.0 * GB), truncated=True))
+    p._on_contents_measured("C:/thing", _walk(int(12.0 * GB), truncated=True))
+    labels = [w._name.full_text() for w in p._content_row_pool
+              if w.isVisibleTo(p)]
+
+    assert p._measuring_more is False
     assert any("not itemised" in l for l in labels), labels
 
 
@@ -300,7 +321,7 @@ def test_a_complete_second_result_clears_the_notice(panel, started):
 def test_the_notice_is_translated(language):
     from app.i18n import set_language, tr
 
-    key = "Measuring more details…"
+    key = "Measuring contents…"
     try:
         set_language(language)
         assert tr(key) != key, f"{language} falls back to English"

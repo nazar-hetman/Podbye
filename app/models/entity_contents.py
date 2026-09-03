@@ -51,6 +51,12 @@ class ContentRow:
     # than a folder that happens to be there. Worth showing first.
     named: bool = False
     file_count: int = 0
+    # This row is what makes the branch add up — the bytes the walk never
+    # reached. It is the last row removal_split appends and so the first one a
+    # display cap would drop, which is precisely backwards: every other row is
+    # a detail, this one is the accounting. Flagged rather than matched by
+    # label so the panel does not have to recognise a translated string.
+    residual: bool = False
 
     @property
     def is_other(self) -> bool:
@@ -360,7 +366,7 @@ def removal_split(entity: dict, contents: "Contents", world: list,
     truncated = bool(contents and contents.truncated)
     if truncated and shortfall > 0:
         rows.append(ContentRow(label=tr("Rest of this folder — not itemised"),
-                               size_bytes=shortfall, named=True))
+                               size_bytes=shortfall, named=True, residual=True))
 
     kept = excluded_paths(entity)
     remain_rows = []

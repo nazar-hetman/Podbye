@@ -3352,6 +3352,13 @@ class _PreallocDetailPanel(QWidget):
         #
         # _render_remain decides whether the second branch is worth drawing;
         # its total stays exact either way.
+        # Nothing is final while the deeper walk is still running, and this
+        # is where both halves of a final answer come from: the residual row
+        # that accounts for what the walk did not reach, and the WILL REMAIN
+        # branch. Publishing either against a measurement we have already
+        # decided to redo is what made Podbye look like it changed its mind.
+        if getattr(self, "_measuring_more", False):
+            return None
         world = self._entities_cb() if self._entities_cb else []
         if not world:
             return None
@@ -3454,9 +3461,36 @@ class _PreallocDetailPanel(QWidget):
                 size_bytes=own_bytes(entity),
                 path=entity.get("path", ""), named=True)
 
-        shown = (contents.rows if self._contents_expanded
-                 else contents.rows[:self._CONTENT_ROWS_SHOWN])
-        hidden = len(contents.rows) - len(shown)
+        # A breakdown Podbye has already decided to redo is not an answer.
+        # miniconda3 showed pkgs 2.3 GB, Other data 54 MB and 21.9 GB of
+        # "Rest of this folder" for four seconds, then replaced all three
+        # with the real figures — so the panel appeared to change its mind
+        # about a folder it was about to offer to delete. The header and the
+        # root row are already authoritative and stay put; only the part that
+        # is still being measured says so.
+        measuring = getattr(self, "_measuring_more", False) and not is_items
+        if measuring:
+            shown = [ContentRow(label=tr("Measuring contents…"))]
+            hidden = 0
+        else:
+            shown = (contents.rows if self._contents_expanded
+                     else contents.rows[:self._CONTENT_ROWS_SHOWN])
+            hidden = len(contents.rows) - len(shown)
+            # The residual is appended last and the cap takes from the end, so
+            # the one row that closes the accounting is the first one dropped.
+            # Seen on a slow run of miniconda3: the deeper walk also ran out
+            # of budget, six rows came back, five were shown, and 4.85 GB of
+            # "Rest of this folder" sat behind a "+1 more" button under a root
+            # reading 24.3 GB.
+            #
+            # An ordinary measured row gives up its place instead. It is a
+            # detail; this is the arithmetic. The hidden count is unchanged —
+            # the same number of rows is still hidden, just a different one.
+            if hidden and shown:
+                residual = next((r for r in contents.rows
+                                 if getattr(r, "residual", False)), None)
+                if residual is not None and residual not in shown:
+                    shown = shown[:-1] + [residual]
 
         # A truncated walk must never print a bare total. Reported from a real
         # screen: miniconda3 showed "CONTENTS 2.3 GB · PARTIAL" under a row
@@ -3474,11 +3508,10 @@ class _PreallocDetailPanel(QWidget):
             # is the size of. Repeating it here said one number twice and
             # still left the reader to work out what it was the size *of*.
             #
-            # While the longer walk runs the header says so, carefully: it
-            # promises a second look, not that the residual will disappear.
-            # For something the size of C:/Windows it will not.
-            meta = ([tr("Measuring more details…")]
-                    if getattr(self, "_measuring_more", False) else [])
+            # The "Measuring more details…" line that used to live here is
+            # gone: the placeholder row below sits exactly where the
+            # breakdown will appear and says the same thing once.
+            meta = []
         elif contents.truncated and known > 0:
             meta = [tr("{measured} of {total} measured so far",
                        measured=_format_size(contents.total_bytes),
@@ -3506,17 +3539,23 @@ class _PreallocDetailPanel(QWidget):
                 self._content_row_pool.append(widget)
                 self._contents_rows.addWidget(widget)
             is_root = row is root_row
+            is_placeholder = measuring and not is_root
             checked = (row.path in self._checked_files
-                       if is_files and not is_root else False)
+                       if is_files and not is_root and not is_placeholder
+                       else False)
             # No checkbox on an item: it is a finding in its own right, with
             # its own row and its own buttons one click away. Two ways to arm
             # one thing is how a screen starts disagreeing with itself. The
             # root is the row already selected, so it is not armable here
             # either.
-            widget.bind(row, selectable=is_files and not is_root,
+            widget.bind(row, selectable=(is_files and not is_root
+                                         and not is_placeholder),
                         checked=checked,
-                        provisional=contents.provisional and not is_root,
-                        drillable=is_items and not is_root,
+                        # provisional blanks a zero size, which is what keeps
+                        # the placeholder from reading as "0 B".
+                        provisional=((contents.provisional or is_placeholder)
+                                     and not is_root),
+                        drillable=is_items and not is_root and not is_placeholder,
                         analysed=bool(self._analysed_cb
                                       and row.path
                                       and self._analysed_cb(row.path)),

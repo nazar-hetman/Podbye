@@ -855,7 +855,7 @@
   "{measured} of {total} measured so far": "{measured} von {total} bisher gemessen",
   "WILL REMAIN": "BLEIBT BESTEHEN",
   "Rest of this folder — not itemised": "Rest dieses Ordners — nicht aufgeschlüsselt",
-  "Measuring more details…": "Weitere Details werden gemessen…",
   "WILL BE MOVED TO RECYCLE BIN": "WIRD IN DEN PAPIERKORB VERSCHOBEN",
-  "WILL BE UNINSTALLED": "WIRD DEINSTALLIERT"
+  "WILL BE UNINSTALLED": "WIRD DEINSTALLIERT",
+  "Measuring contents…": "Inhalt wird gemessen…"
 }

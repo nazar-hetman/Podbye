@@ -335,3 +335,245 @@ def test_the_budget_was_not_raised():
     from app.screens.findings_dashboard import _PreallocDetailPanel
 
     assert _PreallocDetailPanel._DEEP_CONTENTS_BUDGET_MS == 6000
+
+
+# ── a breakdown about to be replaced is not shown at all ──────────
+#
+# Reported on beta.5: selecting miniconda3 showed pkgs 2.3 GB, Other data
+# 54 MB and "Rest of this folder — not itemised" 21.9 GB, then four seconds
+# later replaced all three with the real figures. Podbye appeared to change
+# its mind about a folder it was offering to delete. The header and the root
+# row were right the whole time; only the part still being measured was not.
+
+def _measuring(panel, walks, own=int(24.3 * GB), kept=()):
+    entity = _entity(own, kept=kept)
+    world = [entity] + [_entity(int(2.0 * GB), path=p, name="nested")
+                        for p in kept]
+    p = panel(entity, world)
+    p._populate_contents(entity)
+    p._on_contents_measured("C:/thing", _walk(int(2.3 * GB), truncated=True))
+    return p
+
+
+def _labels(p):
+    return [w._name.full_text() for w in p._content_row_pool
+            if w.isVisibleTo(p)]
+
+
+def test_the_partial_breakdown_is_not_rendered(panel, walks):
+    p = _measuring(panel, walks)
+
+    assert _labels(p) == ["Thing", "Measuring contents…"]
+
+
+def test_the_authoritative_answer_stays_visible(panel, walks):
+    """The header and the size were right all along and must not flicker."""
+    p = _measuring(panel, walks)
+    rows = [w for w in p._content_row_pool if w.isVisibleTo(p)]
+
+    assert p._contents_title.text() == "WILL BE MOVED TO RECYCLE BIN"
+    assert rows[0]._name.full_text() == "Thing"
+    assert rows[0]._size.text() == "24.3 GB"
+
+
+def test_the_placeholder_carries_no_size(panel, walks):
+    """A zero would read as "this folder holds 0 B"."""
+    p = _measuring(panel, walks)
+    rows = [w for w in p._content_row_pool if w.isVisibleTo(p)]
+
+    assert rows[1]._size.text() == ""
+
+
+def test_the_placeholder_is_a_state_not_a_target(panel, walks):
+    """Nothing to tick, nothing to drill into, nothing to ask AI about."""
+    p = _measuring(panel, walks)
+    rows = [w for w in p._content_row_pool if w.isVisibleTo(p)]
+
+    assert not rows[1]._check.isVisibleTo(p)
+    assert rows[1]._drillable is False
+
+
+def test_the_header_does_not_repeat_the_placeholder(panel, walks):
+    p = _measuring(panel, walks)
+
+    assert p._contents_meta.text() == ""
+
+
+def test_will_remain_waits_for_the_final_answer(panel, walks):
+    """It comes from the same split as the residual row and is just as
+    provisional while a better measurement is running."""
+    p = _measuring(panel, walks, kept=["C:/thing/nested"])
+
+    assert not p._remain_hdr_host.isVisibleTo(p)
+
+
+def test_the_final_result_replaces_only_the_placeholder(panel, walks):
+    p = _measuring(panel, walks)
+
+    p._on_contents_measured("C:/thing", _walk(
+        int(24.3 * GB),
+        rows=[ContentRow(label="envs", size_bytes=int(14.7 * GB)),
+              ContentRow(label="pkgs", size_bytes=int(7.3 * GB))]))
+    rows = [w for w in p._content_row_pool if w.isVisibleTo(p)]
+
+    assert p._contents_title.text() == "WILL BE MOVED TO RECYCLE BIN"
+    assert [w._name.full_text() for w in rows] == ["Thing", "envs", "pkgs"]
+    assert rows[0]._size.text() == "24.3 GB"
+
+
+def test_a_fast_completing_finding_never_shows_it(panel, walks):
+    """Most findings. No placeholder, no delay, no change from today."""
+    entity = _entity(int(5.0 * GB))
+    p = panel(entity)
+    p._populate_contents(entity)
+
+    p._on_contents_measured("C:/thing", _walk(
+        int(5.0 * GB),
+        rows=[ContentRow(label="src", size_bytes=int(3.0 * GB)),
+              ContentRow(label="dist", size_bytes=int(2.0 * GB))]))
+
+    assert p._measuring_more is False
+    assert _labels(p) == ["Thing", "src", "dist"]
+
+
+def test_a_file_list_is_never_replaced_by_a_placeholder(panel, walks):
+    """measure_files never escalates, so it can never be mid-measurement."""
+    entity = _entity(int(1.0 * GB), files=["C:/thing/a.zip", "C:/thing/b.zip"])
+    p = panel(entity)
+    p._populate_contents(entity)
+    p._contents_file_paths = ["C:/thing/a.zip", "C:/thing/b.zip"]
+
+    p._on_contents_measured("C:/thing", _walk(
+        int(1.0 * GB), truncated=True, mode=MODE_FILES,
+        rows=[ContentRow(label="a.zip", size_bytes=int(0.6 * GB)),
+              ContentRow(label="b.zip", size_bytes=int(0.4 * GB))]))
+
+    assert p._measuring_more is False
+    assert "Measuring contents…" not in _labels(p)
+
+
+@pytest.mark.parametrize("language", ["Ukrainian", "German", "Spanish",
+                                      "Polish", "French"])
+def test_the_placeholder_is_translated(language):
+    from app.i18n import set_language, tr
+
+    try:
+        set_language(language)
+        assert tr("Measuring contents…") != "Measuring contents…"
+    finally:
+        set_language("English")
+
+
+# ── the residual is never the row the cap drops ───────────────────
+#
+# Seen on a slow run of the real miniconda3: the deeper walk ran out of
+# budget too, six rows came back, the display cap showed five, and 4.85 GB
+# of "Rest of this folder — not itemised" sat behind a "+1 more" button
+# under a root reading 24.3 GB. The row that exists to make the branch add
+# up was the first one dropped, because removal_split appends it last.
+
+def _six_row_truncated(panel, walks):
+    """A deep walk that also gave up: five measured rows plus the residual,
+    one more than the panel shows."""
+    entity = _entity(int(24.3 * GB))
+    p = panel(entity)
+    p._populate_contents(entity)
+    p._on_contents_measured("C:/thing", _walk(int(2.2 * GB), truncated=True))
+    p._on_contents_measured("C:/thing", _walk(
+        int(19.45 * GB), truncated=True,
+        rows=[ContentRow(label="Installed packages", size_bytes=int(1.3 * GB)),
+              ContentRow(label="Package download cache", size_bytes=int(0.8 * GB)),
+              ContentRow(label="envs", size_bytes=int(9.8 * GB)),
+              ContentRow(label="pkgs", size_bytes=int(7.3 * GB)),
+              ContentRow(label="Other data", size_bytes=int(0.25 * GB))]))
+    return p
+
+
+def test_the_deep_walk_may_still_truncate(panel, walks):
+    """The precondition. C:/Windows does this every time."""
+    p = _six_row_truncated(panel, walks)
+
+    assert p._measuring_more is False
+    assert p._contents.truncated is True
+
+
+def test_the_residual_would_otherwise_fall_past_the_cap(panel, walks):
+    """Stated so the test cannot quietly stop exercising the case."""
+    from app.models.entity_contents import removal_split
+
+    p = _six_row_truncated(panel, walks)
+    split = removal_split(p._current_entity, p._contents, [p._current_entity])
+
+    assert len(split.removed.rows) == p._CONTENT_ROWS_SHOWN + 1
+    assert split.removed.rows[-1].residual is True
+
+
+def test_the_residual_stays_visible(panel, walks):
+    p = _six_row_truncated(panel, walks)
+
+    assert any("not itemised" in l for l in _labels(p)), _labels(p)
+
+
+def test_an_ordinary_row_gives_up_its_place(panel, walks):
+    """The smallest measured row, not the accounting."""
+    p = _six_row_truncated(panel, walks)
+    labels = _labels(p)
+
+    assert "Other data" not in labels
+    assert "envs" in labels and "pkgs" in labels
+
+
+def test_the_visible_and_hidden_counts_still_add_up(panel, walks):
+    p = _six_row_truncated(panel, walks)
+    visible = [w for w in p._content_row_pool if w.isVisibleTo(p)]
+
+    # root + the capped rows, and exactly one row still hidden behind the button
+    assert len(visible) == p._CONTENT_ROWS_SHOWN + 1
+    assert p._btn_contents_more.text() == "+1 more"
+
+
+def test_expanding_shows_everything_including_the_residual(panel, walks):
+    p = _six_row_truncated(panel, walks)
+    p._contents_expanded = True
+    p._render_contents()
+    labels = _labels(p)
+
+    assert "Other data" in labels
+    assert any("not itemised" in l for l in labels)
+    assert p._btn_contents_more.text() == "Show less"
+
+
+def test_a_complete_walk_is_capped_exactly_as_before(panel, walks):
+    """No residual exists, so nothing is pinned and nothing changes."""
+    entity = _entity(int(24.3 * GB))
+    p = panel(entity)
+    p._populate_contents(entity)
+    p._on_contents_measured("C:/thing", _walk(
+        int(24.3 * GB),
+        rows=[ContentRow(label="a", size_bytes=int(8.0 * GB)),
+              ContentRow(label="b", size_bytes=int(6.0 * GB)),
+              ContentRow(label="c", size_bytes=int(5.0 * GB)),
+              ContentRow(label="d", size_bytes=int(3.0 * GB)),
+              ContentRow(label="e", size_bytes=int(2.0 * GB)),
+              ContentRow(label="f", size_bytes=int(0.3 * GB))]))
+    labels = _labels(p)
+
+    assert labels == ["Thing", "a", "b", "c", "d", "e"]
+    assert p._btn_contents_more.text() == "+1 more"
+
+
+def test_a_truncated_walk_within_the_cap_is_untouched(panel, walks):
+    """Nothing is hidden, so there is nothing to pin."""
+    entity = _entity(int(24.3 * GB))
+    p = panel(entity)
+    p._populate_contents(entity)
+    p._on_contents_measured("C:/thing", _walk(int(2.2 * GB), truncated=True))
+    p._on_contents_measured("C:/thing", _walk(
+        int(10.0 * GB), truncated=True,
+        rows=[ContentRow(label="envs", size_bytes=int(6.0 * GB)),
+              ContentRow(label="pkgs", size_bytes=int(4.0 * GB))]))
+    labels = _labels(p)
+
+    assert labels[:3] == ["Thing", "envs", "pkgs"]
+    assert any("not itemised" in l for l in labels)
+    assert not p._btn_contents_more.isVisibleTo(p)

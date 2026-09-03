@@ -1360,7 +1360,7 @@
   "{measured} of {total} measured so far": "виміряно {measured} із {total}",
   "WILL REMAIN": "ЗАЛИШИТЬСЯ",
   "Rest of this folder — not itemised": "Решта цієї теки — без деталізації",
-  "Measuring more details…": "Вимірюємо детальніше…",
   "WILL BE MOVED TO RECYCLE BIN": "БУДЕ ПЕРЕМІЩЕНО ДО КОШИКА",
-  "WILL BE UNINSTALLED": "БУДЕ ВИДАЛЕНО"
+  "WILL BE UNINSTALLED": "БУДЕ ВИДАЛЕНО",
+  "Measuring contents…": "Вимірюємо вміст…"
 }
