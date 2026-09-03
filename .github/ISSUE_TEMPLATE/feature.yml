@@ -1,0 +1,55 @@
+name: Something is missing
+description: An idea for something Podbye should do, or do differently
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas are welcome, including half-formed ones. The problem you hit is
+        usually more useful than a proposed solution, so do not worry if you
+        only have the first part.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What were you trying to do?
+      description: >
+        The situation that made you want this, rather than the feature itself.
+        What did you want to find out, decide, or clean up?
+      placeholder: >
+        I wanted to know which of my projects were safe to archive before a
+        trip, but I had to open each one and read its contents separately.
+    validations:
+      required: true
+
+  - type: textarea
+    id: behaviour
+    attributes:
+      label: What should Podbye do?
+      description: As specific or as vague as you like.
+      placeholder: >
+        Sort a category by how long ago anything inside it was touched, so old
+        projects group together.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why would this help?
+      description: >
+        Who it helps and how often. Something you hit every scan is worth more
+        than something you hit once.
+    validations:
+      required: false
+
+  - type: textarea
+    id: today
+    attributes:
+      label: What do you do instead today?
+      description: >
+        A workaround, another tool, or nothing at all. Knowing the current cost
+        helps judge whether this is worth building.
+    validations:
+      required: false

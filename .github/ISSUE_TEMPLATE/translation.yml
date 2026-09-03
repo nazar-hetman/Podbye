@@ -38,8 +38,8 @@ body:
       description: >
         For a new locale: attach the JSON, or paste it here, or link a fork —
         whatever is easiest. Start from a complete current locale such as
-        `app/resources/i18n/es.json`, keep the keys
-        exactly as they are, and keep every `{placeholder}` in braces.
+        `app/locales/es.json`, keep the keys exactly as they are, and keep
+        every `{placeholder}` in braces.
 
         For a fix: the English string, what Podbye currently shows, and what it
         should say.

@@ -13,6 +13,12 @@ body:
         You do not need to know why it went wrong. What the folder *is* and
         what Podbye *called it* is enough.
 
+        **Please do not attach scan sessions or settings files.**
+        Everything under `%APPDATA%\Podbye` lists your real folder paths,
+        which usually means your username, your clients and your project
+        names. None of it is needed here — the shape of a path is what
+        matters, never the words in it. Redact screenshots the same way.
+
   - type: input
     id: path
     attributes:
@@ -31,6 +37,28 @@ body:
       label: What Podbye called it
       description: The category and risk shown on the row, e.g. "Documents · Review".
       placeholder: Documents · Review
+    validations:
+      required: true
+
+  - type: input
+    id: action
+    attributes:
+      label: What it offered to do about it
+      description: >
+        The button on the inspector, or the line where a button would be:
+        "Move to Recycle Bin", "Deep Uninstall", or "Review the contents
+        before removing anything". Offering the wrong *action* is more
+        serious than showing the wrong label, so this one matters.
+      placeholder: Move to Recycle Bin
+    validations:
+      required: true
+
+  - type: input
+    id: size
+    attributes:
+      label: Roughly how big
+      description: The size on the row. A rough figure is fine.
+      placeholder: 24.3 GB
     validations:
       required: true
 
@@ -70,7 +98,18 @@ body:
     attributes:
       label: Podbye version
       description: Shown under the wordmark in the sidebar.
-      placeholder: v1.0.0-beta.4
+      placeholder: v1.0.0-beta.5
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: >
+        Settings > System > About, or run `winver`. The build number is
+        the useful part.
+      placeholder: Windows 11 24H2 (build 26100)
     validations:
       required: true
 

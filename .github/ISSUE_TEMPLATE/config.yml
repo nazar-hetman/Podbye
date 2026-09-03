@@ -1,0 +1,22 @@
+# Every issue should arrive on a template. The templates ask for the two or
+# three facts that actually pin a problem down — a version, a path shape, what
+# was on screen — and a blank box reliably arrives without them.
+blank_issues_enabled: false
+
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/nazar-hetman/Podbye/security/advisories/new
+    about: >
+      Report privately instead. Anything that could cause unexpected file
+      deletion, path traversal, privilege escalation, or disclosure of private
+      user data should not go in a public issue.
+
+  - name: Security policy
+    url: https://github.com/nazar-hetman/Podbye/blob/main/SECURITY.md
+    about: What counts as a vulnerability here, and how reports are handled.
+
+  - name: Question or general feedback
+    url: https://github.com/nazar-hetman/Podbye/discussions
+    about: >
+      Not sure whether something is a bug? Ask here. Please do not attach scan
+      sessions or settings files — they contain your real folder paths.

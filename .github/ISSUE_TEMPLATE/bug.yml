@@ -10,6 +10,13 @@ body:
         **Something was sorted wrongly** template instead — it asks for
         different things.
 
+        **Please do not attach scan sessions or settings files.**
+        Everything under `%APPDATA%\Podbye` lists your real folder paths,
+        which usually means your username, your clients and your project
+        names. None of it is needed to fix a bug. The same goes for
+        screenshots — blur or shorten anything private, since
+        `D:\<client>\survey_04` tells us as much as the real name does.
+
   - type: textarea
     id: what
     attributes:
@@ -40,7 +47,19 @@ body:
     id: version
     attributes:
       label: Podbye version
-      placeholder: v1.0.0-beta.4
+      description: Shown under the wordmark in the sidebar.
+      placeholder: v1.0.0-beta.5
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: >
+        Settings > System > About, or run `winver`. The build number is
+        the useful part.
+      placeholder: Windows 11 24H2 (build 26100)
     validations:
       required: true
 
