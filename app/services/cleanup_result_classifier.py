@@ -18,7 +18,31 @@ STATE_PARTIAL = "partial"
 STATE_IN_USE = "in_use"
 STATE_ALREADY_CLEAN = "already_clean"
 STATE_SKIPPED = "skipped"
+STATE_NOT_RECYCLABLE = "not_recyclable"
 STATE_FAILED = "failed"
+
+# Why the bin would not take an item, as recorded by cleanup_engine. Kept as
+# codes rather than sentences so the reason survives a session round-trip and
+# is translated here, once, at call time.
+_NOT_RECYCLABLE_HEADLINE = {
+    "too_large": "Too large for the Recycle Bin. Nothing was deleted.",
+    "bin_disabled": ("The Recycle Bin is turned off for this drive. "
+                     "Nothing was deleted."),
+}
+_NOT_RECYCLABLE_DETAIL = {
+    "too_large": ("Windows answers a request the bin cannot hold by deleting "
+                  "the item permanently and reporting success, so it was left "
+                  "on disk instead. Empty the Recycle Bin or raise its size "
+                  "limit for this drive, then try again."),
+    "bin_disabled": ("This drive is set to remove files immediately rather "
+                     "than to the Recycle Bin, so there would have been no way "
+                     "back. Turn the Recycle Bin on for this drive, then try "
+                     "again."),
+}
+_NOT_RECYCLABLE_BREAKDOWN = {
+    "too_large": "too large for the bin",
+    "bin_disabled": "Recycle Bin off",
+}
 
 
 @dataclass
@@ -133,6 +157,8 @@ def assess_cleanup_counts(
     in_use_count: int,
     failed_count: int,
     skipped_count: int = 0,
+    not_recyclable_count: int = 0,
+    not_recyclable_reason: str = "",
     category_key: str | None = None,
     category_label: str | None = None,
     retry_label: str = "Quick Cleanup",
@@ -150,8 +176,41 @@ def assess_cleanup_counts(
     """
     label = tr(category_label) if category_label else tr("This category")
     retry_label = tr(retry_label)
+    # Items the bin refused are a skip like any other for counting purposes.
+    # Leaving them out was how a refusal reached the "nothing removable left"
+    # branch below: every counter read zero, so a 15 GB folder Podbye had
+    # deliberately protected was reported as an empty category.
+    total_skipped = skipped_count + not_recyclable_count
 
-    if succeeded_count == 0 and in_use_count == 0 and failed_count == 0 and skipped_count == 0:
+    nothing_happened = (succeeded_count == 0 and in_use_count == 0
+                        and failed_count == 0)
+
+    # Said before the generic skip branch, because "nothing was deleted" and
+    # *why* is the whole message here: the item is still on disk, it is not
+    # protected, and the user can act on the reason.
+    if nothing_happened and skipped_count == 0 and not_recyclable_count > 0:
+        headline = _NOT_RECYCLABLE_HEADLINE.get(
+            not_recyclable_reason,
+            "Nothing was deleted — the Recycle Bin would not take it.")
+        detail = _NOT_RECYCLABLE_DETAIL.get(
+            not_recyclable_reason,
+            "The item was left on disk rather than removed permanently.")
+        return CleanupAssessment(
+            state=STATE_NOT_RECYCLABLE,
+            succeeded_count=succeeded_count,
+            in_use_count=in_use_count,
+            failed_count=failed_count,
+            skipped_count=total_skipped,
+            short_label=tr("nothing deleted"),
+            item_label=tr("{n:,} item(s) kept on disk", n=not_recyclable_count),
+            breakdown_label=tr(_NOT_RECYCLABLE_BREAKDOWN.get(
+                not_recyclable_reason, "not recyclable")),
+            summary_key_label=tr("Kept on disk"),
+            summary_value=tr("{n:,} not recyclable", n=not_recyclable_count),
+            explanation_text=tr(headline) + "\n\n" + tr(detail),
+        )
+
+    if nothing_happened and total_skipped == 0:
         return CleanupAssessment(
             state=STATE_ALREADY_CLEAN,
             succeeded_count=succeeded_count,
@@ -176,13 +235,13 @@ def assess_cleanup_counts(
     # this branch the code fell through to STATE_SUCCESS and told the user the
     # category was "cleaned successfully · all files moved safely", directly
     # contradicting the "No items were moved · N protected skipped" line above it.
-    if succeeded_count == 0 and in_use_count == 0 and failed_count == 0 and skipped_count > 0:
+    if nothing_happened and total_skipped > 0:
         return CleanupAssessment(
             state=STATE_SKIPPED,
             succeeded_count=succeeded_count,
             in_use_count=in_use_count,
             failed_count=failed_count,
-            skipped_count=skipped_count,
+            skipped_count=total_skipped,
             short_label=tr("nothing to clean"),
             item_label=tr("{n:,} protected item(s) skipped", n=skipped_count),
             breakdown_label=tr("all protected"),

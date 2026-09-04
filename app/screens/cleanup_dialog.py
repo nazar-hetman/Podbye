@@ -940,11 +940,21 @@ class CleanupConfirmDialog(QDialog):
         n_fail = len(result.failed)
         n_skip = len(result.skipped_protected) + len(
             getattr(result, "skipped_kept", []))
+        # Items the bin refused are their own kind of skip. Counting them with
+        # nothing at all was how a refused 15 GB folder came back as "there was
+        # nothing removable left": every counter was zero, so the assessment
+        # reported an empty category instead of a protection that had worked.
+        not_recyclable = getattr(result, "skipped_not_recyclable", {}) or {}
+        reasons = set(not_recyclable.values())
         assessment = assess_cleanup_counts(
             succeeded_count=n_ok,
             in_use_count=n_in_use,
             failed_count=n_fail,
             skipped_count=n_skip,
+            not_recyclable_count=len(not_recyclable),
+            # One reason names itself; a mixed batch falls back to the generic
+            # wording rather than claiming a cause that fits only some of it.
+            not_recyclable_reason=reasons.pop() if len(reasons) == 1 else "",
             category_label="Selected items",
             retry_label="the cleanup",
             all_recoverable=not getattr(result, "not_recycled", None),

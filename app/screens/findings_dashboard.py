@@ -3292,10 +3292,17 @@ class _PreallocDetailPanel(QWidget):
         actionability = _entity_actionability(entity)
         is_group = bool(entity.get("is_group"))
 
+        # "review_only" is the taxonomy saying this type is not something to
+        # offer a whole-folder deletion for, and it was not being honoured:
+        # AppData\Local\wsl is application_data, which is review_only, and the
+        # panel offered Move to Recycle Bin for a 15 GB WSL disk image. Windows
+        # then refused it — correctly — and the run reported nothing to clean.
+        # Reviewing it, opening it, copying its path and marking it Keep all
+        # stay available; only the destructive button goes.
         allow_recycle = (
             has_path and self._recycle_cb is not None
             and not is_group
-            and actionability not in ("protected", "kept")
+            and actionability not in ("protected", "kept", "review_only")
         )
         if is_app and has_uninstaller:
             allow_recycle = False
@@ -4176,10 +4183,12 @@ class _PreallocDetailPanel(QWidget):
         # reading "4 MB". Nothing here may act on that path. Removal is what
         # the parts' own checkboxes are for, and the parts are on screen.
         is_group = bool(entity.get("is_group"))
+        # review_only excluded for the reason given in _destructive_action,
+        # which this has to keep agreeing with — the assertion below checks it.
         allow_recycle = (
             has_path and self._recycle_cb is not None
             and not is_group
-            and actionability not in ("protected", "kept")
+            and actionability not in ("protected", "kept", "review_only")
         )
         # For an application, Deep Uninstall (the app's own uninstaller) is the
         # correct removal — recycling the install tree leaves registry/state
