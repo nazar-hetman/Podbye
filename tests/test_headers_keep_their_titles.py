@@ -108,7 +108,7 @@ def _findings(dressed, width=NARROW):
     return view
 
 
-def _startups(dressed, width=NARROW):
+def _startups(dressed, monkeypatch, width=NARROW):
     import app.screens.startups as st
     from app.models.startup_entry import StartupEntry
 
@@ -129,8 +129,12 @@ def _startups(dressed, width=NARROW):
     # real ones, clearing the selection — so the panel would render its empty
     # state and this would audit a screen with nothing on it. Caught when the
     # same hazard broke test_text_fits_its_space intermittently.
+    # monkeypatch, not a bare assignment: a plain assignment here is never
+    # undone, so the stub replaced the real detector for every test that
+    # ran after this file in the same session.
     import app.services.startup_detector as detector
-    detector.detect_startup_entries = lambda: list(rows)
+    monkeypatch.setattr(detector, "detect_startup_entries",
+                        lambda: list(rows))
 
     screen = st.StartupsScreen()
     screen._entries = rows
@@ -164,9 +168,9 @@ def test_the_findings_list_header_keeps_its_title(dressed, language):
 
 
 @pytest.mark.parametrize("language", available_languages())
-def test_the_startups_inspector_header_keeps_its_title(dressed, language):
+def test_the_startups_inspector_header_keeps_its_title(dressed, language, monkeypatch):
     set_language(language)
-    screen = _startups(dressed)
+    screen = _startups(dressed, monkeypatch)
     try:
         panel = screen._right_sidebar.detail_widget
         title = panel._title_lbl
@@ -193,11 +197,11 @@ def test_findings_survives_hostile_content_in_every_language(dressed, language):
 
 
 @pytest.mark.parametrize("language", available_languages())
-def test_startups_survives_hostile_content_at_the_real_narrow_width(dressed, language):
+def test_startups_survives_hostile_content_at_the_real_narrow_width(dressed, language, monkeypatch):
     """The existing case uses 1100 — the *window* minimum. A screen there is
     884 wide, because the sidebar takes a fixed 196."""
     set_language(language)
-    screen = _startups(dressed)
+    screen = _startups(dressed, monkeypatch)
     try:
         assert _faults(screen) == []
     finally:
@@ -235,11 +239,11 @@ def test_a_meta_caption_can_give_way(dressed):
         "a caption that cannot shrink takes the title's pixels")
 
 
-def test_the_header_rows_all_use_it(dressed):
+def test_the_header_rows_all_use_it(dressed, monkeypatch):
     """Three sites shared the pattern. A fourth added later should too."""
     set_language("Spanish")
     view = _findings(dressed)
-    screen = _startups(dressed)
+    screen = _startups(dressed, monkeypatch)
     try:
         panel = screen._right_sidebar.detail_widget
         assert isinstance(view._list_count_lbl, ElidedLabel)

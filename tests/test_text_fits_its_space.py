@@ -92,7 +92,7 @@ def _settled(qapp, widget, width):
     return widget
 
 
-def _startups(qapp, hostile=True, monkeypatch=None):
+def _startups(qapp, monkeypatch, hostile=True):
     import app.screens.startups as st
     from app.models.startup_entry import StartupEntry
 
@@ -120,8 +120,12 @@ def _startups(qapp, hostile=True, monkeypatch=None):
     # assertion below silently audits nothing. It only showed up
     # intermittently because _last_refresh is a class attribute with a 3s
     # throttle, so whether it fired depended on what ran before.
+    # monkeypatch, not a bare assignment: a plain assignment here is never
+    # undone, so the stub replaced the real detector for every test that
+    # ran after this file in the same session.
     import app.services.startup_detector as detector
-    detector.detect_startup_entries = lambda: list(rows)
+    monkeypatch.setattr(detector, "detect_startup_entries",
+                        lambda: list(rows))
 
     screen._show_results()
     for _ in range(6):
@@ -154,8 +158,8 @@ def _findings(qapp):
 # -- the screen the pass started from ------------------------------
 
 @pytest.mark.parametrize("width", [1600, 1100])
-def test_startups_fits_hostile_content(dressed, width):
-    screen = _settled(dressed, _startups(dressed), width)
+def test_startups_fits_hostile_content(dressed, width, monkeypatch):
+    screen = _settled(dressed, _startups(dressed, monkeypatch), width)
     try:
         assert _faults(screen) == []
     finally:
@@ -163,10 +167,10 @@ def test_startups_fits_hostile_content(dressed, width):
         dressed.processEvents()
 
 
-def test_startups_fits_a_longer_language(dressed):
+def test_startups_fits_a_longer_language(dressed, monkeypatch):
     """Ukrainian is the reference locale and its strings run longer."""
     set_language("Ukrainian")
-    screen = _settled(dressed, _startups(dressed), 1100)
+    screen = _settled(dressed, _startups(dressed, monkeypatch), 1100)
     try:
         assert _faults(screen) == []
         assert "Заплановане завдання" in screen._detail_widget._meta_lbl.text()
@@ -179,9 +183,9 @@ def test_startups_fits_a_longer_language(dressed):
 
 
 @pytest.mark.parametrize("width", [1600, 1100])
-def test_startups_fits_polish_at_supported_widths(dressed, width):
+def test_startups_fits_polish_at_supported_widths(dressed, width, monkeypatch):
     set_language("Polish")
-    screen = _settled(dressed, _startups(dressed), width)
+    screen = _settled(dressed, _startups(dressed, monkeypatch), width)
     try:
         assert _faults(screen) == []
         assert "Scheduled task" not in screen._detail_widget._meta_lbl.text()
@@ -191,9 +195,9 @@ def test_startups_fits_polish_at_supported_widths(dressed, width):
 
 
 @pytest.mark.parametrize("width", [1600, 1100])
-def test_startups_fits_german_at_supported_widths(dressed, width):
+def test_startups_fits_german_at_supported_widths(dressed, width, monkeypatch):
     set_language("German")
-    screen = _settled(dressed, _startups(dressed), width)
+    screen = _settled(dressed, _startups(dressed, monkeypatch), width)
     try:
         assert _faults(screen) == []
         assert "Scheduled task" not in screen._detail_widget._meta_lbl.text()
@@ -203,10 +207,10 @@ def test_startups_fits_german_at_supported_widths(dressed, width):
 
 
 @pytest.mark.parametrize("width", [1600, 1100])
-def test_startups_fits_spanish_at_supported_widths(dressed, width):
+def test_startups_fits_spanish_at_supported_widths(dressed, width, monkeypatch):
     """Spanish recommendations and metadata must survive hostile raw values."""
     set_language("Spanish")
-    screen = _settled(dressed, _startups(dressed), width)
+    screen = _settled(dressed, _startups(dressed, monkeypatch), width)
     try:
         assert _faults(screen) == []
         assert "Scheduled task" not in screen._detail_widget._meta_lbl.text()
@@ -218,7 +222,7 @@ def test_startups_fits_spanish_at_supported_widths(dressed, width):
 # -- and the rest of the application -------------------------------
 
 @pytest.mark.parametrize("width", [1600, 1100])
-def test_findings_fits_hostile_content(dressed, width):
+def test_findings_fits_hostile_content(dressed, width, monkeypatch):
     view = _settled(dressed, _findings(dressed), width)
     try:
         assert _faults(view) == []
@@ -548,8 +552,8 @@ def _viewport_overflows(root):
 
 
 @pytest.mark.parametrize("width", [1919, 1400, 1100])
-def test_the_startup_inspector_fits_its_sidebar(dressed, width):
-    screen = _settled(dressed, _startups(dressed), width)
+def test_the_startup_inspector_fits_its_sidebar(dressed, width, monkeypatch):
+    screen = _settled(dressed, _startups(dressed, monkeypatch), width)
     try:
         assert _viewport_overflows(screen) == []
     finally:
@@ -561,7 +565,7 @@ def test_the_startup_inspector_fits_its_sidebar(dressed, width):
     "English", "Ukrainian", "Spanish", "German", "French", "Polish",
 ])
 def test_startup_inspector_actions_fit_every_shipped_locale_at_minimum_width(
-        dressed, language):
+        dressed, language, monkeypatch):
     """The inspector must not regain a horizontal minimum through its actions.
 
     Its viewport is only a little wider than 280px at the application's
@@ -570,7 +574,7 @@ def test_startup_inspector_actions_fit_every_shipped_locale_at_minimum_width(
     an empty panel.
     """
     set_language(language)
-    screen = _settled(dressed, _startups(dressed), 1100)
+    screen = _settled(dressed, _startups(dressed, monkeypatch), 1100)
     try:
         assert _viewport_overflows(screen) == []
         assert _faults(screen) == []
@@ -580,7 +584,7 @@ def test_startup_inspector_actions_fit_every_shipped_locale_at_minimum_width(
 
 
 @pytest.mark.parametrize("width", [1919, 1400, 1100])
-def test_the_findings_inspector_fits_its_sidebar(dressed, width):
+def test_the_findings_inspector_fits_its_sidebar(dressed, width, monkeypatch):
     view = _settled(dressed, _findings(dressed), width)
     try:
         assert _viewport_overflows(view) == []
@@ -602,7 +606,7 @@ def test_an_elided_label_asks_for_almost_nothing(dressed):
         dressed.processEvents()
 
 
-def test_an_inspector_title_does_not_demand_its_longest_word(dressed):
+def test_an_inspector_title_does_not_demand_its_longest_word(dressed, monkeypatch):
     """One unbreakable token must not set the panel's minimum width."""
     import app.screens.startups as st
     import app.screens.findings_dashboard as fd
