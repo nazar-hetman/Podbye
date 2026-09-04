@@ -207,6 +207,24 @@ def test_startups_fits_german_at_supported_widths(dressed, width, monkeypatch):
 
 
 @pytest.mark.parametrize("width", [1600, 1100])
+def test_startups_fits_french_at_supported_widths(dressed, width, monkeypatch):
+    """French was the one shipped locale this sweep did not cover.
+
+    It is not the longest language here - Ukrainian and German are - but a gap
+    in the matrix is a gap whether or not the missing case happens to pass
+    today, and this costs one screen build.
+    """
+    set_language("French")
+    screen = _settled(dressed, _startups(dressed, monkeypatch), width)
+    try:
+        assert _faults(screen) == []
+        assert "Scheduled task" not in screen._detail_widget._meta_lbl.text()
+    finally:
+        screen.deleteLater()
+        dressed.processEvents()
+
+
+@pytest.mark.parametrize("width", [1600, 1100])
 def test_startups_fits_spanish_at_supported_widths(dressed, width, monkeypatch):
     """Spanish recommendations and metadata must survive hostile raw values."""
     set_language("Spanish")
@@ -348,6 +366,21 @@ def test_every_screen_fits_german_at_minimum_width(dressed, modname, cls):
 @pytest.mark.parametrize("modname,cls", SCREENS)
 def test_every_screen_fits_spanish_at_minimum_width(dressed, modname, cls):
     set_language("Spanish")
+    screen = _settled(dressed,
+                      getattr(importlib.import_module(modname), cls)(), 1100)
+    try:
+        assert _faults(screen) == []
+    finally:
+        screen.deleteLater()
+        dressed.processEvents()
+
+
+@pytest.mark.parametrize("modname,cls", SCREENS)
+def test_every_screen_fits_french_at_minimum_width(dressed, modname, cls):
+    """French is a shipped locale and was the only one missing from this
+    sweep. A gap in the matrix is a gap whether or not the missing case
+    happens to pass today."""
+    set_language("French")
     screen = _settled(dressed,
                       getattr(importlib.import_module(modname), cls)(), 1100)
     try:
