@@ -421,6 +421,11 @@ def rule_for(relative: str, rules=None) -> tuple:
 # feels like a click. Steam needs ~390 ms; most entities need under 20.
 DEFAULT_BUDGET_MS = 700
 
+# How often the walk looks at the clock while inside one directory. Small
+# enough that Stop feels immediate and the budget is honoured on a single huge
+# folder; large enough that the check does not show up in a profile.
+_BUDGET_CHECK_EVERY = 256
+
 # Below this share of the folder a row is noise, and it joins "Other".
 _MIN_ROW_SHARE = 0.01
 _MAX_ROWS = 6
@@ -508,6 +513,21 @@ def walk_contents(root: str, budget_ms: int = DEFAULT_BUDGET_MS,
                 size = 0
             total_bytes += size
             total_files += 1
+            # The budget and cancel checks above run between directories. One
+            # directory holding hundreds of thousands of files therefore ran
+            # to completion whatever the budget said, and ignored a cancel
+            # request for the whole of it - the inspector's Stop did nothing
+            # until that folder finished. Checked every _BUDGET_CHECK_EVERY
+            # files rather than every file: perf_counter() per file is
+            # measurable on a large tree, and a few hundred files is a small
+            # fraction of even the 700ms list budget.
+            if total_files % _BUDGET_CHECK_EVERY == 0:
+                if asked_to_stop():
+                    cancelled = truncated = True
+                    break
+                if out_of_time():
+                    truncated = True
+                    break
             rule_path, rule_name = rule_for(child_rel, rules)
             if rule_name:
                 add("rule:" + rule_path, rule_name, True, size, rule_path)
@@ -517,6 +537,9 @@ def walk_contents(root: str, budget_ms: int = DEFAULT_BUDGET_MS,
                 add("child:" + child_top.lower(), child_top, False, size, child_top)
             else:
                 add("loose", "", False, size)
+        # Leaving the file loop early has to leave the directory loop too.
+        if truncated:
+            break
 
     rows = [ContentRow(label=label, size_bytes=size, file_count=files,
                        named=named,
