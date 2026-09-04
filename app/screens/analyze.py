@@ -11,11 +11,12 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QEvent
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QFontMetrics
 
 from app.widgets.panels import Panel
 from app.widgets.panels import apply_tactical_label
-from app.widgets.controls import style_container, TacticalComboBox
+from app.widgets.controls import (style_container, TacticalComboBox,
+                                  ElidedLabel)
 from app.widgets.tables import create_table, set_row, RowHighlightDelegate
 from app.widgets.feeds import OperatorFeed
 from app.models.finding import _format_size
@@ -180,6 +181,11 @@ def _set_determinate(bar: QProgressBar, value: int, color: str = None):
 
 
 # ═══════════════════════════════════════════════════════════════
+
+# The elapsed / current-path column on the progress row. Fixed so live
+# scan updates cannot change the geometry around them.
+_ELAPSED_COL_WIDTH = 260
+
 
 class AnalyzeScreen(QWidget):
     
@@ -467,8 +473,17 @@ class AnalyzeScreen(QWidget):
         top_row = QHBoxLayout()
         top_row.setSpacing(8)
 
+        # Every widget in this row is to the RIGHT of a number that grows a
+        # digit at a time - "—", then "1,234", then "123,456". A plain QLabel
+        # re-reports its size hint on each of those, so the suffix, the size,
+        # and the whole chip strip slid sideways several times a second while
+        # a scan ran, and resizing the window during one made it worse because
+        # the stretch redistributed on top of it. Reserving the width the
+        # largest realistic count needs costs nothing and stops all of it.
         self._count_lbl = QLabel("—")
         self._count_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 20px; font-weight: bold;")
+        self._count_lbl.setMinimumWidth(
+            QFontMetrics(self._count_lbl.font()).horizontalAdvance("9,999,999"))
         top_row.addWidget(self._count_lbl)
         self._items_suffix = QLabel(tr("items"))
         self._items_suffix.setObjectName("Dim")
@@ -478,6 +493,10 @@ class AnalyzeScreen(QWidget):
         self._size_lbl = QLabel("")
         self._size_lbl.setObjectName("Dim")
         self._size_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px; padding-bottom: 2px;")
+        # Same reason as the count: "· 1.2 GB" and "· 999.9 GB" are different
+        # widths, and the chips sit immediately after it.
+        self._size_lbl.setMinimumWidth(
+            QFontMetrics(self._size_lbl.font()).horizontalAdvance("· 999.9 GB"))
         top_row.addWidget(self._size_lbl)
         top_row.addSpacing(14)
 
@@ -502,12 +521,29 @@ class AnalyzeScreen(QWidget):
         self._elapsed_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 12px; font-weight: 500;")
         self._elapsed_lbl.setAlignment(Qt.AlignRight)
         time_col.addWidget(self._elapsed_lbl)
-        self._current_path_lbl = QLabel("")
+        # ElidedLabel, not QLabel: this shows the file being scanned, so its
+        # text changes every few milliseconds and its length is whatever the
+        # path happens to be. A plain QLabel makes the elapsed column as wide
+        # as the longest path it has seen, and because that column sits after
+        # the stretch, its left edge jumped on every progress tick. Eliding
+        # accepts the width it is given instead of demanding one.
+        self._current_path_lbl = ElidedLabel("")
         self._current_path_lbl.setObjectName("Muted")
         self._current_path_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 9px;")
         self._current_path_lbl.setAlignment(Qt.AlignRight)
+        # Capped on the label as well as on the column. An ignored horizontal
+        # policy lets the layout hand this any width, and it was still being
+        # given more than the column it sits in - so the cap goes where the
+        # text is, not only where the box is.
+        self._current_path_lbl.setMaximumWidth(_ELAPSED_COL_WIDTH)
         time_col.addWidget(self._current_path_lbl)
-        top_row.addLayout(time_col)
+        # Fixed, so the column cannot resize as its contents change. Wide
+        # enough for a useful amount of path; the elapsed clock is narrower
+        # and simply right-aligns within it.
+        time_holder = QWidget()
+        time_holder.setFixedWidth(_ELAPSED_COL_WIDTH)
+        time_holder.setLayout(time_col)
+        top_row.addWidget(time_holder)
 
         pipe_lay.addLayout(top_row)
         layout.addWidget(pipe_panel)
