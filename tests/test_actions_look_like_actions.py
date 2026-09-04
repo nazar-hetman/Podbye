@@ -91,7 +91,7 @@ def _built(qapp, modname, cls):
     return screen
 
 
-def _populated_startups(qapp):
+def _populated_startups(qapp, monkeypatch):
     """The screen as a person sees it: results listed, an entry selected.
 
     A fresh screen shows its intro; the inspector — and therefore the two
@@ -99,8 +99,21 @@ def _populated_startups(qapp):
     the empty state is what let the second copy of the bug through: the
     constructor's stylesheet was scoped, and apply_style() re-set it
     unscoped, on a widget no audit had reached.
+
+    The screen reads the real machine, and this fixture must not. showEvent()
+    queues _analyze() when no entries are set yet, and _analyze() replaces
+    _entries with detect_startup_entries() and clears _selected_key; with
+    entries set it calls _refresh_entries(), which reads the machine too. Both
+    import detect_startup_entries locally, so one patch covers both, and the
+    entries are in place before show() so nothing is queued in the first
+    place. Without this the fake entry was overwritten by the host's real
+    startup list, and selecting it only worked on a machine that happened to
+    have a run_hkcu entry named Grammarly — true here, false on CI, where the
+    inspector was therefore never given an entry and its buttons stayed
+    hidden.
     """
     import time
+    import app.services.startup_detector as sd
     import app.screens.startups as st
     from app.models.startup_entry import StartupEntry
 
@@ -111,11 +124,13 @@ def _populated_startups(qapp):
         source_label="User startup registry", enabled=True, risk="Optional",
         risk_reason="r", impact="Creative helper")
     entry.target_modified = time.time() - 30 * 86400
+    monkeypatch.setattr(sd, "detect_startup_entries", lambda *a, **k: [entry])
+
     screen = st.StartupsScreen()
-    screen.resize(1900, 1000)
-    screen.show()
     screen._entries = [entry]
     screen._filtered = [entry]
+    screen.resize(1900, 1000)
+    screen.show()
     screen._show_results()
     for _ in range(6):
         qapp.processEvents()
@@ -171,10 +186,10 @@ def _visibility_chain(widget, root, screen, panel):
     return "\n".join(out)
 
 
-def test_the_startup_inspector_actions_read_as_buttons(qapp):
+def test_the_startup_inspector_actions_read_as_buttons(qapp, monkeypatch):
     """Reported twice: once against the panel's own stylesheet, and again
     against the copy its sidebar re-applies on every theme change."""
-    screen = _populated_startups(qapp)
+    screen = _populated_startups(qapp, monkeypatch)
     try:
         panel = screen._right_sidebar.detail_widget
         for btn in (panel._open_btn, panel._copy_btn):
@@ -186,8 +201,8 @@ def test_the_startup_inspector_actions_read_as_buttons(qapp):
         qapp.processEvents()
 
 
-def test_the_populated_startups_screen_flattens_nothing(qapp):
-    screen = _populated_startups(qapp)
+def test_the_populated_startups_screen_flattens_nothing(qapp, monkeypatch):
+    screen = _populated_startups(qapp, monkeypatch)
     try:
         assert _stripped(screen, qapp) == []
     finally:
@@ -195,10 +210,10 @@ def test_the_populated_startups_screen_flattens_nothing(qapp):
         qapp.processEvents()
 
 
-def test_a_theme_switch_does_not_strip_them_again(qapp):
+def test_a_theme_switch_does_not_strip_them_again(qapp, monkeypatch):
     """apply_style() runs on every switch, and that is where the second copy
     of the rules lived."""
-    screen = _populated_startups(qapp)
+    screen = _populated_startups(qapp, monkeypatch)
     try:
         qapp.setStyleSheet(build_qss("amber"))
         screen._right_sidebar.apply_style()

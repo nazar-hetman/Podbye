@@ -8,11 +8,30 @@ a single cleanup click would recycle files from all over the disk.
 """
 import os
 
+import pytest
+
+from app.services import entity_detector as ed
 from app.services.entity_detector import (
     STANDALONE_LOOSE_FILE_BYTES,
     detect_entities,
 )
 from app.models.finding import Finding
+
+
+@pytest.fixture(autouse=True)
+def no_installed_apps(monkeypatch):
+    """Judge these folders on their contents, not on what this machine has.
+
+    Pass 2 matches every scanned directory against the real installed-programs
+    registry, so an invented path is claimed outright if the host happens to
+    have something installed there. A GitHub runner has a registry entry for
+    C:\\Work: the whole fixture folder became one "Work" application entity
+    holding all 23 files, the Containment Rule sealed it, and pass 8 never saw
+    the loose files — while the same test passed on every developer machine
+    without one. What is being tested is where a loose bucket puts itself, and
+    that must not depend on the machine running the test.
+    """
+    monkeypatch.setattr(ed, "_get_installed_programs", lambda *a, **k: {})
 
 MB = 1024 * 1024
 
