@@ -616,8 +616,16 @@ def _read_run_key(hive, key_path: str, source: str, source_label: str,
 
 # ── Startup folder reader ─────────────────────────────────────────
 
-def _read_startup_folder(folder: str, source: str, source_label: str) -> list[StartupEntry]:
-    """Read .lnk shortcuts from a startup folder."""
+def _read_startup_folder(folder: str, source: str, source_label: str,
+                         approved: dict | None = None) -> list[StartupEntry]:
+    r"""Read .lnk shortcuts from a startup folder.
+
+    *approved* is the StartupApproved\StartupFolder map for the matching
+    hive. Windows records a disabled shortcut there exactly as it does for a
+    disabled Run entry, and the names it uses are the shortcut FILENAMES -
+    "Grammarly.lnk", not "Grammarly" - which is why the lookup below uses
+    item.name and the Run reader uses the value name.
+    """
     entries: list[StartupEntry] = []
     try:
         p = Path(os.path.expandvars(folder))
@@ -644,7 +652,13 @@ def _read_startup_folder(folder: str, source: str, source_label: str) -> list[St
                     product_name=product_name,
                     source=source,
                     source_label=source_label,
-                    enabled=True,  # items in startup folder are always enabled
+                    # Not "always enabled": turning a Startup-folder item off
+                    # in Task Manager leaves the shortcut in place and records
+                    # the decision in StartupApproved, so hardcoding True
+                    # reported items as running at login that Windows had
+                    # already switched off. Absent from the map means enabled,
+                    # the same default the Run reader uses.
+                    enabled=(approved or {}).get(item.name.lower(), True),
                     risk=risk,
                     system_managed=is_system_managed(reason),
                     risk_reason=reason,
@@ -863,15 +877,20 @@ def detect_startup_entries() -> list[StartupEntry]:
                 all_entries.append(entry)
 
     # ── Startup folders ───────────────────────────────────────────
+    _STARTUP_FOLDER_APPROVED = (
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer"
+        r"\StartupApproved\StartupFolder")
     _FOLDERS = [
         (r"%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup",
-         "startup_folder", "User startup folder"),
+         "startup_folder", "User startup folder", winreg.HKEY_CURRENT_USER),
         (r"%ALLUSERSPROFILE%\Microsoft\Windows\Start Menu\Programs\Startup",
-         "startup_folder_common", "Shared startup folder"),
+         "startup_folder_common", "Shared startup folder",
+         winreg.HKEY_LOCAL_MACHINE),
     ]
 
-    for folder, source, source_label in _FOLDERS:
-        for entry in _read_startup_folder(folder, source, source_label):
+    for folder, source, source_label, hive in _FOLDERS:
+        approved = _read_approved(hive, _STARTUP_FOLDER_APPROVED)
+        for entry in _read_startup_folder(folder, source, source_label, approved):
             if entry.key not in seen_keys:
                 seen_keys.add(entry.key)
                 all_entries.append(entry)
