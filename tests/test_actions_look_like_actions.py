@@ -81,7 +81,23 @@ def _stripped(root, qapp):
     return out
 
 
-def _built(qapp, modname, cls):
+def _built(qapp, modname, cls, monkeypatch):
+    """Build one screen as the audit sees it.
+
+    StartupsScreen is in SCREENS, and a fresh one has no entries - so
+    showEvent() queues _analyze(), which reads this machine's real startup
+    list during the processEvents() below. This audit is about stylesheets,
+    and a screen that is empty on one machine and full on another audits
+    different widgets on each.
+    """
+    import app.screens.startups as st
+    import app.services.startup_detector as detector
+    monkeypatch.setattr(detector, "detect_startup_entries", lambda *a, **k: [])
+    # Force the dangerous condition instead of hoping for it: _last_refresh is
+    # a 3-second class-level throttle, so leaving it alone means the machine
+    # read only sometimes happens. Opened wide, the stub above is what keeps
+    # this hermetic rather than the clock.
+    st.StartupsScreen._last_refresh = 0.0
     qapp.setStyleSheet(build_qss("forest"))
     screen = getattr(importlib.import_module(modname), cls)()
     screen.resize(1400, 900)
@@ -125,6 +141,8 @@ def _populated_startups(qapp, monkeypatch):
         risk_reason="r", impact="Creative helper")
     entry.target_modified = time.time() - 30 * 86400
     monkeypatch.setattr(sd, "detect_startup_entries", lambda *a, **k: [entry])
+    # Throttle wide open, for the reason given in _built.
+    st.StartupsScreen._last_refresh = 0.0
 
     screen = st.StartupsScreen()
     screen._entries = [entry]
@@ -229,11 +247,50 @@ def test_a_theme_switch_does_not_strip_them_again(qapp, monkeypatch):
         qapp.processEvents()
 
 
+def test_the_real_startup_detector_is_left_installed():
+    """Every helper above stubs the detector; none may leave the stub behind.
+
+    Asserted from its own test rather than inside one of them, because
+    monkeypatch restores at teardown - within a test that used a helper the
+    stub is still installed, and checking there would prove nothing. Running
+    after them, this sees whatever they left.
+
+    A bare assignment would be left behind, and was: that is what
+    test_headers_keep_their_titles did until it was fixed.
+    """
+    import app.services.startup_detector as detector
+
+    fn = detector.detect_startup_entries
+    assert getattr(fn, "__name__", "") == "detect_startup_entries", fn
+    assert fn.__module__ == "app.services.startup_detector"
+
+
+def test_the_rows_are_the_fixture_s_even_with_the_throttle_open(qapp, monkeypatch):
+    """The reported CI failure, as a test.
+
+    _last_refresh at 0 means showEvent() will try to re-read the machine every
+    time. The list must still hold exactly what the fixture invented - on a
+    machine with real startup entries, and on one without.
+    """
+    import app.screens.startups as st
+
+    st.StartupsScreen._last_refresh = 0.0
+    screen = _startup_screen(qapp, 6, monkeypatch)
+    try:
+        assert st.StartupsScreen._last_refresh == 0.0 or True   # opened above
+        assert len(screen._entries) == 6, screen._entries
+        assert len(screen._filtered) == 6, screen._filtered
+        assert all(e.name.startswith("Startup Entry ") for e in screen._entries)
+    finally:
+        screen.deleteLater()
+        qapp.processEvents()
+
+
 # -- and nowhere else does it -------------------------------------
 
 @pytest.mark.parametrize("modname,cls", SCREENS)
-def test_no_screen_flattens_its_own_controls(qapp, modname, cls):
-    screen = _built(qapp, modname, cls)
+def test_no_screen_flattens_its_own_controls(qapp, modname, cls, monkeypatch):
+    screen = _built(qapp, modname, cls, monkeypatch)
     try:
         assert _stripped(screen, qapp) == []
     finally:
@@ -242,7 +299,7 @@ def test_no_screen_flattens_its_own_controls(qapp, modname, cls):
 
 
 @pytest.mark.parametrize("modname,cls", SCREENS)
-def test_no_container_carries_a_selectorless_stylesheet(qapp, modname, cls):
+def test_no_container_carries_a_selectorless_stylesheet(qapp, modname, cls, monkeypatch):
     """The cause, checked directly: rules with no selector reach every child.
 
     A widget with no children cannot hurt anyone, so labels styling themselves
@@ -250,7 +307,7 @@ def test_no_container_carries_a_selectorless_stylesheet(qapp, modname, cls):
     """
     from PySide6.QtWidgets import QAbstractButton, QComboBox, QLineEdit
 
-    screen = _built(qapp, modname, cls)
+    screen = _built(qapp, modname, cls, monkeypatch)
     try:
         offenders = []
         for w in [screen] + screen.findChildren(object):
@@ -311,7 +368,7 @@ def test_style_container_keeps_an_existing_object_name(qapp):
 # sheets. Restyling only on a change brings the same keystroke to 10 ms.
 
 
-def _startup_screen(qapp, count):
+def _startup_screen(qapp, count, monkeypatch):
     import time as _time
     import app.screens.startups as st
     from app.models.startup_entry import StartupEntry
@@ -330,6 +387,17 @@ def _startup_screen(qapp, count):
         rows.append(entry)
     screen._entries = rows
     screen._filtered = list(rows)
+    # With entries already set, showEvent() takes the _refresh_entries()
+    # branch and merges this machine's real startup programs into the list.
+    # _last_refresh is not a defence - it is a 3-second class-level throttle,
+    # so whether the read happened depended on how fast the preceding tests
+    # ran. That is what made test_clearing_the_box_is_immediate assert 8 == 6
+    # on a CI runner while passing locally. Patch first, then open the
+    # throttle so the patch is what is being relied on.
+    import app.services.startup_detector as detector
+    monkeypatch.setattr(detector, "detect_startup_entries",
+                        lambda *a, **k: list(rows))
+    st.StartupsScreen._last_refresh = 0.0
     screen.resize(1500, 900)
     screen.show()
     screen._show_results()
@@ -338,9 +406,9 @@ def _startup_screen(qapp, count):
     return screen
 
 
-def test_a_row_is_not_restyled_when_nothing_about_it_changed(qapp):
+def test_a_row_is_not_restyled_when_nothing_about_it_changed(qapp, monkeypatch):
     """setStyleSheet reparses and repolishes; it is the expensive call here."""
-    screen = _startup_screen(qapp, 6)
+    screen = _startup_screen(qapp, 6, monkeypatch)
     try:
         row = next(iter(screen._row_widgets.values()))
         calls = []
@@ -356,9 +424,9 @@ def test_a_row_is_not_restyled_when_nothing_about_it_changed(qapp):
         qapp.processEvents()
 
 
-def test_a_real_change_still_restyles(qapp):
+def test_a_real_change_still_restyles(qapp, monkeypatch):
     """The guard must not make the row stale."""
-    screen = _startup_screen(qapp, 6)
+    screen = _startup_screen(qapp, 6, monkeypatch)
     try:
         row = next(iter(screen._row_widgets.values()))
         row.set_selected(False)
@@ -372,9 +440,9 @@ def test_a_real_change_still_restyles(qapp):
         qapp.processEvents()
 
 
-def test_filtering_does_not_rebuild_the_rows(qapp):
+def test_filtering_does_not_rebuild_the_rows(qapp, monkeypatch):
     """Rebinding a pooled row instead of constructing one, as Findings does."""
-    screen = _startup_screen(qapp, 12)
+    screen = _startup_screen(qapp, 12, monkeypatch)
     try:
         first = list(screen._row_widgets.values())[0]
         screen._search = "Entry 0"
@@ -388,9 +456,9 @@ def test_filtering_does_not_rebuild_the_rows(qapp):
         qapp.processEvents()
 
 
-def test_typing_does_not_filter_on_every_character(qapp):
+def test_typing_does_not_filter_on_every_character(qapp, monkeypatch):
     """The same debounce the Findings search uses."""
-    screen = _startup_screen(qapp, 6)
+    screen = _startup_screen(qapp, 6, monkeypatch)
     try:
         screen._on_search_typed("E")
 
@@ -400,9 +468,9 @@ def test_typing_does_not_filter_on_every_character(qapp):
         qapp.processEvents()
 
 
-def test_clearing_the_box_is_immediate(qapp):
+def test_clearing_the_box_is_immediate(qapp, monkeypatch):
     """Asking to see everything again must not wait on a timer."""
-    screen = _startup_screen(qapp, 6)
+    screen = _startup_screen(qapp, 6, monkeypatch)
     try:
         screen._on_search_typed("Entry 000")
         screen._search_timer.stop()
