@@ -10,6 +10,7 @@ import os
 
 import pytest
 
+from app.services import app_presence as ap
 from app.services import entity_detector as ed
 from app.services.entity_detector import (
     STANDALONE_LOOSE_FILE_BYTES,
@@ -22,16 +23,29 @@ from app.models.finding import Finding
 def no_installed_apps(monkeypatch):
     """Judge these folders on their contents, not on what this machine has.
 
-    Pass 2 matches every scanned directory against the real installed-programs
-    registry, so an invented path is claimed outright if the host happens to
-    have something installed there. A GitHub runner has a registry entry for
-    C:\\Work: the whole fixture folder became one "Work" application entity
-    holding all 23 files, the Containment Rule sealed it, and pass 8 never saw
-    the loose files — while the same test passed on every developer machine
-    without one. What is being tested is where a loose bucket puts itself, and
-    that must not depend on the machine running the test.
+    Two independent lookups ask the machine about a folder name, and both had
+    to be closed. Pass 2 matches a scanned directory against the installed
+    programs registry by install path. The heterogeneous-root exploder then
+    asks app_presence whether a drive-root folder *names* a present
+    application and, if so, leaves it whole — and app_presence answers from
+    the registry, the Program Files listing and the Start Menu, cached in a
+    module global.
+
+    A GitHub runner knows something called "Work", so C:/Work was left intact
+    as one application entity holding all 23 files, the Containment Rule
+    sealed it, and pass 8 never saw the loose files. The same test passed on
+    every developer machine without that name. Stubbing only the registry was
+    not enough: it is one of three strong sources, and the cache outlives the
+    patch. What is under test is where a loose bucket puts itself, which must
+    not depend on the software installed on the machine running it.
     """
     monkeypatch.setattr(ed, "_get_installed_programs", lambda *a, **k: {})
+    monkeypatch.setattr(
+        ap, "evidence",
+        lambda force_refresh=False: {label: set() for label, _fn in ap._SOURCES})
+    ap.reset_cache()
+    yield
+    ap.reset_cache()
 
 MB = 1024 * 1024
 
