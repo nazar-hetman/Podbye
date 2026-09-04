@@ -452,3 +452,200 @@ def format_model_size(size_bytes: int) -> str:
     if size_bytes >= 1024 ** 2:
         return f"{size_bytes / (1024 ** 2):.0f} MB"
     return f"{size_bytes / 1024:.0f} KB" if size_bytes > 0 else ""
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# MODEL DOWNLOAD (Ollama /api/pull)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# The HTTP API, not the CLI. Parsing "ollama pull" output means depending on
+# progress text written for a terminal, re-parsing it whenever Ollama changes
+# it, and spawning a process per download. /api/pull streams the same
+# information as JSON, one object per line, and is what the CLI itself calls.
+
+PULL_OK        = "ok"
+PULL_FAILED    = "failed"       # the server answered, and said no
+PULL_CANCELLED = "cancelled"    # the user stopped it
+PULL_NO_SPACE  = "no_space"     # the download is bigger than the disk has left
+PULL_BAD_ID    = "bad_id"       # never sent - rejected before any request
+PULL_REFUSED   = "refused"      # endpoint is not loopback/LAN
+PULL_OFFLINE   = "offline"      # nothing answered, or it stopped mid-download
+
+# name[:tag], the shape Ollama accepts: an optional registry/namespace prefix,
+# then the model, then an optional tag. Checked before anything is sent, so a
+# typo is a message in the panel rather than a request and a server error.
+_MODEL_ID_RE = re.compile(
+    r"^[a-z0-9][a-z0-9._-]*"            # model, or the first path segment
+    r"(?:/[a-z0-9][a-z0-9._-]*){0,2}"   # optional namespace / registry parts
+    r"(?::[a-z0-9][a-z0-9._-]*)?$",     # optional :tag
+    re.IGNORECASE,
+)
+
+
+def is_valid_model_id(text: str) -> bool:
+    """True for something Ollama could plausibly resolve.
+
+    Deliberately a shape check, not a catalogue: any valid id must stay usable,
+    including ones published after this build. What it rejects is input that
+    cannot be a model at all - a URL, a Windows path, a sentence - so those
+    fail immediately instead of after a round trip.
+    """
+    t = (text or "").strip()
+    if not t or len(t) > 200 or "://" in t or "\\" in t or " " in t:
+        return False
+    return bool(_MODEL_ID_RE.match(t))
+
+
+def models_dir() -> str:
+    """Where Ollama keeps its blobs on this machine.
+
+    OLLAMA_MODELS wins when set - people move the store off C: precisely
+    because models are large, and checking free space on the wrong drive would
+    be worse than not checking at all.
+    """
+    import os
+    override = os.environ.get("OLLAMA_MODELS", "").strip()
+    if override:
+        return override
+    return os.path.join(os.path.expanduser("~"), ".ollama", "models")
+
+
+def free_space_bytes(path: str = "") -> int:
+    """Bytes free on the volume holding *path*, or 0 when it cannot be read.
+
+    0 means "unknown", and every caller treats unknown as "do not warn": a
+    failed check must not become a scary message about a disk that is fine.
+    """
+    import os
+    import shutil
+    target = path or models_dir()
+    # The models directory does not exist until the first pull, so walk up to
+    # the nearest parent that does - the free space is the volume's either way.
+    while target and not os.path.isdir(target):
+        parent = os.path.dirname(target)
+        if parent == target:
+            return 0
+        target = parent
+    if not target:
+        return 0
+    try:
+        return int(shutil.disk_usage(target).free)
+    except (OSError, ValueError):
+        return 0
+
+
+def _pull_error_text(payload: dict) -> str:
+    """Ollama reports a refusal as {"error": "..."} inside a 200 stream."""
+    err = payload.get("error")
+    return str(err).strip() if err else ""
+
+
+def pull_model(endpoint: str, model: str, on_progress=None,
+               should_cancel=None, timeout: int = 30,
+               free_space: int = -1) -> Tuple[str, str]:
+    """Download *model* into the Ollama at *endpoint*. Blocking; call off the UI thread.
+
+    Streams /api/pull and reports every line through
+    ``on_progress(status, completed, total)``. completed/total stay 0 until the
+    server starts sending layer sizes, which is the only point a real size is
+    known - nothing is estimated before that.
+
+    ``should_cancel()`` is polled between lines. Returning True closes the
+    connection: Ollama stops receiving from us, though a blob already in flight
+    on the server may still finish. The caller says "stopped", never "deleted".
+
+    Returns (PULL_* code, human-readable detail).
+    """
+    if not is_local_endpoint(endpoint):
+        return PULL_REFUSED, ""
+    if not is_valid_model_id(model):
+        return PULL_BAD_ID, model
+    base = endpoint.rstrip("/")
+    body = json.dumps({"model": model.strip(), "stream": True}).encode("utf-8")
+    req = Request(f"{base}/api/pull", data=body, method="POST",
+                  headers={"Content-Type": "application/json"})
+
+    checked_space = free_space >= 0        # -1 means "caller wants us to check"
+    last_status = ""
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            for raw in resp:
+                if should_cancel is not None and should_cancel():
+                    return PULL_CANCELLED, last_status
+                line = raw.decode("utf-8", "replace").strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except ValueError:
+                    continue          # a partial line; the next read completes it
+                if not isinstance(payload, dict):
+                    continue
+                err = _pull_error_text(payload)
+                if err:
+                    return PULL_FAILED, err
+                last_status = str(payload.get("status", "")) or last_status
+                total = int(payload.get("total", 0) or 0)
+                completed = int(payload.get("completed", 0) or 0)
+                # The first line carrying a real total is the first moment the
+                # download size is known. Check the disk once and then never
+                # again - re-checking every line would fire on a transient dip.
+                if total > 0 and not checked_space:
+                    checked_space = True
+                    space = free_space_bytes()
+                    if space and total > space:
+                        return PULL_NO_SPACE, f"{total}/{space}"
+                if on_progress is not None:
+                    on_progress(last_status, completed, total)
+                if last_status == "success":
+                    return PULL_OK, model
+    except HTTPError as exc:
+        # 404 is what an unknown model id looks like once the server has looked.
+        detail = f"HTTP {exc.code}"
+        try:
+            detail = _pull_error_text(
+                json.loads(exc.read().decode("utf-8"))) or detail
+        except Exception:
+            pass
+        return PULL_FAILED, detail
+    except (URLError, socket.timeout, ConnectionError, OSError) as exc:
+        # Includes the service being stopped part-way through: the socket dies
+        # mid-stream and there is nothing installed at the end of it.
+        return PULL_OFFLINE, str(getattr(exc, "reason", "") or exc)
+
+    # The stream ended without saying "success" - treated as failure, never as
+    # a completed download, so the model list is not refreshed on a half-pull.
+    return PULL_FAILED, last_status
+
+
+def model_details(endpoint: str, model: str, timeout: int = 4) -> dict:
+    """What Ollama knows about one model, via /api/show.
+
+    Only what the server actually returns is reported. Ollama publishes each
+    model's own licence text, which is NOT Ollama's software licence and is not
+    the same across models - presenting one blanket statement would be wrong
+    about most of them.
+    """
+    if not is_local_endpoint(endpoint) or not is_valid_model_id(model):
+        return {}
+    base = endpoint.rstrip("/")
+    body = json.dumps({"model": model.strip()}).encode("utf-8")
+    req = Request(f"{base}/api/show", data=body, method="POST",
+                  headers={"Content-Type": "application/json"})
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    details = data.get("details") or {}
+    out = {
+        "parameter_size": details.get("parameter_size", ""),
+        "quantization": details.get("quantization_level", ""),
+        "family": details.get("family", ""),
+        "license": (data.get("license") or "").strip(),
+        "capabilities": [c for c in (data.get("capabilities") or [])
+                         if isinstance(c, str)],
+    }
+    return {k: v for k, v in out.items() if v}

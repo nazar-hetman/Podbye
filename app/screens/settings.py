@@ -7,7 +7,7 @@ import threading
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QCheckBox, QLineEdit, QFrame, QRadioButton,
-    QScrollArea, QSlider, QStackedWidget,
+    QScrollArea, QSlider, QStackedWidget, QProgressBar,
 )
 from PySide6.QtCore import Qt, Signal, QObject, QTimer
 
@@ -174,6 +174,17 @@ class _StorageResult(QObject):
     result = Signal(dict)
 
 
+class _PullResult(QObject):
+    """Carries model-download progress from the worker thread to the UI.
+
+    Same shape as _ConnectionResult below: raw numbers and a status code, so
+    the wording stays in the UI where it can be translated, and the download
+    itself knows nothing about widgets.
+    """
+    progress = Signal(str, int, int)     # status, completed bytes, total bytes
+    done = Signal(str, str)              # PULL_* code, detail
+
+
 class _ConnectionResult(QObject):
     """Carries a probe result from the background thread to the UI.
 
@@ -201,6 +212,17 @@ _SECTION_SUBS = {
 }
 
 
+def _format_bytes(n: int) -> str:
+    """Bytes for the download UI, in the same units the library list uses.
+
+    format_model_size returns "" for 0 - correct where a size is unknown and
+    must not be shown, but a progress line reading "of" with a blank either
+    side is worse than "0 B". Only this screen needs that distinction.
+    """
+    from app.services.ollama_client import format_model_size
+    return format_model_size(int(n or 0)) or "0 B"
+
+
 def _add_localized_enum_items(combo: TacticalComboBox, values: list[str]) -> None:
     """Show translated enum labels while retaining canonical stored values."""
     for value in values:
@@ -223,6 +245,15 @@ class SettingsScreen(QWidget):
         self._styled_checkboxes: list[QCheckBox] = []
         self._styled_radios: list[QRadioButton] = []
         self._conn_result = _ConnectionResult(self)
+        self._pull_result = _PullResult(self)
+        self._pull_result.progress.connect(self._on_pull_progress)
+        self._pull_result.done.connect(self._on_pull_done)
+        self._pull_cancel = False
+        self._pull_thread = None
+        # Whether the server has sent a byte total yet. Not inferred
+        # from the bar: a fresh QProgressBar already reports a maximum
+        # of 100, which would read as "a size is known" before one is.
+        self._pull_saw_total = False
         self._conn_result.result.connect(self._on_connection_result)
         self._storage_result = _StorageResult(self)
         self._storage_result.result.connect(self._on_storage_sizes)
@@ -939,6 +970,73 @@ class SettingsScreen(QWidget):
         lib_h.addWidget(self._btn_refresh_models)
         lib_h.addStretch()
         srv_lay.addLayout(_setting_row(tr("Library"), tr("Local model catalog read from the server."), lib_w))
+
+        # Download a model without leaving Podbye. Before this, the only
+        # instruction for an empty library was to open a terminal and run
+        # "ollama pull" - correct, and the exact moment a non-technical user
+        # stopped. Nothing here starts on its own: the id is typed or picked,
+        # and the button is pressed.
+        dl_w = QWidget()
+        dl_v = QVBoxLayout(dl_w)
+        dl_v.setContentsMargins(0, 0, 0, 0)
+        dl_v.setSpacing(6)
+        dl_top = QHBoxLayout()
+        dl_top.setSpacing(8)
+        # A plain field, not an editable combo. An editable QComboBox carries
+        # its own nested QLineEdit, which starts a few pixels inside the frame
+        # and so lands off the value column that every other control on this
+        # page shares - test_settings_ai_grid measures exactly that. Suggested
+        # ids live in the row's description instead, which keeps arbitrary ids
+        # first-class rather than hidden behind an "other" entry.
+        self._pull_input = QLineEdit()
+        self._pull_input.setFixedWidth(252)
+        self._pull_input.setPlaceholderText(tr("model id, e.g. gemma3:4b"))
+        self._pull_input.setStyleSheet(self._endpoint_input.styleSheet())
+        self._pull_input.returnPressed.connect(self._start_pull)
+        dl_top.addWidget(self._pull_input)
+        self._btn_download = QPushButton(tr("Download"))
+        self._btn_download.setObjectName("Ghost")
+        self._btn_download.setCursor(Qt.PointingHandCursor)
+        # Minimum, not fixed: the action column is 100px, which "Download"
+        # fits and "Завантажити" does not. A fixed width clips the longer
+        # translations instead of letting the row breathe.
+        self._btn_download.setMinimumWidth(_ACTION_COL_WIDTH)
+        self._btn_download.setMinimumHeight(_ACTION_HEIGHT)
+        self._btn_download.clicked.connect(self._start_pull)
+        dl_top.addWidget(self._btn_download)
+        self._btn_cancel_pull = QPushButton(tr("Stop"))
+        self._btn_cancel_pull.setObjectName("Ghost")
+        self._btn_cancel_pull.setCursor(Qt.PointingHandCursor)
+        self._btn_cancel_pull.setMinimumHeight(_ACTION_HEIGHT)
+        self._btn_cancel_pull.setVisible(False)
+        self._btn_cancel_pull.clicked.connect(self._cancel_pull)
+        dl_top.addWidget(self._btn_cancel_pull)
+        dl_top.addStretch()
+        dl_v.addLayout(dl_top)
+
+        self._pull_bar = QProgressBar()
+        self._pull_bar.setTextVisible(False)
+        self._pull_bar.setFixedHeight(6)
+        self._pull_bar.setMaximumWidth(360)
+        self._pull_bar.setVisible(False)
+        dl_v.addWidget(self._pull_bar)
+
+        self._pull_status_lbl = QLabel("")
+        self._pull_status_lbl.setObjectName("Dim")
+        self._pull_status_lbl.setStyleSheet(
+            "font-family: 'JetBrains Mono'; font-size: 11px;")
+        self._pull_status_lbl.setWordWrap(True)
+        self._pull_status_lbl.setMaximumWidth(360)
+        self._pull_status_lbl.setVisible(False)
+        dl_v.addWidget(self._pull_status_lbl)
+
+        srv_lay.addLayout(_setting_row(
+            tr("Get a model"),
+            tr("Any Ollama model id works — gemma3:4b, llama3.2:3b, "
+               "qwen2.5-coder:7b, gpt-oss:20b. Models can require several "
+               "gigabytes of disk space, and nothing downloads until you "
+               "press Download."),
+            dl_w))
 
         # Local-only disclosure
         disc = QLabel(
@@ -1790,6 +1888,16 @@ class SettingsScreen(QWidget):
                 self._model_combo.blockSignals(False)
             self._model_combo.setEnabled(True)
 
+            # A model that was just downloaded becomes the selection. Done here
+            # rather than in the download handler because this is the point the
+            # list is known to be the server's own - selecting before the
+            # refresh would point ai_model at a name the combo does not hold.
+            pending = getattr(self, "_pending_select_model", "")
+            if pending:
+                self._pending_select_model = ""
+                if self._select_model(pending):
+                    matched = True
+
             # The saved model is not on the server. Falling through here left
             # the dropdown showing the first installed model while ai_model kept
             # pointing at the missing one, so Settings looked healthy and every
@@ -1808,6 +1916,153 @@ class SettingsScreen(QWidget):
 
         self._update_library_summary()
         self._update_model_meta()
+
+    # ── Model download ───────────────────────────────────────────
+
+    def _pull_endpoint(self) -> str:
+        """The address the download goes to - the same one everything else uses."""
+        return self._endpoint_input.text().strip()
+
+    def _start_pull(self):
+        """Download the entered model. One press, one download, never automatic."""
+        from app.services import ollama_client as oc
+
+        model = self._pull_input.text().strip()
+        if not oc.is_valid_model_id(model):
+            self._show_pull_state(
+                tr("That is not a model id. Try something like gemma3:4b."),
+                busy=False)
+            return
+        if self._pull_thread is not None and self._pull_thread.is_alive():
+            return                      # already downloading; Stop first
+
+        endpoint = self._pull_endpoint()
+        installed = {self._model_combo.itemText(i)
+                     for i in range(self._model_combo.count())}
+        if model in installed:
+            # Ollama would re-verify the layers and finish immediately, which
+            # looks like a no-op download. Say so and select it instead.
+            self._select_model(model)
+            self._show_pull_state(
+                tr("{model} is already installed.", model=model), busy=False)
+            return
+
+        free = oc.free_space_bytes()
+        space_note = (tr(" · {free} free", free=_format_bytes(free))
+                      if free else "")
+        self._pull_cancel = False
+        self._pull_saw_total = False
+        self._show_pull_state(tr("starting…") + space_note, busy=True)
+        self._pull_bar.setRange(0, 0)          # indeterminate until a size arrives
+
+        def _worker():
+            code, detail = oc.pull_model(
+                endpoint, model,
+                on_progress=lambda st, c, t: self._emit_pull_progress(st, c, t),
+                should_cancel=lambda: self._pull_cancel,
+            )
+            try:
+                self._pull_result.done.emit(code, detail)
+            except RuntimeError:
+                pass                     # the screen went away mid-download
+
+        self._pull_thread = threading.Thread(target=_worker, daemon=True)
+        self._pull_thread.start()
+
+    def _emit_pull_progress(self, status: str, completed: int, total: int):
+        try:
+            self._pull_result.progress.emit(status, completed, total)
+        except RuntimeError:
+            pass
+
+    def _cancel_pull(self):
+        """Stop reading the download. Says "stopping", not "deleted"."""
+        self._pull_cancel = True
+        self._pull_status_lbl.setText(tr("stopping…"))
+
+    def _show_pull_state(self, text: str, busy: bool):
+        self._pull_status_lbl.setText(text)
+        self._pull_status_lbl.setVisible(bool(text))
+        self._pull_bar.setVisible(busy)
+        self._btn_cancel_pull.setVisible(busy)
+        self._btn_download.setEnabled(not busy)
+
+    def _on_pull_progress(self, status: str, completed: int, total: int):
+        """Only ever shows figures the server sent. Nothing is estimated."""
+        if total > 0:
+            self._pull_saw_total = True
+            self._pull_bar.setRange(0, 100)
+            self._pull_bar.setValue(int(completed * 100 / total))
+            self._pull_status_lbl.setText(tr(
+                "{status} · {done} of {total}", status=status,
+                done=_format_bytes(completed), total=_format_bytes(total)))
+        elif not self._pull_saw_total:
+            # No size yet, so nothing to be a percentage of.
+            self._pull_bar.setRange(0, 0)
+            self._pull_status_lbl.setText(status)
+        else:
+            # A size was known and the trailing lines ("verifying", "success")
+            # carry none. Dropping back to a sweeping bar there reads as the
+            # download restarting, so the last known fill stays put.
+            self._pull_status_lbl.setText(status)
+        self._pull_status_lbl.setVisible(True)
+
+    def _on_pull_done(self, code: str, detail: str):
+        from app.services import ollama_client as oc
+
+        self._pull_thread = None
+        if code == oc.PULL_OK:
+            self._show_pull_state(
+                tr("{model} installed.", model=detail), busy=False)
+            # Refresh the library from the server rather than adding a row by
+            # hand: the list on screen must be what Ollama actually has.
+            self._pending_select_model = detail
+            self._test_connection()
+            return
+        if code == oc.PULL_CANCELLED:
+            self._show_pull_state(
+                # Cancelling closes our end of the stream. It does not
+                # reach into Ollama's store, so claiming nothing was installed
+                # would be a promise Podbye cannot make.
+                tr("Stopped monitoring the download. Ollama may keep partial "
+                   "data and resume it later."), busy=False)
+            return
+        if code == oc.PULL_NO_SPACE:
+            need, free = (detail.split("/") + ["0", "0"])[:2]
+            self._show_pull_state(tr(
+                "Not enough disk space — this model needs {need} and {free} "
+                "is free. Nothing was downloaded.",
+                need=_format_bytes(int(need or 0)),
+                free=_format_bytes(int(free or 0))), busy=False)
+            return
+        if code == oc.PULL_OFFLINE:
+            self._show_pull_state(
+                tr("Lost contact with the server. Nothing was installed."),
+                busy=False)
+            return
+        if code == oc.PULL_BAD_ID:
+            self._show_pull_state(
+                tr("That is not a model id. Try something like gemma3:4b."),
+                busy=False)
+            return
+        if code == oc.PULL_REFUSED:
+            self._show_pull_state(
+                tr("Podbye only downloads through a local or LAN server."),
+                busy=False)
+            return
+        self._show_pull_state(
+            tr("Download failed: {reason}", reason=detail or tr("unknown error")),
+            busy=False)
+
+    def _select_model(self, name: str):
+        """Select *name* in the library list and persist it, if it is there."""
+        for i in range(self._model_combo.count()):
+            if self._model_combo.itemText(i) == name:
+                self._model_combo.setCurrentIndex(i)
+                if self._store:
+                    self._store.set_and_save("ai_model", name)
+                return True
+        return False
 
     def _start_ollama(self):
         """Launch the installed runtime, then re-test once it has come up."""
