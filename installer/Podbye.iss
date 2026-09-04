@@ -17,6 +17,9 @@
 #define AppPublisher   "Nazar Hetman"
 #define AppExeName     "Podbye.exe"
 #define SourceDir      "..\dist-beta5\Podbye"
+; Must stay identical to the string app/main.py passes to
+; SetCurrentProcessExplicitAppUserModelID. See the [Icons] note below.
+#define AppUserModelID "Podbye.App"
 
 [Setup]
 AppId={{8F3C1A62-4D77-4B21-9E4E-7A1D0C5B9E10}
@@ -79,11 +82,17 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\{#AppName}";                 Filename: "{app}\{#AppExeName}"
+; The two shortcuts that launch the program carry the same AppUserModelID the
+; process sets for itself. Windows treats that ID as the app's taskbar
+; identity, then looks for a shortcut declaring it to find the icon and name
+; for that identity — with none, the running window had a taskbar button and
+; no icon. The other three entries open a document or the uninstaller, so they
+; are not this application and must not claim its identity.
+Name: "{group}\{#AppName}";                 Filename: "{app}\{#AppExeName}"; AppUserModelID: "{#AppUserModelID}"
 Name: "{group}\License";                    Filename: "{app}\_internal\LICENSE"
 Name: "{group}\Third-party notices";        Filename: "{app}\_internal\THIRD-PARTY-NOTICES.md"
 Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#AppName}";           Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\{#AppName}";           Filename: "{app}\{#AppExeName}"; Tasks: desktopicon; AppUserModelID: "{#AppUserModelID}"
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
