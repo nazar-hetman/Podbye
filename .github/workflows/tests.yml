@@ -25,8 +25,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Two jobs, one suite. Every test carries the "qt" marker or does not - the
+  # marker is applied from each module's imports by tests/conftest.py, so the
+  # two selections are exact complements and nothing can fall between them.
+  #
+  # Split because a single interpreter running every widget test exhausts
+  # Windows GDI handles and dies with an access violation part-way through.
+  # That is a crash, not a failure: it reports no test name, so a red run says
+  # nothing about the code. This does not reduce the widgets the qt job
+  # builds - it removes every non-Qt test from the process that accumulates
+  # them, including the locale and AST-heavy tests where the crash has landed
+  # every time. The jobs run in parallel, so the wall-clock is the longer of
+  # the two rather than their sum.
+  #
+  # Neither job may be skipped or allowed to fail. If one crashes the run is
+  # red, exactly as before.
   test:
     runs-on: windows-latest
+    strategy:
+      # Both jobs always run: the other half's result is still worth having
+      # when one goes red.
+      fail-fast: false
+      matrix:
+        include:
+          - name: qt
+            selection: "qt"
+          - name: logic
+            selection: "not qt"
+
+    name: tests (${{ matrix.name }})
 
     steps:
       - uses: actions/checkout@v4
@@ -41,9 +68,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
+      # Guards the split itself. If the two selections ever stop adding up to
+      # the whole suite, that is a silently skipped test, and it fails here
+      # rather than going unnoticed for weeks.
+      - name: Check the split covers every test
+        run: python tools/check_test_split.py
+        env:
+          QT_QPA_PLATFORM: offscreen
+
       # No display on a runner. Qt needs to be told, or every widget test
       # dies on "could not connect to display" rather than on its assertion.
       - name: Run tests
-        run: pytest -q
+        run: pytest -q -m "${{ matrix.selection }}"
         env:
           QT_QPA_PLATFORM: offscreen

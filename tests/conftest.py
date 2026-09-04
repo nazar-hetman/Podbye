@@ -158,3 +158,48 @@ def _shared_panel():
         app.processEvents()
         QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
         app.processEvents()
+
+# ── Qt / pure split ───────────────────────────────────────────────
+# CI runs this suite as two jobs, "-m qt" and "-m 'not qt'", so that widget
+# tests do not accumulate in the same interpreter as everything else.
+#
+# The reason is in _drain_deferred_deletes above: past several hundred
+# widget-heavy tests the process runs out of Windows GDI handles and dies with
+# an access violation - not a test failure, a crash, which reads as flakiness
+# and hides whatever was actually wrong. It has killed local runs and, now,
+# CI. The split does not reduce how many widgets the Qt job builds; it takes
+# everything that is not Qt out of the interpreter those widgets accumulate
+# in, including the locale tests whose AST walk over every module in app/ is
+# where the crash has landed every single time.
+#
+# Marked from the module's imports rather than from a list in the workflow: a
+# list drifts the moment someone adds a file, and a test that quietly moved to
+# the wrong job would be invisible. Import-level and deliberately
+# over-inclusive - a module that imports a screen *can* build one, whether or
+# not it does today, and putting a widget test in the wrong job is the only
+# error that matters here.
+_QT_IMPORT_HINTS = ("PySide6", "app.screens", "app.widgets")
+_qt_module_cache: dict = {}
+
+
+def _module_can_build_widgets(path: str) -> bool:
+    cached = _qt_module_cache.get(path)
+    if cached is None:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                src = fh.read()
+        except OSError:
+            # Unreadable means unknown, and unknown goes to the Qt job: it is
+            # the one that can cope with a widget test, so a mistake there is
+            # slow rather than wrong.
+            cached = True
+        else:
+            cached = any(hint in src for hint in _QT_IMPORT_HINTS)
+        _qt_module_cache[path] = cached
+    return cached
+
+
+def pytest_collection_modifyitems(items):
+    for item in items:
+        if _module_can_build_widgets(str(item.path)):
+            item.add_marker(pytest.mark.qt)
