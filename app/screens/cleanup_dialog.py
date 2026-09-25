@@ -258,6 +258,20 @@ class CleanupConfirmDialog(QDialog):
 
     # ── Armed target set ──────────────────────────────────────────
 
+    def _may_skip_confirmation(self) -> bool:
+        """True when turning confirmation off is allowed to apply here.
+
+        Only a selection made entirely of Safe and Optional items, outside any
+        cloud-sync folder, with no duplicate group left for manual review.
+        "Don't ask again" once meant every later cleanup started unasked -
+        Review items, personal folders and OneDrive files included - and the
+        cloud acknowledgment was never read on that route. Those always ask.
+        """
+        return (bool(self._safe_targets)
+                and not self._review_targets
+                and not self._cloud
+                and not self._manual_review)
+
     def _armed_targets(self) -> list:
         """Files that will actually be removed given the current acknowledgments."""
         targets = list(self._safe_targets)
@@ -487,14 +501,15 @@ class CleanupConfirmDialog(QDialog):
             self._confirm_only.append(scroll)
             _confirm_gap(8)
 
-        # ── "Don't ask again" (only when review/uncertain items are present) ─
-        # Review items are already armed; this simply lets the user skip this
-        # confirmation for future review cleanups. It is stored as the existing
-        # confirm_risky_cleanup setting so it stays reversible in Settings.
+        # ── "Don't ask again" (only where it can apply) ───────────────
+        # Offered for a selection of Safe and Optional items outside any
+        # cloud folder, because that is all it can ever skip: a selection with
+        # a Review or cloud-synced item is always confirmed. Stored as the
+        # existing confirm_risky_cleanup setting, reversible in Settings.
         self._dont_ask_cb: QCheckBox | None = None
-        if self._review_targets:
+        if self._may_skip_confirmation():
             self._dont_ask_cb = TacticalCheckBox(
-                tr("Don't ask again for review/uncertain items")
+                tr("Don't ask again for Safe and Optional items")
             )
             self._dont_ask_cb.setStyleSheet("font-size: 12px;")
             root.addWidget(self._dont_ask_cb)
@@ -628,7 +643,8 @@ class CleanupConfirmDialog(QDialog):
 
         # When the user has turned confirmation off, skip straight to the move
         # (still showing progress/result in this dialog) instead of asking.
-        if self._auto_confirm and self._armed_targets():
+        if (self._auto_confirm and self._armed_targets()
+                and self._may_skip_confirmation()):
             # Dress the dialog as progress *before* it is shown. It used to open
             # wearing its full confirmation face — title "Confirm Cleanup", a
             # "Don't ask again" tick, an armed "Move to Recycle Bin" button —

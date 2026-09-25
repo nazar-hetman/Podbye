@@ -175,7 +175,6 @@
   "Archive Files": "Архівні файли",
   "Archives": "Archives",
   "Ask AI": "Запитати AI",
-  "Ask before removing items that may still matter to you or an app.": "Запитувати перед видаленням елементів, які ще можуть бути важливими для вас або додатка.",
   "Ask me each time": "Запитувати щоразу",
   "Asking AI…": "Запит до ШІ…",
   "Audio": "Аудіо",
@@ -257,7 +256,6 @@
   "Completed: {timestamp} · {mode} mode": "Завершено: {timestamp} · режим {mode}",
   "Configuration": "Конфігурація",
   "Confirm Cleanup": "Підтвердіть очищення",
-  "Confirm risky cleanup": "Підтверджувати ризиковане очищення",
   "Connection": "З'єднання",
   "Connection mode": "Режим підключення",
   "Content analysis": "Аналіз вмісту",
@@ -300,7 +298,6 @@
   "Disk images": "Образи дисків",
   "Documents": "Documents",
   "Documents Folder": "Тека документів",
-  "Don't ask again for review/uncertain items": "Більше не запитувати про елементи для перегляду",
   "Don't ask again — remember my choice": "Більше не запитувати — запамʼятати мій вибір",
   "Done — {total} item(s) processed": "Готово — оброблено {total} елем.",
   "Downloaded Item": "Завантажений елемент",
@@ -1385,5 +1382,8 @@
   "WILL BE UNINSTALLED": "БУДЕ ВИДАЛЕНО",
   "Measuring contents…": "Вимірюємо вміст…",
   "Cloud-synced": "Синхронізується з хмарою",
-  "Left in place — removing it would also delete it from your cloud account, and that was not confirmed": "Залишено на місці — видалення прибрало б це й з вашого хмарного облікового запису, а цього не було підтверджено"
+  "Left in place — removing it would also delete it from your cloud account, and that was not confirmed": "Залишено на місці — видалення прибрало б це й з вашого хмарного облікового запису, а цього не було підтверджено",
+  "Don't ask again for Safe and Optional items": "Більше не запитувати про елементи «Безпечно» та «Необов’язково»",
+  "Confirm every cleanup": "Підтверджувати кожне очищення",
+  "When off, a cleanup of only Safe and Optional items starts without asking. Items that need review, and items in a cloud-sync folder, are always confirmed first.": "Якщо вимкнено, очищення лише елементів «Безпечно» та «Необов’язково» починається без запитання. Елементи, які треба перевірити, і елементи в папці хмарної синхронізації завжди спершу потребують підтвердження."
 }

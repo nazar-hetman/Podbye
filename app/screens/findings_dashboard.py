@@ -5752,8 +5752,10 @@ class CategoryDetailView(QFrame):
         def _log(msg: str):
             if hasattr(self._scan_state, "log_line"):
                 self._scan_state.log_line.emit(msg)
-        # If the user turned off review confirmation ("Don't ask again"), the
-        # dialog still opens for progress/result but auto-starts the move.
+        # With confirmation turned off ("Don't ask again"), the dialog still
+        # opens for progress and result, and auto-starts only a selection of
+        # Safe and Optional items outside any cloud folder; anything else is
+        # asked about. The dialog decides that, not this call.
         store = getattr(self._scan_state, "_settings_store", None)
         confirm = store.get("confirm_risky_cleanup", True) if store else True
         dlg = CleanupConfirmDialog(

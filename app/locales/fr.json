@@ -248,7 +248,6 @@
   "Archive Files": "Fichiers d'archive",
   "Archives": "Archives",
   "Ask AI": "Demander à l'IA",
-  "Ask before removing items that may still matter to you or an app.": "Demander avant de supprimer des éléments encore utiles à vous ou à une application.",
   "Ask me each time": "Me demander à chaque fois",
   "Asking AI…": "Requête à l'IA…",
   "Audio": "Audio",
@@ -330,7 +329,6 @@
   "Completed: {timestamp} · {mode} mode": "Terminé : {timestamp} · mode {mode}",
   "Configuration": "Configuration",
   "Confirm Cleanup": "Confirmer le nettoyage",
-  "Confirm risky cleanup": "Confirmer un nettoyage risqué",
   "Connection": "Connexion",
   "Connection mode": "Mode de connexion",
   "Content analysis": "Analyse du contenu",
@@ -373,7 +371,6 @@
   "Disk images": "Images disque",
   "Documents": "Documents",
   "Documents Folder": "Dossier de documents",
-  "Don't ask again for review/uncertain items": "Ne plus demander pour les éléments à vérifier",
   "Don't ask again — remember my choice": "Ne plus demander — mémoriser mon choix",
   "Done — {total} item(s) processed": "Terminé — {total} élément(s) traité(s)",
   "Downloaded Item": "Élément téléchargé",
@@ -1379,5 +1376,8 @@
   "WILL BE UNINSTALLED": "SERA DÉSINSTALLÉ",
   "Measuring contents…": "Mesure du contenu…",
   "Cloud-synced": "Synchronisé dans le cloud",
-  "Left in place — removing it would also delete it from your cloud account, and that was not confirmed": "Laissé en place — le supprimer l’effacerait aussi de votre compte cloud, et cela n’a pas été confirmé"
+  "Left in place — removing it would also delete it from your cloud account, and that was not confirmed": "Laissé en place — le supprimer l’effacerait aussi de votre compte cloud, et cela n’a pas été confirmé",
+  "Don't ask again for Safe and Optional items": "Ne plus demander pour les éléments « Sûr » et « Optionnel »",
+  "Confirm every cleanup": "Confirmer chaque nettoyage",
+  "When off, a cleanup of only Safe and Optional items starts without asking. Items that need review, and items in a cloud-sync folder, are always confirmed first.": "Désactivé, un nettoyage ne contenant que des éléments « Sûr » et « Optionnel » démarre sans demander. Les éléments à vérifier et ceux d’un dossier synchronisé dans le cloud sont toujours confirmés d’abord."
 }

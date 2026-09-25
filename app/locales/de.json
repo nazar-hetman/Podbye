@@ -494,8 +494,6 @@
   "1 = quieter · 3 = recommended · 5+ = aggressive": "1 = schonender · 3 = empfohlen · 5+ = intensiv",
   "Safeguards": "Schutzvorkehrungen",
   "safe cleanup behavior": "sicheres Bereinigungsverhalten",
-  "Confirm risky cleanup": "Riskante Bereinigung bestätigen",
-  "Ask before removing items that may still matter to you or an app.": "Vor dem Entfernen von Elementen fragen, die für Sie oder eine App noch wichtig sein könnten.",
   "Scan across drives": "Laufwerke übergreifend analysieren",
   "Follow into other drives and volumes (mounted disks, junctions). Off keeps each scan on the drive you picked.": "Auch andere Laufwerke und Volumes berücksichtigen (eingebundene Datenträger, Verknüpfungen). Deaktiviert bleibt jede Analyse auf dem gewählten Laufwerk.",
   "Items you keep": "Ausgeschlossene Elemente",
@@ -579,7 +577,6 @@
   "Everything this will move ({count}):": "Alle Elemente, die verschoben werden ({count}):",
   "I understand this will delete files from my cloud account": "Ich verstehe, dass dadurch Dateien aus meinem Cloud-Konto gelöscht werden",
   "Don't ask again — remember my choice": "Nicht erneut fragen – Auswahl merken",
-  "Don't ask again for review/uncertain items": "Nicht erneut nach zu prüfenden/unsicheren Elementen fragen",
   "A task": "Eine Aufgabe",
   "A scan": "Eine Analyse",
   "A task is still running.": "Eine Aufgabe läuft noch.",
@@ -877,5 +874,8 @@
   "WILL BE UNINSTALLED": "WIRD DEINSTALLIERT",
   "Measuring contents…": "Inhalt wird gemessen…",
   "Cloud-synced": "Cloud-synchronisiert",
-  "Left in place — removing it would also delete it from your cloud account, and that was not confirmed": "Nicht angetastet — das Entfernen würde es auch aus Ihrem Cloud-Konto löschen, und das wurde nicht bestätigt"
+  "Left in place — removing it would also delete it from your cloud account, and that was not confirmed": "Nicht angetastet — das Entfernen würde es auch aus Ihrem Cloud-Konto löschen, und das wurde nicht bestätigt",
+  "Don't ask again for Safe and Optional items": "Bei „Sicher“- und „Optional“-Elementen nicht mehr fragen",
+  "Confirm every cleanup": "Jede Bereinigung bestätigen",
+  "When off, a cleanup of only Safe and Optional items starts without asking. Items that need review, and items in a cloud-sync folder, are always confirmed first.": "Wenn aus, startet eine Bereinigung nur mit „Sicher“- und „Optional“-Elementen ohne Nachfrage. Zu prüfende Elemente und Elemente in einem Cloud-Sync-Ordner werden immer zuerst bestätigt."
 }

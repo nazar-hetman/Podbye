@@ -544,7 +544,6 @@
   "Cleanup uses the Recycle Bin by default. Emptying it is irreversible.": "La limpieza envía los elementos a la Papelera de reciclaje de forma predeterminada. Vaciarla es irreversible.",
   "Every preference goes back to its default — endpoint, model, theme, language and the cleanup safeguards.\n\nYour scan history and kept paths are not touched.": "Todas las preferencias volverán a sus valores predeterminados: servidor, modelo, tema, idioma y protecciones de limpieza.\n\nEl historial de análisis y las rutas ignoradas no se modificarán.",
   "Everything this will move ({count}):": "Todo lo que se moverá ({count}):",
-  "Don't ask again for review/uncertain items": "No volver a preguntar por elementos para revisar o inciertos",
   "A running program is holding this file open": "Un programa en ejecución mantiene este archivo abierto",
   "No AI reasoning yet — click Ask AI to explain this item.": "Aún no hay una explicación de IA. Haz clic en Preguntar a la IA para explicar este elemento.",
   "File not available": "Archivo no disponible",
@@ -592,7 +591,6 @@
   "Affects UI labels and navigation strings only. AI explanation language is set separately in AI settings.": "Solo afecta a las etiquetas y la navegación de la interfaz. El idioma de las explicaciones de IA se configura por separado.",
   "Affects terminology and tone, not personality.": "Afecta a la terminología y el tono, no a la personalidad.",
   "Answers already generated, reused instead of asking the model again. Safe to clear — it only costs a re-run.": "Respuestas ya generadas que se reutilizan en lugar de consultar de nuevo al modelo. Se pueden borrar sin riesgo; solo requerirá ejecutar otra vez.",
-  "Ask before removing items that may still matter to you or an app.": "Preguntar antes de eliminar elementos que aún podrían ser importantes para ti o una aplicación.",
   "Choose the local model used for explanations.": "Elige el modelo local usado para las explicaciones.",
   "Color palette for the entire workstation.": "Paleta de colores para toda la aplicación.",
   "Controls how much the model writes per finding.": "Controla cuánto escribe el modelo por cada resultado.",
@@ -672,7 +670,6 @@
   "Emergency AI timeout": "Tiempo de espera de emergencia de IA",
   "Max simultaneous AI explanations": "Máximo de explicaciones de IA simultáneas",
   "Safeguards": "Protecciones",
-  "Confirm risky cleanup": "Confirmar limpieza riesgosa",
   "Scan across drives": "Analizar entre unidades",
   "Items you keep": "Elementos excluidos",
   "Kept paths": "Rutas excluidas",
@@ -966,5 +963,8 @@
   "WILL BE UNINSTALLED": "SE DESINSTALARÁ",
   "Measuring contents…": "Midiendo el contenido…",
   "Cloud-synced": "Sincronizado en la nube",
-  "Left in place — removing it would also delete it from your cloud account, and that was not confirmed": "Se dejó donde estaba: quitarlo también lo eliminaría de tu cuenta en la nube, y eso no se confirmó"
+  "Left in place — removing it would also delete it from your cloud account, and that was not confirmed": "Se dejó donde estaba: quitarlo también lo eliminaría de tu cuenta en la nube, y eso no se confirmó",
+  "Don't ask again for Safe and Optional items": "No volver a preguntar por elementos «Seguro» y «Opcional»",
+  "Confirm every cleanup": "Confirmar cada limpieza",
+  "When off, a cleanup of only Safe and Optional items starts without asking. Items that need review, and items in a cloud-sync folder, are always confirmed first.": "Si está desactivado, una limpieza de solo elementos «Seguro» y «Opcional» empieza sin preguntar. Los elementos que requieren revisión y los que están en una carpeta sincronizada con la nube siempre se confirman antes."
 }

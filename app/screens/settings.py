@@ -1268,9 +1268,14 @@ class SettingsScreen(QWidget):
         self._style_checkbox(self._cb_confirm_risky)
         self._cb_confirm_risky.setChecked(True)
         self._cb_confirm_risky.toggled.connect(lambda checked: self._save_value("confirm_risky_cleanup", checked))
+        # Off skips the question only for Safe and Optional items. Anything
+        # that needs review, or sits in a cloud-sync folder, is always asked
+        # about - the dialog enforces that, and this sentence has to say so.
         s_lay.addLayout(_setting_row(
-            tr("Confirm risky cleanup"),
-            tr("Ask before removing items that may still matter to you or an app."),
+            tr("Confirm every cleanup"),
+            tr("When off, a cleanup of only Safe and Optional items starts "
+               "without asking. Items that need review, and items in a "
+               "cloud-sync folder, are always confirmed first."),
             self._cb_confirm_risky,
         ))
 

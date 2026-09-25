@@ -82,7 +82,6 @@
   "Confirm Cleanup": "Potwierdź czyszczenie",
   "Cleanup": "Czyszczenie",
   "Cleanup method": "Metoda czyszczenia",
-  "Confirm risky cleanup": "Potwierdzaj ryzykowne czyszczenie",
   "Podbye never deletes permanently — items stay recoverable until you empty the Bin yourself.": "Podbye nie usuwa plików trwale — możesz je przywrócić, dopóki samodzielnie nie opróżnisz Kosza.",
   "Cleanup uses the Recycle Bin by default. Emptying it is irreversible.": "Czyszczenie domyślnie przenosi elementy do Kosza. Opróżnienie Kosza jest nieodwracalne.",
   "Keep": "Ignoruj podczas czyszczenia",
@@ -424,7 +423,6 @@
   "Only used if the local model stops responding. Normal explanations wait until the model finishes.": "Używane tylko wtedy, gdy lokalny model przestanie odpowiadać. Zwykłe wyjaśnienia czekają na zakończenie pracy modelu.",
   "1 = quieter · 3 = recommended · 5+ = aggressive": "1 = łagodniej · 3 = zalecane · 5+ = intensywnie",
   "Higher values may use significantly more CPU/RAM/VRAM depending on your local model and hardware. Recommended: 3. Use 1 for weaker machines.": "Wyższe wartości mogą znacząco zwiększyć użycie CPU, RAM i VRAM, zależnie od modelu i sprzętu. Zalecane: 3. Dla słabszych komputerów użyj 1.",
-  "Ask before removing items that may still matter to you or an app.": "Pytaj przed usunięciem elementów, które mogą być nadal potrzebne Tobie lub aplikacji.",
   "safe cleanup behavior": "bezpieczne czyszczenie",
   "cleanup method": "metoda czyszczenia",
   "product": "produkt",
@@ -677,7 +675,6 @@
   "Asking AI…": "Pytanie AI…",
   "BOOT IMPACT": "WPŁYW NA URUCHAMIANIE",
   "COVERAGE": "ZAKRES",
-  "Don't ask again for review/uncertain items": "Nie pytaj ponownie o elementy do sprawdzenia / niepewne",
   "Done — {total} item(s) processed": "Gotowe — przetworzono elementy: {total}",
   "Generate a new explanation and replace the saved one": "Wygeneruj nowe wyjaśnienie i zastąp nim zapisane",
   "Grouping into semantic categories…": "Grupowanie w kategorie semantyczne…",
@@ -947,5 +944,8 @@
   "WILL BE UNINSTALLED": "ZOSTANIE ODINSTALOWANE",
   "Measuring contents…": "Mierzenie zawartości…",
   "Cloud-synced": "Synchronizowane z chmurą",
-  "Left in place — removing it would also delete it from your cloud account, and that was not confirmed": "Pozostawiono na miejscu — usunięcie skasowałoby to również z Twojego konta w chmurze, a nie zostało to potwierdzone"
+  "Left in place — removing it would also delete it from your cloud account, and that was not confirmed": "Pozostawiono na miejscu — usunięcie skasowałoby to również z Twojego konta w chmurze, a nie zostało to potwierdzone",
+  "Don't ask again for Safe and Optional items": "Nie pytaj ponownie o elementy „Bezpieczne” i „Opcjonalne”",
+  "Confirm every cleanup": "Potwierdzaj każde czyszczenie",
+  "When off, a cleanup of only Safe and Optional items starts without asking. Items that need review, and items in a cloud-sync folder, are always confirmed first.": "Gdy wyłączone, czyszczenie wyłącznie elementów „Bezpieczne” i „Opcjonalne” rusza bez pytania. Elementy do sprawdzenia oraz elementy w folderze synchronizowanym z chmurą zawsze wymagają najpierw potwierdzenia."
 }
