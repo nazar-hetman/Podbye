@@ -11,19 +11,31 @@ Use Python 3.12 or a compatible supported Python version on Windows.
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 ```
+
+`requirements-dev.txt` adds pytest to the runtime dependencies in
+`requirements.txt`.
 
 Run the application with:
 
 ```powershell
-python main.py
+python app/main.py
 ```
 
 Run the test suite with:
 
 ```powershell
 python -m pytest
+```
+
+On Windows, CI runs the suite as two processes, because a single interpreter
+building every widget test can exhaust GDI handles and crash part-way. If a
+full local run dies with an access violation, run the two halves the same way:
+
+```powershell
+python -m pytest -q -m qt
+python -m pytest -q -m "not qt"
 ```
 
 For packaged builds and installer instructions, see [BUILD.md](BUILD.md).
@@ -33,7 +45,7 @@ For packaged builds and installer instructions, see [BUILD.md](BUILD.md).
 - `app/` — application UI, models, services, and localization resources.
 - `tests/` — automated behavior, safety, localization, and layout tests.
 - `installer/` — Windows installer source and installer-facing documentation.
-- `docs/` — user-facing documentation assets, when needed.
+- `tools/` — release and CI helper scripts.
 
 The storage-analysis model is described in
 [SEMANTIC_PIPELINE.md](SEMANTIC_PIPELINE.md). UI conventions are documented in

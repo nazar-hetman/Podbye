@@ -1,6 +1,7 @@
 # Building Podbye
 
 ```
+.venv\Scripts\python.exe -m pip install -r requirements.txt pyinstaller
 .venv\Scripts\python.exe -m PyInstaller --noconfirm podbye.spec
 ```
 
@@ -22,7 +23,9 @@ or checksum the Qt DLLs in a way that stops them being replaced.
 
 - `LICENSE`, `THIRD-PARTY-NOTICES.md` and `licenses\*.txt` must be present in
   `dist\Podbye\_internal\`. The spec bundles them; verify after any spec edit.
-- Run the tests: `.venv\Scripts\python.exe -m pytest -q`. Do not rely on a
+- Run the tests the way CI does, as two processes:
+  `.venv\Scripts\python.exe -m pytest -q -m qt` and
+  `.venv\Scripts\python.exe -m pytest -q -m "not qt"`. Do not rely on a
   historical test count; the expected suite changes as the product evolves.
 - pywin32 is optional. Without it, .lnk targets are resolved by parsing
   MS-SHLLINK directly instead of via win32com; both paths are exercised.
@@ -31,5 +34,19 @@ or checksum the Qt DLLs in a way that stops them being replaced.
 
 Zip `dist\Podbye\` for the portable release. The repository also includes an
 Inno Setup installer source at `installer\Podbye.iss`; build and test it for a
-standard installation release. The executable is unsigned, so Windows
+standard installation release. It packages `dist\Podbye\` and takes its
+version from `app\version.py`, passed in at compile time:
+
+```
+iscc "/DAppVersion=$(.venv\Scripts\python.exe tools\release_version.py)" installer\Podbye.iss
+```
+
+## Versions and release tags
+
+`app\version.py` is the only place the version is written. To release, bump
+`__version__` there, then push a tag that is exactly `v` followed by that
+version (for example `v1.0.0-rc.1`). The Release workflow checks this first
+and stops with an explanation if the two differ; it then runs the same test
+jobs as `tests.yml`, builds, packages the ZIP and the installer, and creates a
+draft release (marked pre-release when the version has a `-` suffix). The executable is unsigned, so Windows
 SmartScreen may warn on first run. Code signing is the long-term fix.

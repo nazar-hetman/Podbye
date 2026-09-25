@@ -10,11 +10,11 @@ Use Windows with Python 3.12 or a compatible supported Python version.
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-Run the application locally with `python main.py`. See [DEVELOPMENT.md](DEVELOPMENT.md)
+Run the application locally with `python app/main.py`. See [DEVELOPMENT.md](DEVELOPMENT.md)
 and [BUILD.md](BUILD.md) for more detail.
 
 ## Pull requests
