@@ -1,11 +1,16 @@
 r"""Quick Cleanup detector — locates known safe reclaimable locations.
 
-Scans five categories in a background thread:
-  1. User Temp    — contents of %TEMP% / %LOCALAPPDATA%\Temp
+Scans two categories in a background thread:
+  1. User Temp     — items in %TEMP% / %LOCALAPPDATA%\Temp untouched for a week
   2. Browser Cache — Chrome, Edge, Brave, Firefox, Opera, Vivaldi cache dirs
-  3. Thumbnail Cache — thumbcache_*.db files in Windows Explorer folder
-  4. Windows Update — contents of SoftwareDistribution\Download
-  5. Windows Temp — contents of C:\Windows\Temp (may be restricted)
+
+Windows Temp, the Windows Update download cache and the Explorer thumbnail
+cache used to be offered too. All three live under a folder named Windows,
+which the cleanup engine refuses at delete time - so they were measured,
+counted in the total and then skipped item by item. Their locations also need
+administrator rights (and, for Windows Update, a stopped service) that Podbye
+does not take. Offering only what the engine will actually clean is the fix;
+loosening the engine's protection is not.
 
 Each scanner returns a QuickCleanupCategory or None if nothing reclaimable
 was found. Categories with zero bytes are suppressed.
@@ -13,6 +18,8 @@ was found. Categories with zero bytes are suppressed.
 from __future__ import annotations
 
 import os
+import sys
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -68,6 +75,57 @@ def _measure_path(path: str) -> tuple:
     return 0, 0
 
 
+# A Temp item is offered only when nothing in it changed for this long. An
+# installer mid-run, an app's working files and an attachment opened a minute
+# ago all live in Temp; a week without a single write is the conservative end
+# of what Windows' own tools use.
+TEMP_MIN_AGE_SECONDS = 7 * 24 * 60 * 60
+
+
+def _newest_mtime(path: str) -> float:
+    """The most recent modification time of *path* or anything inside it.
+
+    Unreadable means unknown, and unknown is treated as "just now" - so a
+    folder that cannot be fully read is never offered on a guess.
+    """
+    try:
+        newest = os.stat(path, follow_symlinks=False).st_mtime
+    except OSError:
+        return time.time()
+    if not os.path.isdir(path) or os.path.islink(path):
+        return newest
+    try:
+        for root, dirs, files in os.walk(path):
+            for name in dirs + files:
+                try:
+                    newest = max(newest, os.stat(os.path.join(root, name),
+                                                 follow_symlinks=False).st_mtime)
+                except OSError:
+                    return time.time()
+    except OSError:
+        return time.time()
+    return newest
+
+
+def _canonical_dir(path: str) -> str:
+    """One spelling per folder: long name, resolved links, case-folded.
+
+    %TEMP% is commonly the 8.3 short form (C:\\Users\\ANNSMI~1\\...) of the
+    folder %LOCALAPPDATA%\\Temp spells in full; comparing strings counted it
+    twice and offered every item in it twice.
+    """
+    p = os.path.abspath(path)
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            buf = ctypes.create_unicode_buffer(32768)
+            if ctypes.windll.kernel32.GetLongPathNameW(p, buf, len(buf)):
+                p = buf.value
+        except Exception:
+            pass
+    return os.path.normcase(os.path.realpath(p))
+
+
 def _enum_top_level(folder: str) -> list:
     """Return absolute paths of all top-level entries inside folder."""
     result = []
@@ -83,22 +141,28 @@ def _enum_top_level(folder: str) -> list:
 # ── Category scanners ─────────────────────────────────────────────
 
 def _scan_user_temp() -> Optional[QuickCleanupCategory]:
-    r"""Enumerate top-level items inside %TEMP% and %LOCALAPPDATA%\Temp."""
-    dirs: set = set()
+    r"""Top-level items in %TEMP% and %LOCALAPPDATA%\Temp untouched for a week."""
+    candidates = []
     for var in ("TEMP", "TMP"):
         p = os.environ.get(var, "")
         if p:
-            dirs.add(os.path.normpath(p))
+            candidates.append(os.path.normpath(p))
     local = os.environ.get("LOCALAPPDATA", "")
     if local:
-        dirs.add(os.path.normpath(os.path.join(local, "Temp")))
+        candidates.append(os.path.normpath(os.path.join(local, "Temp")))
+    # One entry per real folder, keeping the first spelling seen for display.
+    dirs: dict = {}
+    for d in candidates:
+        if os.path.isdir(d):
+            dirs.setdefault(_canonical_dir(d), d)
 
+    cutoff = time.time() - TEMP_MIN_AGE_SECONDS
     paths: list = []
     total, count = 0, 0
-    for d in dirs:
-        if not os.path.isdir(d):
-            continue
+    for d in dirs.values():
         for entry in _enum_top_level(d):
+            if _newest_mtime(entry) > cutoff:
+                continue
             sz, fc = _measure_path(entry)
             paths.append(entry)
             total += sz
@@ -107,40 +171,11 @@ def _scan_user_temp() -> Optional[QuickCleanupCategory]:
     if not paths:
         return None
 
-    subtitle = "; ".join(sorted(d for d in dirs if os.path.isdir(d))[:2])
+    subtitle = "; ".join(sorted(dirs.values())[:2])
     return QuickCleanupCategory(
         key="user_temp",
         label="Temp Files",
         subtitle=subtitle,
-        paths=paths,
-        size_bytes=total,
-        file_count=count,
-    )
-
-
-def _scan_windows_temp() -> Optional[QuickCleanupCategory]:
-    """Enumerate top-level items inside C:\\Windows\\Temp."""
-    sysroot = os.environ.get("SystemRoot", r"C:\Windows")
-    wintemp = os.path.join(sysroot, "Temp")
-    entries = _enum_top_level(wintemp)
-    if not entries:
-        return None
-
-    paths: list = []
-    total, count = 0, 0
-    for e in entries:
-        sz, fc = _measure_path(e)
-        paths.append(e)
-        total += sz
-        count += fc
-
-    if total == 0 and count == 0:
-        return None
-
-    return QuickCleanupCategory(
-        key="windows_temp",
-        label="Windows Temp",
-        subtitle=wintemp,
         paths=paths,
         size_bytes=total,
         file_count=count,
@@ -225,91 +260,18 @@ def _scan_browser_cache() -> Optional[QuickCleanupCategory]:
     )
 
 
-def _scan_thumbnail_cache() -> Optional[QuickCleanupCategory]:
-    """Find thumbcache_*.db files in the Windows Explorer folder."""
-    local = os.environ.get("LOCALAPPDATA", "")
-    if not local:
-        return None
-    explorer = os.path.join(local, "Microsoft", "Windows", "Explorer")
-    if not os.path.isdir(explorer):
-        return None
-
-    files: list = []
-    total = 0
-    try:
-        for name in os.listdir(explorer):
-            lo = name.lower()
-            if lo.startswith("thumbcache_") and lo.endswith(".db"):
-                fp = os.path.join(explorer, name)
-                try:
-                    sz = os.path.getsize(fp)
-                    files.append(fp)
-                    total += sz
-                except OSError:
-                    pass
-    except OSError:
-        return None
-
-    if not files:
-        return None
-
-    return QuickCleanupCategory(
-        key="thumbnail_cache",
-        label="Thumbnail Cache",
-        subtitle=explorer,
-        paths=files,
-        size_bytes=total,
-        file_count=len(files),
-    )
-
-
-def _scan_windows_update() -> Optional[QuickCleanupCategory]:
-    """Enumerate top-level items in SoftwareDistribution\\Download."""
-    sysroot = os.environ.get("SystemRoot", r"C:\Windows")
-    download = os.path.join(sysroot, "SoftwareDistribution", "Download")
-    entries = _enum_top_level(download)
-    if not entries:
-        return None
-
-    paths: list = []
-    total, count = 0, 0
-    for e in entries:
-        sz, fc = _measure_path(e)
-        paths.append(e)
-        total += sz
-        count += fc
-
-    if total == 0 and count == 0:
-        return None
-
-    return QuickCleanupCategory(
-        key="windows_update",
-        label="Windows Update Cache",
-        subtitle=download,
-        paths=paths,
-        size_bytes=total,
-        file_count=count,
-    )
-
-
 # ── Detector thread ───────────────────────────────────────────────
 
 _SCANNERS = [
     _scan_user_temp,
     _scan_browser_cache,
-    _scan_thumbnail_cache,
-    _scan_windows_update,
-    _scan_windows_temp,
 ]
 
 
 # The category names shown in Quick Cleanup. They reach tr() through
 # cat.label, so a static scan over tr("...") calls cannot see them — listed
 # here so the translation-coverage test can.
-CATEGORY_LABELS = (
-    "Temp Files", "Windows Temp", "Browser Cache",
-    "Thumbnail Cache", "Windows Update Cache",
-)
+CATEGORY_LABELS = ("Temp Files", "Browser Cache")
 
 
 class QuickCleanupDetector(QThread):

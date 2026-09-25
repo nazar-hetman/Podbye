@@ -41,35 +41,17 @@ _DONE     = "done"
 
 _EXPLANATIONS: dict[str, str] = {
     "user_temp": (
-        "Temporary files created by Windows and applications during normal use — "
-        "partial downloads, installer scratch space, and app buffers. "
-        "These are never cleared automatically, but any file that is still actively "
-        "in use will simply fail to move and stay in place. Everything else is "
-        "safe to send to the Recycle Bin."
-    ),
-    "windows_temp": (
-        "The system-wide Temp folder used by Windows services, background tasks, "
-        "and installers. Clearing it frees space left behind after updates and "
-        "software installs. Files locked by a running process are automatically "
-        "skipped — no active operations are interrupted."
+        "Temporary files that Windows and applications leave behind — partial "
+        "downloads, installer scratch space and app buffers. Only items nothing "
+        "has touched for at least a week are included, so work still in "
+        "progress is left alone. A file that is still in use simply stays where "
+        "it is."
     ),
     "browser_cache": (
         "Web assets your browser downloaded and stored locally so pages load faster "
         "on repeat visits. Clearing the cache does not affect bookmarks, saved "
         "passwords, cookies, or browsing history. Your browser will simply "
         "re-download assets as you browse, and the cache will rebuild over time."
-    ),
-    "thumbnail_cache": (
-        "Preview images Windows Explorer generates the first time you open a folder "
-        "containing pictures or videos. These database files consume space but hold "
-        "no original content — deleting them causes no data loss. Thumbnails are "
-        "rebuilt automatically the next time you browse those folders."
-    ),
-    "windows_update": (
-        "Installer packages downloaded by Windows Update and kept on disk so updates "
-        "can be rolled back if something goes wrong. Once your system is stable and "
-        "up to date these files are redundant. Removing them is a standard "
-        "maintenance step and is safe to do at any time."
     ),
 }
 
@@ -299,6 +281,66 @@ class _CategoryRow(QFrame):
 
 
 # ── Screen ────────────────────────────────────────────────────────
+
+
+def _skips_of(result) -> tuple:
+    """(skipped paths, {path: not-recyclable reason}) from a CleanupResult."""
+    skipped = (set(result.skipped_protected)
+               | set(getattr(result, "skipped_kept", []) or [])
+               | set(getattr(result, "skipped_cloud", []) or []))
+    refused = dict(getattr(result, "skipped_not_recyclable", {}) or {})
+    return skipped, refused
+
+
+def category_outcomes(categories: list, result) -> list:
+    """[(category, bytes_moved, assessment)] for each cleaned category.
+
+    Everything is read per path from the worker's result. The bytes used to
+    be the run's total split by item count, and the assessment was built
+    without the skips - so a category whose every item was protected, kept
+    or refused by the bin read "already clean".
+    """
+    succeeded_set = set(result.succeeded)
+    in_use_set = set(result.in_use)
+    failed_set = set(result.failed)
+    skipped, refused = _skips_of(result)
+    moved_by_path = getattr(result, "bytes_by_path", {}) or {}
+    gone = set(getattr(result, "not_recycled", []) or [])
+    out = []
+    for cat in categories:
+        paths = cat.paths
+        cat_ok = [p for p in paths if p in succeeded_set]
+        cat_refused = {p: refused[p] for p in paths if p in refused}
+        reasons = set(cat_refused.values())
+        assessment = assess_cleanup_counts(
+            succeeded_count=len(cat_ok),
+            in_use_count=sum(1 for p in paths if p in in_use_set),
+            failed_count=sum(1 for p in paths if p in failed_set),
+            skipped_count=sum(1 for p in paths if p in skipped),
+            not_recyclable_count=len(cat_refused),
+            not_recyclable_reason=reasons.pop() if len(reasons) == 1 else "",
+            category_key=cat.key,
+            category_label=cat.label,
+            all_recoverable=not any(p in gone for p in cat_ok),
+        )
+        out.append((cat, sum(moved_by_path.get(p, 0) for p in cat_ok), assessment))
+    return out
+
+
+def history_items(categories: list, result) -> list:
+    """The per-item rows Quick Cleanup writes to History, with what each moved."""
+    moved_by_path = getattr(result, "bytes_by_path", {}) or {}
+    items = []
+    for cat in categories:
+        for path in cat.paths:
+            items.append({
+                "path":     path,
+                "name":     cat.label,
+                "size":     moved_by_path.get(path, 0),
+                "risk":     "Safe",
+                "category": cat.label,
+            })
+    return items
 
 class QuickCleanupScreen(QWidget):
     navigate_to = Signal(str)
@@ -1145,12 +1187,17 @@ class QuickCleanupScreen(QWidget):
         n_fail = len(result.failed)
         freed = result.total_bytes_freed
         p     = get_palette()
+        skipped, refused = _skips_of(result)
+        reasons = set(refused.values())
         overall = assess_cleanup_counts(
             succeeded_count=n_ok,
             in_use_count=n_in_use,
             failed_count=n_fail,
-            skipped_count=len(result.skipped_protected),
+            skipped_count=len(skipped),
+            not_recyclable_count=len(refused),
+            not_recyclable_reason=reasons.pop() if len(reasons) == 1 else "",
             category_label="Quick Cleanup",
+            all_recoverable=not getattr(result, "not_recycled", None),
         )
 
         self.refresh_recycle_bin()
@@ -1193,25 +1240,11 @@ class QuickCleanupScreen(QWidget):
         self._info_rows["duration"].setText(elapsed_str)
         self._progress_lbl.setVisible(False)
 
-        # Per-category breakdown
-        succeeded_set = set(result.succeeded)
-        in_use_set    = set(result.in_use)
-        failed_set    = set(result.failed)
-
+        # Per-category breakdown, read per path from the worker's result.
         cat_rows: list[tuple] = []
-        for row in self._cleaning_rows:
-            paths = row.category.paths
-            cat_ok   = [p2 for p2 in paths if p2 in succeeded_set]
-            cat_in_use = [p2 for p2 in paths if p2 in in_use_set]
-            cat_fail = [p2 for p2 in paths if p2 in failed_set]
-            cat_freed = int(freed * len(cat_ok) / n_ok) if n_ok > 0 and freed > 0 else 0
-            assessment = assess_cleanup_counts(
-                succeeded_count=len(cat_ok),
-                in_use_count=len(cat_in_use),
-                failed_count=len(cat_fail),
-                category_key=row.category.key,
-                category_label=row.category.label,
-            )
+        outcomes = category_outcomes([r.category for r in self._cleaning_rows],
+                                     result)
+        for row, (_cat, cat_freed, assessment) in zip(self._cleaning_rows, outcomes):
             self._row_assessments[row.category.key] = assessment
             cat_rows.append((row.category.label, cat_freed, assessment))
             row.show_result(assessment)
@@ -1257,7 +1290,9 @@ class QuickCleanupScreen(QWidget):
         self._breakdown_sep.setVisible(True)
         self._breakdown_hdr.setVisible(True)
         self._breakdown_container.setVisible(True)
-        self._recovery_lbl.setVisible(True)
+        # Only a promise the result supports: nothing removed for good.
+        self._recovery_lbl.setVisible(
+            bool(result.succeeded) and not getattr(result, "not_recycled", None))
 
         # A panel opened during the run is showing the category explanation.
         # Now that the row carries a result, rebuild it in place rather than
@@ -1321,16 +1356,8 @@ class QuickCleanupScreen(QWidget):
             return
         try:
             from app.state.session_store import save_cleanup_record
-            items = []
-            for row in self._cleaning_rows:
-                for path in row.category.paths:
-                    items.append({
-                        "path":     path,
-                        "name":     row.category.label,
-                        "size":     0,
-                        "risk":     "Safe",
-                        "category": row.category.label,
-                    })
+            items = history_items([r.category for r in self._cleaning_rows],
+                                  result)
             save_cleanup_record(
                 session_id="quick_cleanup",
                 items=items,

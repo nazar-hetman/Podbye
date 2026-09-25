@@ -139,6 +139,13 @@ def test_ukrainian_copy_names_the_actual_cleanup_and_startup_actions():
     assert data["items removed"] == "елементів прибрано з диска"
     assert data["Optional at startup"] == "Необов’язково під час запуску"
     assert data["OPTIONAL AT STARTUP"] == "НЕОБОВ’ЯЗКОВО ПІД ЧАС ЗАПУСКУ"
-    assert "жодна активна операція не переривається" in data[
-        "The system-wide Temp folder used by Windows services, background tasks, and installers. Clearing it frees space left behind after updates and software installs. Files locked by a running process are automatically skipped — no active operations are interrupted."
+    # Windows Temp is no longer offered (the engine refuses C:/Windows), so its
+    # explanation is gone. The same promise now lives in the Temp Files text:
+    # work still in progress is left alone.
+    assert "незавершена робота лишається недоторканою" in data[
+        "Temporary files that Windows and applications leave behind — partial "
+        "downloads, installer scratch space and app buffers. Only items nothing "
+        "has touched for at least a week are included, so work still in "
+        "progress is left alone. A file that is still in use simply stays where "
+        "it is."
     ]
