@@ -950,5 +950,9 @@
   "When off, a cleanup of only Safe and Optional items starts without asking. Items that need review, and items in a cloud-sync folder, are always confirmed first.": "Gdy wyłączone, czyszczenie wyłącznie elementów „Bezpieczne” i „Opcjonalne” rusza bez pytania. Elementy do sprawdzenia oraz elementy w folderze synchronizowanym z chmurą zawsze wymagają najpierw potwierdzenia.",
   "A name alone does not make this safe to remove — review what is inside before removing it": "Sama nazwa nie oznacza, że usunięcie jest bezpieczne — sprawdź zawartość, zanim to usuniesz",
   "Holds your own files — documents, photos, video or archives — so review it before removing it": "Zawiera Twoje własne pliki — dokumenty, zdjęcia, wideo lub archiwa — więc sprawdź go przed usunięciem",
-  "Part of a software project — its source, tests or assets": "Część projektu programistycznego — jego kod, testy lub zasoby"
+  "Part of a software project — its source, tests or assets": "Część projektu programistycznego — jego kod, testy lub zasoby",
+  "Scan again before cleaning up": "Przeskanuj ponownie przed czyszczeniem",
+  "These results were made by an earlier version of Podbye, which judged some folders safe on weaker evidence. Scan this location again to clean up from up-to-date results.": "Te wyniki utworzyła wcześniejsza wersja Podbye, która uznawała niektóre foldery za bezpieczne na słabszych podstawach. Przeskanuj tę lokalizację ponownie, aby czyścić na podstawie aktualnych wyników.",
+  "These results are more than a day old": "Te wyniki mają ponad dobę",
+  "Files may have changed since this scan, and folders are moved whole. Scanning again is safer. Clean up from these results anyway?": "Od tego skanowania pliki mogły się zmienić, a foldery są przenoszone w całości. Bezpieczniej jest przeskanować ponownie. Mimo to wyczyścić na podstawie tych wyników?"
 }

@@ -4540,6 +4540,16 @@ def _retype_workspaces(ctx: "_DetectionContext", entities: list, log_fn):
                f"workspaces rather than projects")
 
 
+# Which rules produced a set of verdicts. Saved with every session, so results
+# made by an older classifier can be recognised when they are reopened: their
+# rows carry the risk and actionability they were saved with, and a rule
+# change that makes Podbye more careful must not be bypassed by reopening a
+# scan from before it.
+#   1  everything up to and including 1.0.0-beta.5
+#   2  Safe requires evidence beyond a name (_enforce_safe_evidence)
+CLASSIFIER_VERSION = 2
+
+
 # ── Safe needs evidence ───────────────────────────────────────────
 #
 # Safe is the one verdict that tells a person they need not look. Several

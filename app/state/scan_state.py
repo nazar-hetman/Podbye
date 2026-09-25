@@ -134,6 +134,10 @@ class ScanState(QObject):
         # Session tracking
         self._session_id: str = ""
         self._start_time: float = 0.0
+        # The classifier version behind the results held here. A live scan's
+        # is always current; a restored session's is whatever it was saved
+        # with (1 when it predates the field).
+        self._classifier_version: int = 0
         self._known_paths: set = set()  # for resume dedup
 
         # Smart mode entity storage
@@ -468,6 +472,8 @@ class ScanState(QObject):
         self._resume_baseline_count = 0
         self._session_id = str(uuid.uuid4())[:8]
         self._start_time = time.time()
+        from app.services.entity_detector import CLASSIFIER_VERSION
+        self._classifier_version = CLASSIFIER_VERSION
 
     @property
     def skipped_entries(self) -> list[dict]:
@@ -514,12 +520,7 @@ class ScanState(QObject):
                 # Skip re-detection if entities were restored from session and
                 # the continuation scan added no new findings.
                 if self._scan_mode == "smart":
-                    can_reuse = (
-                        bool(self._entities)
-                        and self._resume_baseline_count > 0
-                        and len(self._findings) == self._resume_baseline_count
-                    )
-                    if can_reuse:
+                    if self._can_reuse_restored_entities():
                         self._reuse_restored_entities()
                     else:
                         self._resume_baseline_count = 0
@@ -739,6 +740,31 @@ class ScanState(QObject):
         if message:
             self.log_line.emit(f"[scan] {phase}: {message}")
 
+    def classifier_is_current(self) -> bool:
+        """True when the results held here came from this build's classifier."""
+        from app.services.entity_detector import CLASSIFIER_VERSION
+        return self._classifier_version == CLASSIFIER_VERSION
+
+    def results_age_seconds(self, now: float | None = None) -> float:
+        """How long ago the scan behind these results started."""
+        if not self._start_time:
+            return 0.0
+        return max(0.0, (now if now is not None else time.time()) - self._start_time)
+
+    def _can_reuse_restored_entities(self) -> bool:
+        """Whether a resumed scan may keep the verdicts it restored.
+
+        Only when nothing new arrived *and* the verdicts came from this
+        classifier. Otherwise a scan reopened from before a rule change would
+        carry the old rule's verdicts forward untouched.
+        """
+        return (
+            self.classifier_is_current()
+            and bool(self._entities)
+            and self._resume_baseline_count > 0
+            and len(self._findings) == self._resume_baseline_count
+        )
+
     def _reuse_restored_entities(self):
         """Skip entity detection when no new files arrived during a resume.
 
@@ -946,6 +972,11 @@ class ScanState(QObject):
             # Store entities
             _log.debug("[smart] [LIFECYCLE] Step 3: Storing semantic entities to ScanState...")
             self._entities = entities
+            # These verdicts are this build's, whatever the session was
+            # restored from - set here, where they replace the old ones, so a
+            # detection cancelled half-way leaves the old version standing.
+            from app.services.entity_detector import CLASSIFIER_VERSION
+            self._classifier_version = CLASSIFIER_VERSION
             self._pending_entities = None
             self._entity_dict_dirty = True
             self._invalidate_path_index()
@@ -1122,6 +1153,7 @@ class ScanState(QObject):
             entities_dicts=entities_dicts,
             scan_frontier=frontier,
             findings_omitted=findings_omitted,
+            classifier_version=self._classifier_version or None,
         )
 
     def _save_session(self, status: str):
@@ -1231,6 +1263,7 @@ class ScanState(QObject):
         self._target = data.get("target", "")
         self._scan_mode = data.get("scan_mode", "smart")
         self._start_time = data.get("start_time", time.time())
+        self._classifier_version = int(data.get("classifier_version", 1) or 1)
         # Directories the interrupted scan never reached — handed to the next
         # ScanWorker so it continues from here instead of re-walking everything.
         self._resume_frontier = list(data.get("scan_frontier", []) or [])

@@ -5748,6 +5748,29 @@ class CategoryDetailView(QFrame):
                 tr("The Recycle Bin is being emptied. Wait for that to finish, "
                    "then try again."))
             return False
+        # Results reopened from History carry the verdicts they were saved
+        # with. From an older classifier they are not trusted to delete from;
+        # from more than a day ago the folders may have changed. The cleanup
+        # dialog and the worker hold their own guards - this one is about the
+        # age and provenance of the plan itself.
+        from app.state.result_freshness import OUTDATED, STALE, cleanup_gate
+        gate = cleanup_gate(self._scan_state)
+        if gate == OUTDATED:
+            QMessageBox.information(
+                self, tr("Scan again before cleaning up"),
+                tr("These results were made by an earlier version of Podbye, "
+                   "which judged some folders safe on weaker evidence. Scan "
+                   "this location again to clean up from up-to-date results."))
+            return False
+        if gate == STALE:
+            answer = QMessageBox.question(
+                self, tr("These results are more than a day old"),
+                tr("Files may have changed since this scan, and folders are "
+                   "moved whole. Scanning again is safer. Clean up from these "
+                   "results anyway?"),
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if answer != QMessageBox.Yes:
+                return False
         session_id = getattr(self._scan_state, "_session_id", "")
         def _log(msg: str):
             if hasattr(self._scan_state, "log_line"):

@@ -773,6 +773,7 @@ def build_snapshot(
     entities_dicts: list[dict] | None = None,
     scan_frontier: list[str] | None = None,
     findings_omitted: bool = False,
+    classifier_version: int | None = None,
 ) -> dict:
     """Build a serializable session snapshot dict.
 
@@ -807,4 +808,13 @@ def build_snapshot(
         "findings_omitted": findings_omitted,
         "entities": _strip_derived_fields(entities_dicts, _DERIVED_ENTITY_KEYS),
         "scan_frontier": scan_frontier or [],
+        # The rules that produced these verdicts. A session without it was
+        # saved before versions existed, and is treated as the oldest.
+        "classifier_version": (classifier_version if classifier_version
+                               is not None else _current_classifier_version()),
     }
+
+
+def _current_classifier_version() -> int:
+    from app.services.entity_detector import CLASSIFIER_VERSION
+    return CLASSIFIER_VERSION
