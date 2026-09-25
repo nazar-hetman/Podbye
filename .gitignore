@@ -6,6 +6,8 @@ __pycache__/
 .eggs/
 build/
 dist/
+# Copies of a build kept aside by hand, e.g. dist-beta5/.
+dist-*/
 
 # ── Virtual environments ─────────────────────────────────
 .venv/
@@ -50,7 +52,6 @@ Podbye_design.html
 podbye_design.tar
 
 # Scratch output
-crash.log
 scratch_tr_report.json
 
 # Release artifacts — produced by the build, published to GitHub Releases,
