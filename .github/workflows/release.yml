@@ -13,11 +13,58 @@ on:
   workflow_dispatch:          # lets you produce a test build without tagging
 
 permissions:
-  contents: write             # needed to create the release and upload assets
+  contents: read
 
 jobs:
+  # app/version.py is the only place the version is written. A tag that
+  # disagrees with it would publish an installer whose About screen names a
+  # different release than the page it was downloaded from, so the mismatch
+  # stops the run here, in seconds, before an hour of tests is spent on it.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Read the version and check the tag
+        id: read
+        shell: bash
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_TYPE" = "tag" ]; then
+            version=$(python tools/release_version.py --tag "$REF_NAME")
+          else
+            version=$(python tools/release_version.py)
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Application version: $version"
+
+  # The suite is the reason to believe the binary behaves. Build only if it
+  # passes: a release that fails its own tests is worse than no release.
+  #
+  # This is tests.yml itself, not a copy of it. The one-process "pytest -q"
+  # that used to run here is the exact configuration tests.yml had to split
+  # into a qt job and a logic job - on a Windows runner it exhausts GDI
+  # handles and the interpreter dies part-way with no test name. Calling the
+  # workflow means the release always tests the way CI does.
+  test:
+    needs: version
+    uses: ./.github/workflows/tests.yml
+
   build:
+    needs: [version, test]
     runs-on: windows-latest
+    permissions:
+      contents: write         # needed to create the release and upload assets
+    env:
+      APP_VERSION: ${{ needs.version.outputs.version }}
 
     steps:
       - uses: actions/checkout@v4
@@ -30,14 +77,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt pyinstaller
-
-      # The suite is the reason to believe the binary behaves. Build only if
-      # it passes: a release that fails its own tests is worse than no release.
-      - name: Run tests
-        run: pytest -q
-        env:
-          QT_QPA_PLATFORM: offscreen
+          pip install -r requirements.txt pyinstaller
 
       - name: Build
         run: pyinstaller --noconfirm podbye.spec
@@ -75,10 +115,12 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
+          # A tag build is named by the version the tag was checked against;
+          # anything else is marked as a development build of that version.
           if ("${{ github.ref_type }}" -eq "tag") {
-            $v = "${{ github.ref_name }}"
+            $v = $env:APP_VERSION
           } else {
-            $v = "dev-" + $env:GITHUB_SHA.Substring(0,7)
+            $v = "$env:APP_VERSION-dev-" + $env:GITHUB_SHA.Substring(0,7)
           }
           echo "VERSION=$v" >> $env:GITHUB_ENV
           Compress-Archive -Path dist\Podbye\* -DestinationPath "Podbye-$v-windows-x64.zip"
@@ -97,9 +139,30 @@ jobs:
           }
           if (-not $iscc) { throw "Inno Setup (ISCC.exe) not found on this runner." }
           Write-Host "Using $iscc"
-          & $iscc installer\Podbye.iss
+          # The installer keeps no version of its own; it is handed the one
+          # app/version.py holds, and refuses to compile without it.
+          & $iscc "/DAppVersion=$env:APP_VERSION" installer\Podbye.iss
           if ($LASTEXITCODE -ne 0) { throw "installer compile failed ($LASTEXITCODE)" }
           Get-ChildItem installer\Output
+
+      # Name the two files a release is made of and require exactly those.
+      # A wildcard would publish whatever happened to match - or nothing at
+      # all - and the checksums would faithfully describe the wrong set.
+      - name: Verify release artifacts
+        shell: pwsh
+        run: |
+          $expected = @(
+            "Podbye-$env:VERSION-windows-x64.zip",
+            "installer\Output\PodbyeSetup-$env:APP_VERSION.exe")
+          foreach ($f in $expected) {
+            if (-not (Test-Path $f)) { throw "expected release artifact is missing: $f" }
+          }
+          $zips = @(Get-ChildItem "Podbye-*.zip")
+          $exes = @(Get-ChildItem installer\Output\*.exe)
+          if ($zips.Count -ne 1 -or $exes.Count -ne 1) {
+            throw "expected exactly one zip and one installer, found: $($zips.Name + $exes.Name -join ', ')"
+          }
+          Write-Host "OK — $($expected -join ', ')"
 
       - name: Checksums
         shell: pwsh
@@ -124,6 +187,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           draft: true          # you review it before anyone sees it
+          # 1.0.0-rc.1, 1.0.0-beta.5: anything with a pre-release suffix is
+          # marked as one, so it is never offered as the latest stable build.
+          prerelease: ${{ contains(needs.version.outputs.version, '-') }}
           generate_release_notes: true
           files: |
             Podbye-*.zip
@@ -141,4 +207,5 @@ jobs:
             if you prefer — these files were built by GitHub Actions from the
             source in this repository, and the log is on the Actions tab.
 
-            Podbye runs entirely offline. It collects nothing and sends nothing.
+            Podbye has no cloud service and sends no telemetry. AI is optional and
+            only ever talks to a runtime on this computer or on your private LAN.

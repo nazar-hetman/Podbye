@@ -1,6 +1,6 @@
 # Run the suite on every push and pull request.
 #
-# release.yml also runs pytest, but only when a v* tag is pushed — by which
+# release.yml runs this same workflow, but only when a v* tag is pushed — by which
 # point a regression is already in main and the tag has to be deleted and
 # recut. This runs the same suite at the moment the code arrives, so a red
 # branch is visible before anyone builds a release out of it.
@@ -18,6 +18,9 @@ on:
   # trigger. A PR from a branch in this repo does run twice; that is the cost
   # of testing both, and the run is cancelled by the concurrency group anyway.
   pull_request:
+  # release.yml calls this workflow instead of keeping its own copy of the
+  # test strategy, so a release is tested exactly the way every push is.
+  workflow_call:
 
 # A new push to the same branch makes the previous run pointless.
 concurrency:

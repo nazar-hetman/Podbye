@@ -1,11 +1,12 @@
 ; Inno Setup script for Podbye — https://jrsoftware.org/isinfo.php
 ;
-; Build the app first, then compile this:
+; Build the app first, then compile this, handing it the version that
+; app/version.py holds (PowerShell, from the repository root):
 ;   .venv\Scripts\python.exe -m PyInstaller --noconfirm podbye.spec
-;   iscc installer\Podbye.iss
+;   iscc "/DAppVersion=$(.venv\Scripts\python.exe tools\release_version.py)" installer\Podbye.iss
 ; Output: installer\Output\PodbyeSetup-<version>.exe
 ;
-; This installs the whole dist-beta5\Podbye FOLDER, not a repacked single file.
+; This installs the whole dist\Podbye FOLDER, not a repacked single file.
 ; That is deliberate and is a licensing requirement, not a packaging habit:
 ; Podbye links Qt under the LGPL v3, whose section 4(d) requires that whoever
 ; receives the program can replace the Qt libraries with their own build. The
@@ -13,10 +14,18 @@
 ; "improve" this by compressing them into the installer executable itself.
 
 #define AppName        "Podbye"
-#define AppVersion     "1.0.0-beta.5"
+; No version is written here. app/version.py is the single source of truth and
+; the build passes it in with /DAppVersion=...; a second copy in this file is
+; a second number to forget to bump, and it did drift.
+#ifndef AppVersion
+  #error AppVersion is not defined. Compile with /DAppVersion=<version>, using the value printed by: python tools\release_version.py
+#endif
 #define AppPublisher   "Nazar Hetman"
 #define AppExeName     "Podbye.exe"
-#define SourceDir      "..\dist-beta5\Podbye"
+; PyInstaller's own output folder, exactly as podbye.spec and release.yml
+; produce it. Packaging a renamed copy kept aside by hand made the release
+; workflow compile against a folder no build creates.
+#define SourceDir      "..\dist\Podbye"
 ; Must stay identical to the string app/main.py passes to
 ; SetCurrentProcessExplicitAppUserModelID. See the [Icons] note below.
 #define AppUserModelID "Podbye.App"
