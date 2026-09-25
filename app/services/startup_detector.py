@@ -346,6 +346,42 @@ def _build_explanation(name: str, publisher: str, role: str, risk: str) -> str:
 
 # ── Publisher lookup via file version info ────────────────────────
 
+# Tried after the languages a file declares: US English in its two common
+# code pages, then language-neutral. These were the only blocks ever read, so
+# a program with only, say, Ukrainian or Japanese resources had no publisher.
+_FALLBACK_TRANSLATIONS = ((0x0409, 0x04B0), (0x0409, 0x04E4), (0x0000, 0x04B0))
+
+
+def _version_subblocks(translations: list, field_name: str) -> list:
+    """Version-resource paths to try for *field_name*, in order.
+
+    *translations* is the file's own \\VarFileInfo\\Translation list of
+    (language, code page) pairs; those come first, then the fallbacks, each
+    block once.
+    """
+    blocks: list = []
+    for lang, codepage in list(translations) + list(_FALLBACK_TRANSLATIONS):
+        block = f"\\StringFileInfo\\{lang:04X}{codepage:04X}\\{field_name}"
+        if block not in blocks:
+            blocks.append(block)
+    return blocks
+
+
+def _read_translations(buf) -> list:
+    """(language, code page) pairs a version resource declares, or []."""
+    try:
+        pvoid = ctypes.c_void_p()
+        plen = ctypes.c_uint()
+        if not ctypes.windll.version.VerQueryValueW(
+                buf, "\\VarFileInfo\\Translation",
+                ctypes.byref(pvoid), ctypes.byref(plen)):
+            return []
+        words = (ctypes.c_ushort * (plen.value // 2)).from_address(pvoid.value)
+        return [(words[i], words[i + 1]) for i in range(0, len(words) - 1, 2)]
+    except Exception:
+        return []
+
+
 def _read_version_value(exe_path: str, field_name: str) -> str:
     if not exe_path or not os.path.isfile(exe_path):
         return ""
@@ -358,11 +394,7 @@ def _read_version_value(exe_path: str, field_name: str) -> str:
             return ""
         pvoid = ctypes.c_void_p()
         plen = ctypes.c_uint()
-        for sub in (
-            f"\\StringFileInfo\\040904B0\\{field_name}",
-            f"\\StringFileInfo\\040904E4\\{field_name}",
-            f"\\StringFileInfo\\000004B0\\{field_name}",
-        ):
+        for sub in _version_subblocks(_read_translations(buf), field_name):
             if (ctypes.windll.version.VerQueryValueW(
                     buf, sub, ctypes.byref(pvoid), ctypes.byref(plen))
                     and plen.value > 1):
