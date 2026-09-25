@@ -108,7 +108,9 @@ def test_move_to_recycle_bin_is_still_the_full_width_primary(panel):
 def test_the_button_texts_are_unchanged(panel):
     """Hierarchy only — no relabelling."""
     assert panel._btn_recycle.text() == "Move to Recycle Bin"
-    assert panel._btn_uninstall.text() == "Deep Uninstall"
+    # Renamed from "Deep Uninstall": it launches the program's own
+    # uninstaller and sweeps no leftovers, so the label says only that.
+    assert panel._btn_uninstall.text() == "Run uninstaller"
     assert panel._btn_keep.text() == "Keep"
 
 

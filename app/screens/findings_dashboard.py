@@ -1049,7 +1049,7 @@ def _finding_recommendation(entity: dict) -> tuple[str, str, str, str]:
     if is_app:
         return (
             tr("SYSTEM-LEVEL"),
-            tr("Recommendation: use Deep Uninstall for applications; recycle only leftover files you recognize."),
+            tr("Recommendation: remove applications with their own uninstaller (Run uninstaller); recycle only leftover files you recognize."),
             translate_reason(entity) or tr("Application metadata or installer/package signals were detected."),
             accent_review,
         )
@@ -2713,7 +2713,9 @@ class _PreallocDetailPanel(QWidget):
         # alternative route for one kind of entity, not the headline action,
         # and at full width directly under Move to Recycle Bin it read as a
         # second primary button competing with the first.
-        self._btn_uninstall = QPushButton(tr("Deep Uninstall"))
+        # "Deep" promised a leftover sweep this never did: it launches the
+        # program's own uninstaller, and the label now says exactly that.
+        self._btn_uninstall = QPushButton(tr("Run uninstaller"))
         self._btn_uninstall.setObjectName("Subtle")
         self._btn_uninstall.setCursor(Qt.PointingHandCursor)
         self._btn_uninstall.clicked.connect(self._on_uninstall)
@@ -5805,7 +5807,7 @@ class CategoryDetailView(QFrame):
             # place a user reads the outcome after the dialog closes stayed
             # English in every language.
             self._show_toast(tr(
-                "✓  {count} item(s) moved to Recycle Bin · {freed} freed",
+                "✓  {count} item(s) · {freed} moved to the Recycle Bin",
                 count=n, freed=freed))
             return True
         return False
@@ -5841,7 +5843,7 @@ class CategoryDetailView(QFrame):
             return
 
         reply = QMessageBox.question(
-            self, tr("Deep Uninstall"),
+            self, tr("Run uninstaller"),
             tr("Run the official uninstaller for {name}?\n\n"
                "This launches the application's own uninstaller. Windows will "
                "ask for permission first, because uninstalling needs "
@@ -5873,7 +5875,7 @@ class CategoryDetailView(QFrame):
                 "Uninstaller launched · {name} — re-scan to confirm removal",
                 name=name))
         else:
-            QMessageBox.warning(self, tr("Deep Uninstall failed"), message)
+            QMessageBox.warning(self, tr("The uninstaller did not start"), message)
 
     def _show_toast(self, message: str, ms: int = 5000):
         self._sel_size_lbl.setText(message)

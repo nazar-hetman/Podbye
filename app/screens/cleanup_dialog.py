@@ -1004,7 +1004,7 @@ class CleanupConfirmDialog(QDialog):
         # Build result text
         freed = _format_size(result.total_bytes_freed)
         if n_recycled:
-            ok_msg = tr("✓  {count} item(s) moved to Recycle Bin · {freed} freed",
+            ok_msg = tr("✓  {count} item(s) · {freed} moved to the Recycle Bin",
                         count=n_recycled, freed=freed)
         elif n_ok:
             ok_msg = tr("✓  {count} item(s) removed · {freed} freed",

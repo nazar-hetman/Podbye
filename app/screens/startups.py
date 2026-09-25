@@ -211,7 +211,7 @@ def _startup_recommendation(entry: StartupEntry) -> tuple[str, str, str, str]:
     if unknown and high_impact:
         return (
             tr("NEEDS REVIEW"),
-            tr("Recommendation: verify the publisher and consider disabling this to reduce startup load."),
+            tr("Recommendation: check who made this program, and consider disabling it to reduce startup load."),
             tr("Unknown publisher plus persistent startup behavior is worth checking before you leave it enabled."),
             accent_review,
         )
@@ -219,7 +219,7 @@ def _startup_recommendation(entry: StartupEntry) -> tuple[str, str, str, str]:
         return (
             tr("NEEDS REVIEW"),
             tr("Recommendation: review the executable path and publisher before keeping this enabled at startup."),
-            tr("Podbye could not verify the publisher for this entry."),
+            tr("The program file does not name a publisher, so Podbye cannot say who made it."),
             accent_review,
         )
     if high_impact:
@@ -674,6 +674,9 @@ class StartupListRow(QFrame):
 class StartupInspectorPanel(QFrame):
     # Emitted when the user asks for the place the change is actually made.
     task_manager_requested = Signal()
+    # Task Manager lists Run keys and Startup-folder items, not scheduled
+    # tasks; those are changed in Task Scheduler, and the button says so.
+    task_scheduler_requested = Signal()
 
     def __init__(self, parent=None, compact: bool = False, ask_ai_cb=None):
         super().__init__(parent)
@@ -921,7 +924,7 @@ class StartupInspectorPanel(QFrame):
         self._tm_btn.setObjectName("Subtle")
         self._tm_btn.setStyleSheet("font-size: 10px; padding: 3px 8px;")
         self._tm_btn.setCursor(Qt.PointingHandCursor)
-        self._tm_btn.clicked.connect(self.task_manager_requested.emit)
+        self._tm_btn.clicked.connect(self._on_change_clicked)
         task_manager_action = QHBoxLayout()
         task_manager_action.addWidget(self._tm_btn)
         task_manager_action.addStretch()
@@ -1119,9 +1122,25 @@ class StartupInspectorPanel(QFrame):
         self._ask_ai_btn.setVisible(False)
         self._ai_status_lbl.setText(tr("Analyzing startup behavior…"))
 
+    @staticmethod
+    def _is_scheduled_task(entry) -> bool:
+        return getattr(entry, "source", "") == "scheduled_task"
+
+    def _on_change_clicked(self):
+        if self._is_scheduled_task(getattr(self, "_current_entry", None)):
+            self.task_scheduler_requested.emit()
+        else:
+            self.task_manager_requested.emit()
+
+    def _sync_change_button(self, entry):
+        self._tm_btn.setText(tr("Change in Task Scheduler ↗")
+                             if self._is_scheduled_task(entry)
+                             else tr("Change in Task Manager ↗"))
+
     def set_entry(self, entry: StartupEntry | None):
         self._current_entry = entry
         self._sync_ask_ai_button(entry)
+        self._sync_change_button(entry)
         if entry is None:
             # The invitation, and nothing else. It used to draw the whole
             # skeleton with nothing in it — IMPACT over a dash, a WAITING chip
@@ -1382,7 +1401,7 @@ class StartupsScreen(QWidget):
         title = QLabel(tr("STARTUPS"))
         apply_tactical_label(title, font_size=16, letter_spacing=4)
         title_col.addWidget(title)
-        sub = QLabel(tr("Startup controls update Podbye state · Windows changes stay manual"))
+        sub = QLabel(tr("Podbye explains startup entries · changes are made in Windows"))
         sub.setObjectName("Dim")
         sub.setStyleSheet("font-size: 12px;")
         title_col.addWidget(sub)
@@ -1556,6 +1575,8 @@ class StartupsScreen(QWidget):
         self._right_sidebar = StartupRightSidebar(ask_ai_cb=self._on_ask_ai_startup)
         self._right_sidebar.detail_widget.task_manager_requested.connect(
             self._open_task_manager)
+        self._right_sidebar.detail_widget.task_scheduler_requested.connect(
+            self._open_task_scheduler)
         self._detail_widget = self._right_sidebar.detail_widget
         body_layout.addWidget(self._right_sidebar, stretch=3)
         self._apply_detail_widget_style()
@@ -2153,5 +2174,11 @@ class StartupsScreen(QWidget):
     def _open_task_manager(self):
         try:
             subprocess.Popen(["taskmgr.exe"])
+        except OSError:
+            pass
+
+    def _open_task_scheduler(self):
+        try:
+            subprocess.Popen(["mmc.exe", "taskschd.msc"])
         except OSError:
             pass

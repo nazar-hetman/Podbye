@@ -138,7 +138,7 @@ def test_optional_and_review_still_say_different_things():
                               "Microsoft", "OneDrive")
 
     assert odd_place == "Review" and "unusual location" in place_reason
-    assert no_publisher == "Review" and "Publisher could not be verified" in publisher_reason
+    assert no_publisher == "Review" and "No publisher is named" in publisher_reason
     assert known != "Review", "a known convenience is not an unidentified one"
 
 

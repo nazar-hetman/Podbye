@@ -50,8 +50,10 @@ def test_german_formats_dynamic_reasons_and_cleanup_results():
         assert "C:\\Apps" in duplicate
         assert "1.2 GB" in duplicate
 
-        cleanup = tr("✓  {count} item(s) moved to Recycle Bin · {freed} freed",
+        # Moving to the Recycle Bin frees nothing until it is emptied; the
+        # result line no longer says "freigegeben".
+        cleanup = tr("✓  {count} item(s) · {freed} moved to the Recycle Bin",
                      count=12, freed="800 MB")
-        assert cleanup == "✓  12 Elemente in den Papierkorb verschoben · 800 MB freigegeben"
+        assert cleanup == "✓  12 Elemente · 800 MB in den Papierkorb verschoben"
     finally:
         set_language(previous)

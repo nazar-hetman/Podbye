@@ -197,8 +197,8 @@ def test_the_session_panel_opens_on_what_can_be_reclaimed(screen, qapp):
     screen._toggle_sess_detail(0)
     qapp.processEvents()
     keys = [k for k in _metric_keys(screen._sess_detail_widget) if k != "TARGET"]
-    # FREED only appears once something from this session has been cleaned.
-    assert [k for k in keys[:5] if k != "FREED"][:4] == [
+    # MOVED only appears once something from this session has been cleaned.
+    assert [k for k in keys[:5] if k != "MOVED"][:4] == [
         "RECLAIMABLE", "FOUND", "NEEDS REVIEW", "DURATION"]
     assert "IMPACT" not in keys and "RESULT" not in keys
 

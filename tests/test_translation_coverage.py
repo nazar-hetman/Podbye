@@ -100,7 +100,7 @@ def test_destructive_action_strings_are_translated(code):
     # available yet", and has been removed rather than left as dead UI.
     critical = [
         "Move to Recycle Bin", "Confirm Cleanup",
-        "Deep Uninstall", "Safe", "Optional", "Review", "Protected",
+        "Run uninstaller", "Safe", "Optional", "Review", "Protected",
         "Cancel", "Recycle Bin",
     ]
     table = _table(code)

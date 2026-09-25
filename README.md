@@ -1,7 +1,7 @@
 # Podbye
 
 Podbye is a Windows desktop utility for understanding storage use, reviewing
-cleanup candidates, and managing startup items before making changes.
+cleanup candidates, and reviewing startup items before making changes.
 
 It is currently in beta. Review recommendations and selected targets before
 removing anything.
@@ -40,6 +40,9 @@ private local network, such as Ollama. Podbye does not use public AI endpoints.
 When you choose a private-LAN AI server, the information needed for that AI
 analysis is sent to the server you configured over your local network.
 
+Downloading a model from Settings asks your Ollama runtime to fetch it; Ollama
+downloads it from the internet. Podbye itself makes no internet request.
+
 ## Cleanup safety
 
 Cleanup uses the Windows Recycle Bin by default. Emptying the Recycle Bin is an
@@ -52,8 +55,20 @@ moving an item, Podbye checks the Recycle Bin policy and skips targets known not
 to fit. For large items, it also verifies the result when Windows provides
 enough information and reports items that did not reach the Recycle Bin.
 
-Protected and ignored paths are excluded from cleanup recommendations. Podbye
-shows the target and method before it acts.
+Protected paths, and folders you mark Keep, are never cleaned. Podbye shows
+the target and method before it acts.
+
+Podbye calls something Safe only with evidence beyond its name: a known
+application cache location, a folder that is part of a software project, or
+what the folder actually contains. Anything less is left for you to review.
+Results saved by an older version of Podbye must be scanned again before they
+can be cleaned up.
+
+## Startup items
+
+Podbye explains each startup entry and suggests whether it is needed. It does
+not change startup entries itself: Windows makes the change, in Task Manager
+or, for scheduled tasks, in Task Scheduler.
 
 ## Languages
 

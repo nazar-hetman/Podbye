@@ -661,7 +661,7 @@ class SessionDetail(QFrame):
              p.get("safe", "#7aa88a") if reclaimable else ""),
         ]
         if freed_bytes > 0 or freed_items > 0:
-            rows.append((tr("FREED"),
+            rows.append((tr("MOVED"),
                          f"{_format_size(freed_bytes)} · {freed_items:,}",
                          p.get("safe", "#7aa88a")))
         rows += [
@@ -1019,7 +1019,7 @@ class HistoryScreen(QWidget):
         from app.state.session_store import load_summary
         s = load_summary()
         lbl = QLabel(
-            tr("{freed} freed  ·  {cleanups} cleanups  ·  {scanned} scanned"
+            tr("{freed} moved  ·  {cleanups} cleanups  ·  {scanned} scanned"
                "  ·  {analyses} analyses",
                freed=_format_size(s.get('total_recovered_bytes', 0)),
                cleanups=s.get('cleanup_sessions', 0),
@@ -1044,7 +1044,7 @@ class HistoryScreen(QWidget):
 
         total_freed = sum(r.get("total_bytes_freed", 0) for r in records)
         if records:
-            subtitle = tr("// {n} operations · {size} freed",
+            subtitle = tr("// {n} operations · {size} moved",
                           n=len(records), size=_format_size(total_freed))
         else:
             subtitle = tr("// no cleanup operations yet")
@@ -1061,7 +1061,7 @@ class HistoryScreen(QWidget):
         # completed, matching the detail panel; attempted-but-not-completed
         # items are shown there as NOT REMOVED.
         table = self._new_table(
-            [tr("WHEN"), tr("STATUS"), tr("FREED"), tr("ITEMS")],
+            [tr("WHEN"), tr("STATUS"), tr("MOVED"), tr("ITEMS")],
             [Qt.AlignLeft, Qt.AlignHCenter, Qt.AlignRight, Qt.AlignRight])
         hdr = table.horizontalHeader()
         for col, w in ((1, 116), (2, 100), (3, 78)):

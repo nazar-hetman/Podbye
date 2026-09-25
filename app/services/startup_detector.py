@@ -248,7 +248,9 @@ def _classify_risk(name: str, path: str, publisher: str, product_name: str) -> t
     if any(seg in lo_path for seg in suspicious_dirs):
         return "Review", "Starts from an unusual location — verify before changing it"
     if not publisher:
-        return "Review", "Publisher could not be verified — review before changing it"
+        # Read from the file's version details, which any program can fill
+        # in; nothing here checks a signature, so nothing here says "verify".
+        return "Review", "No publisher is named in the program file — review before changing it"
 
     # Optional
     if role in {

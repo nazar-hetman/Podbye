@@ -46,10 +46,12 @@ def test_polish_localizes_dynamic_reasoning_and_result_templates():
         assert "C:\\Apps" in duplicate
         assert "1.2 GB" in duplicate
 
+        # Moving to the Recycle Bin frees nothing until it is emptied; the
+        # result line no longer says "zwolniono".
         cleanup = tr(
-            "✓  {count} item(s) moved to Recycle Bin · {freed} freed",
+            "✓  {count} item(s) · {freed} moved to the Recycle Bin",
             count=12, freed="800 MB")
-        assert cleanup == "✓  Elementy przeniesione do Kosza: 12 · zwolniono: 800 MB"
+        assert cleanup == "✓  Elementy: 12 · przeniesiono do Kosza: 800 MB"
 
         # stdout identifies the technical stream and deliberately remains English.
         assert tr("// stdout") == "// stdout"

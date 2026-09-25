@@ -171,11 +171,16 @@ def test_the_all_time_heading_reads_naturally(screen):
 
 def test_the_heading_does_not_repeat_itself(screen):
     """The hero figure's caption used to be "звільнено за весь час" under a
-    heading that now says exactly that."""
+    heading that now says exactly that.
+
+    The caption is now "прибрано" (cleaned up) rather than "звільнено"
+    (freed): moving files to the Recycle Bin frees nothing until the bin is
+    emptied. Still one word under the heading."""
     s = screen()
 
-    assert _texts(s).count("звільнено") == 1
-    assert "звільнено за весь час" not in _all(s)
+    assert _texts(s).count("прибрано") == 1
+    assert "за весь час за весь час" not in _all(s)
+    assert "прибрано за весь час" not in _all(s)
 
 
 def test_resuming_is_resuming_the_analysis(screen):

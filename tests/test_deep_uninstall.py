@@ -179,7 +179,7 @@ def test_no_uninstall_button_when_windows_registers_no_uninstaller(qapp):
     w = _detail_widget(qapp)
     w.populate(_app_entity(""))
     assert not w._btn_uninstall.isVisibleTo(w), (
-        "Deep Uninstall is offered for an application with no uninstaller"
+        "Run uninstaller is offered for an application with no uninstaller"
     )
     w.deleteLater()
 

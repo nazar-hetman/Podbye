@@ -389,7 +389,7 @@ class HomeScreen(QWidget):
         hero_unit.setStyleSheet(f"{_MONO} font-size: 14px; padding-bottom: 5px;")
         hero_val.addWidget(hero_unit)
         hero.addLayout(hero_val)
-        hero_lbl = QLabel(tr("freed all-time"))
+        hero_lbl = QLabel(tr("cleaned up all-time"))
         hero_lbl.setObjectName("Dim")
         hero_lbl.setStyleSheet("font-size: 11px;")
         hero.addWidget(hero_lbl)

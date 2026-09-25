@@ -69,7 +69,7 @@ def test_ukrainian_analyze_uses_grouped_results_and_explicit_ai_non_run(qapp):
             "Пошук шляхів",
             "Сканування й категоризація",
             "Групування результатів",
-            "AI-класифікація",
+            "Пояснення AI",
         ]
         assert tr("{count:,} grouped results", count=1311) == (
             "згрупованих результатів: 1,311")

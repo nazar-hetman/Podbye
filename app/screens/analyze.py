@@ -38,7 +38,7 @@ def _get_stages_smart():
         (tr("Enumerate paths"), "paths"),
         (tr("Scan & categorize"), "scan"),
         (tr("Entity detection"), "entity"),
-        (tr("AI classification"), "ai"),
+        (tr("AI explanations"), "ai"),
     ]
 
 from app.themes.theme_manager import rgba as _rgba
@@ -408,6 +408,13 @@ class AnalyzeScreen(QWidget):
         self._mode_combo = TacticalComboBox()
         self._mode_combo.addItem(tr("Adaptive scan"), "smart")
         self._mode_combo.addItem(tr("All files"), "all")
+        # Neither mode skips anything; they differ in how results are grouped.
+        self._mode_combo.setItemData(
+            0, tr("Groups files into apps, projects and folders you can act on. "
+                  "Nothing is skipped."), Qt.ToolTipRole)
+        self._mode_combo.setItemData(
+            1, tr("Lists every file and folder on its own, without grouping."),
+            Qt.ToolTipRole)
         self._mode_combo.setCurrentIndex(0)
         self._mode_combo.setFixedWidth(188)
         self._mode_combo.setMinimumHeight(32)

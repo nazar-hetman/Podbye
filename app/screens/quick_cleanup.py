@@ -56,8 +56,8 @@ _EXPLANATIONS: dict[str, str] = {
 }
 
 _EXPLANATION_FALLBACK = (
-    "These files are safe to remove. They will be sent to the Recycle Bin and "
-    "can be fully restored if needed."
+    "These files will be sent to the Recycle Bin, where they can be restored "
+    "if needed."
 )
 
 
@@ -633,7 +633,7 @@ class QuickCleanupScreen(QWidget):
         right_lay.addWidget(self._breakdown_container)
 
         self._recovery_lbl = QLabel(
-            tr("Items are in the Recycle Bin and can be fully restored.")
+            tr("Moved items are in the Recycle Bin and can be restored from there.")
         )
         self._recovery_lbl.setObjectName("Dim")
         self._recovery_lbl.setStyleSheet("font-size: 11px;")
@@ -652,9 +652,9 @@ class QuickCleanupScreen(QWidget):
 
         self._theme_checks = []
         for text in [
-            tr("Universally safe categories only — no app data, no documents."),
+            tr("Temp files and browser caches only — no documents, no app settings."),
             tr("Protected paths cannot be selected here, ever."),
-            tr("Items go to the Recycle Bin — fully recoverable."),
+            tr("Items go to the Recycle Bin and can be restored from there."),
         ]:
             g_row = QHBoxLayout()
             g_row.setSpacing(8)
@@ -881,9 +881,11 @@ class QuickCleanupScreen(QWidget):
         # The one irreversible thing Podbye can do, so it says so plainly.
         reply = QMessageBox.question(
             self, tr("Empty Recycle Bin"),
-            tr("Permanently delete {n:,} items and free {size}?\n\n"
-               "This cannot be undone — everything Podbye cleaned is in here, "
-               "and emptying is the step that actually frees the space.",
+            tr("Permanently delete all {n:,} items in the Recycle Bin and "
+               "free {size}?\n\n"
+               "This empties the whole Recycle Bin — including anything you "
+               "deleted yourself, not only what Podbye moved there. It cannot "
+               "be undone.",
                n=items, size=_format_size(size_bytes)),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
@@ -1208,7 +1210,9 @@ class QuickCleanupScreen(QWidget):
         safe_color = p.get("safe", "#7cc596")
         warn_color = p.get("review", "#d8b46a")
         danger_color = p.get("risk", "#d68a78")
-        self._total_hdr.setText(tr("TOTAL FREED"))
+        # Moving to the bin frees nothing until the bin is emptied, and this
+        # screen says so a few lines further down.
+        self._total_hdr.setText(tr("MOVED TO RECYCLE BIN"))
         self._total_num.setStyleSheet(
             f"font-family: 'JetBrains Mono'; font-size: 32px; "
             f"font-weight: bold; color: {safe_color};"
@@ -1316,7 +1320,7 @@ class QuickCleanupScreen(QWidget):
                 "details are shown below", cleaned=n_cleaned))
         else:
             self._subtitle_lbl.setText(tr(
-                "{cleaned} categories cleaned · {size} freed",
+                "{cleaned} categories cleaned · {size} moved to the Recycle Bin",
                 cleaned=n_cleaned, size=_format_size(freed)))
         self._sel_badge.setVisible(False)
 
