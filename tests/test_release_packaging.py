@@ -177,6 +177,19 @@ def test_the_release_is_tested_exactly_the_way_ci_is():
     assert "tools/check_test_split.py" in tests
 
 
+def test_a_release_run_cannot_cancel_or_be_cancelled_by_push_runs():
+    """tests.yml cancels superseded runs by concurrency group. When
+    release.yml calls it, the called workflow sees the caller's context, so a
+    group keyed on the ref alone put a Release started by hand on a branch in
+    the same group as that branch's push runs, and each cancelled the other.
+    The workflow name keeps the two apart.
+    """
+    tests = _read(".github/workflows/tests.yml")
+    group = re.search(r"^concurrency:\s*\n\s+group:\s*(.+)$", tests, re.M).group(1)
+    assert "${{ github.workflow }}" in group, group
+    assert "${{ github.ref }}" in group, group
+
+
 def test_the_release_workflow_rejects_a_tag_that_is_not_the_app_version():
     jobs = _jobs(_read(".github/workflows/release.yml"))
     assert 'python tools/release_version.py --tag "$REF_NAME"' in jobs["version"]

@@ -23,8 +23,13 @@ on:
   workflow_call:
 
 # A new push to the same branch makes the previous run pointless.
+#
+# github.workflow is part of the key because release.yml calls this file, and
+# a called workflow sees the caller's context: "Release" there, "Tests" here.
+# Keyed on the ref alone, a Release run started by hand on a branch shared its
+# group with that branch's push runs, and each cancelled the other's tests.
 concurrency:
-  group: tests-${{ github.ref }}
+  group: tests-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
