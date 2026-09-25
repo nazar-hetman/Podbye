@@ -17,7 +17,7 @@ from typing import Optional
 
 from PySide6.QtCore import QThread, Signal
 
-from app.services.keep_list import is_kept
+from app.services.keep_list import is_kept, kept_inside
 
 
 # ── Exception ────────────────────────────────────────────────────
@@ -87,6 +87,14 @@ class CleanupResult:
     # Nothing here was touched: it is a refusal, not a failure and not a
     # removal. path -> reason ("too_large" | "bin_disabled").
     skipped_not_recyclable: dict = field(default_factory=dict)
+    # Paths left alone because they sit in a cloud-sync folder and the caller
+    # did not pass the user's acknowledgment that recycling them deletes them
+    # from the cloud account too. Refused here, not only in the dialog, because
+    # the dialog's auto-confirm path never looked at its checkbox.
+    skipped_cloud: list = field(default_factory=list)
+    # Bytes each succeeded path moved. total_bytes_freed is their sum; callers
+    # that report per category or per item read this instead of dividing it.
+    bytes_by_path: dict = field(default_factory=dict)
     total_bytes_freed: int = 0
     errors_by_path: dict = field(default_factory=dict)     # path → error string
     error_codes_by_path: dict = field(default_factory=dict)  # path → parsed Windows error code
@@ -133,6 +141,19 @@ def _is_expected_in_use_error(err: str) -> bool:
         "directory is not empty",
     )
     return any(marker in lowered for marker in markers)
+
+
+def _cloud_roots() -> dict:
+    """Cloud-sync roots on this machine, read at delete time.
+
+    A seam for tests, and a fresh read on purpose: the worker must not trust
+    what a scan - possibly one reopened from History - believed days ago.
+    """
+    try:
+        from app.services.cloud_detector import detect_cloud_roots
+        return detect_cloud_roots()
+    except Exception:
+        return {}
 
 
 # ── Size helper ──────────────────────────────────────────────────
@@ -308,6 +329,7 @@ def move_to_recycle_bin(paths: list) -> CleanupResult:
                 result.failed.append(path)
         else:
             result.succeeded.append(path)
+            result.bytes_by_path[path] = size
             result.total_bytes_freed += size
     return result
 
@@ -371,7 +393,8 @@ class CleanupWorker(QThread):
 
     def __init__(self, paths: list, mode: str = MODE_RECYCLE,
                  perm_delete_enabled: bool = False, parent=None,
-                 exclude_by_path: dict | None = None):
+                 exclude_by_path: dict | None = None,
+                 allow_cloud: bool = False):
         super().__init__(parent)
         self._paths = list(paths)
         self._mode = mode
@@ -381,25 +404,38 @@ class CleanupWorker(QThread):
         # confirm dialog's constructor froze the UI for 2.8 s on a 23k-file
         # tree between the click and the dialog appearing.
         self._exclude_by_path = dict(exclude_by_path or {})
+        # True only when the user ticked "I understand this will delete files
+        # from my cloud account". Without it, a path in a cloud-sync folder is
+        # refused here whatever the screen that queued it believed.
+        self._allow_cloud = bool(allow_cloud)
         self._cancel = False
 
     def _expanded_paths(self) -> list:
-        """Replace each folder that holds another finding with the parts it
-        owns. Runs on the worker thread."""
-        if not self._exclude_by_path:
-            return list(self._paths)
+        """Replace each folder that holds another finding, or something the
+        user is keeping, with the parts it owns. Runs on the worker thread.
+
+        Keep is read here, live, rather than trusted from the caller: a kept
+        folder inside a target is carved around no matter which screen queued
+        the target or how old the scan behind it is.
+        """
         from app.models.deletion_scope import expand_targets
 
         out = []
         for path in self._paths:
-            keep = self._exclude_by_path.get(path)
-            if not keep:
+            nested = list(self._exclude_by_path.get(path) or [])
+            kept = kept_inside(path)
+            if not nested and not kept:
                 out.append(path)
                 continue
-            owned = expand_targets(path, keep)
+            owned = expand_targets(path, nested + kept)
+            parts = [f"{len(owned)} part(s)"]
+            if nested:
+                parts.append(f"keeping {len(nested)} nested finding(s)")
+            if kept:
+                parts.append(f"leaving {len(kept)} kept folder(s) in place")
             self.log_line.emit(
                 f"[cleanup] {os.path.basename(path) or path}: "
-                f"{len(owned)} part(s), keeping {len(keep)} nested finding(s)")
+                + ", ".join(parts))
             out.extend(owned)
         return out
 
@@ -409,6 +445,7 @@ class CleanupWorker(QThread):
     def run(self):
         result = CleanupResult()
         self._paths = self._expanded_paths()
+        cloud_roots = {} if self._allow_cloud else _cloud_roots()
         total = len(self._paths)
         mode_label = "Recycle Bin" if self._mode == self.MODE_RECYCLE else "permanent delete"
         self.log_line.emit(f"[cleanup] moving {total} item(s) → {mode_label}...")
@@ -424,6 +461,25 @@ class CleanupWorker(QThread):
                 result.skipped_protected.append(path)
                 self.log_line.emit(f"[cleanup] skipped (protected): {os.path.basename(path)}")
                 continue
+
+            # The user's Keep mark, enforced where the deleting happens. The
+            # screens filter kept items out of their plans too; this is the
+            # layer that holds when one of them does not.
+            if is_kept(path):
+                result.skipped_kept.append(path)
+                self.log_line.emit(f"[cleanup] skipped (kept): {os.path.basename(path)}")
+                continue
+
+            if cloud_roots:
+                from app.services.cloud_detector import is_cloud_path
+                provider = is_cloud_path(path, cloud_roots)
+                if provider:
+                    result.skipped_cloud.append(path)
+                    self.log_line.emit(
+                        f"[cleanup] skipped (cloud-synced, {provider}): "
+                        f"{os.path.basename(path)} — removing it would delete "
+                        f"it from the cloud account, which was not confirmed")
+                    continue
 
             size = _get_size(path)
 
@@ -478,6 +534,7 @@ class CleanupWorker(QThread):
                     )
             else:
                 result.succeeded.append(path)
+                result.bytes_by_path[path] = size
                 result.total_bytes_freed += size
 
         self.progress.emit(total, total, "")
@@ -489,6 +546,10 @@ class CleanupWorker(QThread):
             parts.append(f"{len(result.failed)} failed")
         if result.skipped_protected:
             parts.append(f"{len(result.skipped_protected)} protected skipped")
+        if result.skipped_kept:
+            parts.append(f"{len(result.skipped_kept)} kept skipped")
+        if result.skipped_cloud:
+            parts.append(f"{len(result.skipped_cloud)} cloud skipped")
         self.log_line.emit(f"[cleanup] done: {', '.join(parts)}")
 
         self.finished.emit(result)

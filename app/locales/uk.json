@@ -1383,5 +1383,7 @@
   "Rest of this folder — not itemised": "Решта цієї теки — без деталізації",
   "WILL BE MOVED TO RECYCLE BIN": "БУДЕ ПЕРЕМІЩЕНО ДО КОШИКА",
   "WILL BE UNINSTALLED": "БУДЕ ВИДАЛЕНО",
-  "Measuring contents…": "Вимірюємо вміст…"
+  "Measuring contents…": "Вимірюємо вміст…",
+  "Cloud-synced": "Синхронізується з хмарою",
+  "Left in place — removing it would also delete it from your cloud account, and that was not confirmed": "Залишено на місці — видалення прибрало б це й з вашого хмарного облікового запису, а цього не було підтверджено"
 }

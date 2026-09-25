@@ -945,5 +945,7 @@
   "Rest of this folder — not itemised": "Reszta tego folderu — bez wyszczególnienia",
   "WILL BE MOVED TO RECYCLE BIN": "ZOSTANIE PRZENIESIONE DO KOSZA",
   "WILL BE UNINSTALLED": "ZOSTANIE ODINSTALOWANE",
-  "Measuring contents…": "Mierzenie zawartości…"
+  "Measuring contents…": "Mierzenie zawartości…",
+  "Cloud-synced": "Synchronizowane z chmurą",
+  "Left in place — removing it would also delete it from your cloud account, and that was not confirmed": "Pozostawiono na miejscu — usunięcie skasowałoby to również z Twojego konta w chmurze, a nie zostało to potwierdzone"
 }

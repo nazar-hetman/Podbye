@@ -740,6 +740,15 @@ class CleanupConfirmDialog(QDialog):
                 reason, path,
                 tr("You are keeping this — remove the mark in Settings to "
                    "clean it")))
+        # Refused by the worker because the cloud acknowledgment was not
+        # given. Nothing was touched; the reason says what would unlock it.
+        for path in getattr(result, "skipped_cloud", []):
+            reason = tr("Cloud-synced")
+            self._issue_colors[reason] = _risk_fg("Review")
+            self._issues.append((
+                reason, path,
+                tr("Left in place — removing it would also delete it from "
+                   "your cloud account, and that was not confirmed")))
 
         while self._issues_body_layout.count():
             item = self._issues_body_layout.takeAt(0)
@@ -897,10 +906,17 @@ class CleanupConfirmDialog(QDialog):
         excludes = {f["path"]: list(f.get("cleanup_exclude_paths") or [])
                     for f in self._armed if f.get("cleanup_exclude_paths")}
 
+        # The cloud acknowledgment travels to the worker, which refuses any
+        # path in a cloud-sync folder without it. Checked here from the box
+        # itself, so a path that reaches _on_confirm without the button - the
+        # auto-confirm route - carries no permission it was never given.
+        allow_cloud = bool(self._cloud_cb is not None
+                           and self._cloud_cb.isChecked())
         self._worker = CleanupWorker(
             paths=paths,
             mode=CleanupWorker.MODE_RECYCLE,
             exclude_by_path=excludes,
+            allow_cloud=allow_cloud,
             parent=self,
         )
         self._worker.progress.connect(self._on_progress)
@@ -938,8 +954,9 @@ class CleanupConfirmDialog(QDialog):
         n_ok   = len(result.succeeded)
         n_in_use = len(result.in_use)
         n_fail = len(result.failed)
-        n_skip = len(result.skipped_protected) + len(
-            getattr(result, "skipped_kept", []))
+        n_skip = (len(result.skipped_protected)
+                  + len(getattr(result, "skipped_kept", []))
+                  + len(getattr(result, "skipped_cloud", [])))
         # Items the bin refused are their own kind of skip. Counting them with
         # nothing at all was how a refused 15 GB folder came back as "there was
         # nothing removable left": every counter was zero, so the assessment

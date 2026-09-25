@@ -122,6 +122,20 @@ def is_kept(path: str) -> bool:
     return False
 
 
+def kept_inside(path: str) -> list[str]:
+    """Kept paths strictly inside *path*, as given.
+
+    is_kept() answers for a path and everything under it, never for its
+    ancestors - so a cleanup of ``Photos`` has to ask this separately, or a
+    kept ``Photos/2019`` goes to the Recycle Bin with its parent.
+    """
+    norm = _norm(path)
+    if not norm:
+        return []
+    prefix = norm + "/"
+    return [kept for kept in kept_paths() if _norm(kept).startswith(prefix)]
+
+
 def kept_root_for(path: str) -> str:
     """The kept path that covers *path*, or "" — for explaining the block.
 
