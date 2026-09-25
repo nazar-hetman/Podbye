@@ -9,15 +9,6 @@
     "size_bytes": 8002000
   },
   {
-    "entity_type": "cache_folder",
-    "name": "Cache – Snap",
-    "category": "Cache & Temp",
-    "risk": "Safe",
-    "file_count": 2,
-    "folder_count": 0,
-    "size_bytes": 8000
-  },
-  {
     "entity_type": "document_folder",
     "name": "Reports",
     "category": "Documents",
@@ -61,6 +52,15 @@
     "file_count": 3,
     "folder_count": 0,
     "size_bytes": 900000
+  },
+  {
+    "entity_type": "unknown_folder",
+    "name": "Cache – Snap",
+    "category": "Unknown",
+    "risk": "Review",
+    "file_count": 2,
+    "folder_count": 0,
+    "size_bytes": 8000
   },
   {
     "entity_type": "venv",

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -127,6 +128,81 @@ _AUDIO_EXTS = frozenset({
 _MEDIA_EXTS = _IMAGE_EXTS | _VIDEO_EXTS | _AUDIO_EXTS
 
 _LOG_EXTS = frozenset({".log", ".logs"})
+
+# ── Evidence for "Cache & Temp" ──────────────────────────────────
+#
+# The cache/temp rule used to be ``kw in lower_path`` for kw in {"temp", "tmp",
+# "cache"}: a substring of the whole path. Every file under
+# Documents/Templates, Photos/Contemporary Art or Music/Tempo Mixes was filed
+# as "Cache & Temp — auto-regenerated", risk Safe, and so was
+# Knowledge/edge cases/notes.docx as "Browser Data". Now a folder has to *be*
+# a cache or temp folder by name, and a bare "temp"/"cache" only counts where
+# applications keep their data; a person's own file type never counts at all.
+
+# Folder names that say "this is a cache" by themselves.
+_CACHE_WORD_RE = re.compile(r"cach(e|es)[0-9]*$")
+
+# A bare temp/cache folder is evidence only inside application data, or in
+# Windows' own tree (C:/Windows/Temp) - which is Protected anyway, so there
+# this only decides the label.
+_APP_DATA_SEGMENTS = frozenset({
+    "appdata", "application data", "local settings", "localappdata",
+    "roaming", "locallow", "programdata", ".cache", "windows",
+})
+
+# Files a person makes or keeps. A temp or cache location does not turn one of
+# these into regenerable data - an attachment opened from email still lands in
+# Temp, and it may be the only copy.
+_USER_CONTENT_EXTS = frozenset({
+    ".doc", ".docx", ".odt", ".rtf", ".pdf", ".xls", ".xlsx", ".ods", ".csv",
+    ".ppt", ".pptx", ".odp", ".txt", ".md", ".epub", ".mobi",
+    ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff", ".heic", ".heif",
+    ".raw", ".cr2", ".nef", ".arw", ".dng", ".psd", ".ai", ".svg", ".webp",
+    ".mp4", ".mkv", ".mov", ".avi", ".wmv", ".m4v", ".webm",
+    ".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".wma", ".opus", ".aiff",
+    ".zip", ".rar", ".7z", ".tar", ".gz", ".iso",
+    ".sav", ".vcf", ".ics", ".sql", ".kdbx", ".pst", ".blend", ".prproj",
+})
+
+# build/dist/target/venv... are only build output inside a project, which a
+# single path cannot show. Such a folder row keeps its label but not Safe.
+_AMBIGUOUS_DEV_NAMES = frozenset({
+    "dist", "build", "target", ".output", ".cache", "venv", ".venv",
+})
+
+
+def _tokens(segment: str) -> list:
+    return [t for t in re.split(r"[^a-z0-9]+", segment) if t]
+
+
+def _is_specific_cache_segment(seg: str) -> bool:
+    """A folder name that is a cache by itself: GPUCache, Code Cache, cache2,
+    Cache_Data, __pycache__, INetCache. Not a bare "cache"."""
+    if seg in ("cache", "caches"):
+        return False
+    if seg == "__pycache__" or seg.endswith("cache"):
+        return True
+    return any(_CACHE_WORD_RE.fullmatch(t) for t in _tokens(seg))
+
+
+def _is_bare_cache_or_temp_segment(seg: str) -> bool:
+    return seg in ("cache", "caches", "temp", "tmp", "temporary")
+
+
+def _cache_temp_evidence(segs: list, is_dir: bool) -> str:
+    """The cache/temp keyword the path genuinely has, or "".
+
+    Folders only: a file is judged by the folders it sits in, never by its own
+    name (cached_contacts.vcf is a contact list).
+    """
+    folders = segs if is_dir else segs[:-1]
+    in_app_data = bool(set(folders) & _APP_DATA_SEGMENTS)
+    for seg in folders:
+        if _is_specific_cache_segment(seg):
+            return "__pycache__" if seg == "__pycache__" else "cache"
+        if in_app_data and _is_bare_cache_or_temp_segment(seg):
+            return "cache" if seg.startswith("cach") else "temp"
+    return ""
 
 _APP_EXTS = frozenset({".exe", ".msi", ".appx", ".msix"})
 
@@ -479,6 +555,12 @@ def categorize(path: str, name: str, ext: str, is_dir: bool, size_bytes: int = 0
     if is_dir and lower_name in _DEV_ARTIFACT_NAMES:
         if not _is_app_context(parts, segs):
             s_label, s_conf = _DEV_ARTIFACT_LABELS.get(lower_name, ("Dev Artifact", "exact"))
+            if lower_name in _AMBIGUOUS_DEV_NAMES:
+                # The label may stand; the Safe it used to carry may not.
+                # assign_risk reads this rule and answers Review.
+                return ("Dev Artifacts",
+                        f"dev artifact name (unconfirmed): {lower_name}",
+                        s_label, "heuristic")
             return "Dev Artifacts", f"dev artifact directory: {lower_name}", s_label, s_conf
         # Inside an app root — fall through to application detection below
 
@@ -496,24 +578,31 @@ def categorize(path: str, name: str, ext: str, is_dir: bool, size_bytes: int = 0
                     "AI Model", "heuristic")
 
     # ── 2. Cache & Temp / Browser Data ───────────────────────────────
-    for kw in _CACHE_KEYWORDS:
-        if kw in lower_path:
-            for bkw in _BROWSER_CACHE_KEYWORDS:
-                if bkw in lower_path:
-                    return "Browser Data", f"browser cache: {bkw}/{kw}", "Browser Cache", "exact"
-            # Differentiate cache sub-types for better labels
-            if kw == "thumbcache":
-                s_label, s_conf = "Thumbnail Cache", "exact"
-            elif kw == "__pycache__":
-                s_label, s_conf = "Build Cache", "exact"
-            elif kw == "cache":
-                s_label, s_conf = "Application Cache", "heuristic"
-            else:   # temp / tmp
-                s_label, s_conf = "Temporary Files", "heuristic"
-            return "Cache & Temp", f"cache/temp keyword: {kw}", s_label, s_conf
+    # Whole folder names only, and never for a person's own file type.
+    if not is_dir and lower_name.startswith("thumbcache_") and lower_ext == ".db":
+        return "Cache & Temp", "cache/temp keyword: thumbcache", "Thumbnail Cache", "exact"
+    kw = "" if (not is_dir and lower_ext in _USER_CONTENT_EXTS) \
+        else _cache_temp_evidence(segs, is_dir)
+    if kw:
+        folder_tokens = {t for seg in (segs if is_dir else segs[:-1])
+                         for t in _tokens(seg)}
+        for bkw in _BROWSER_CACHE_KEYWORDS:
+            if bkw in folder_tokens:
+                return "Browser Data", f"browser cache: {bkw}/{kw}", "Browser Cache", "exact"
+        if kw == "__pycache__":
+            s_label, s_conf = "Build Cache", "exact"
+        elif kw == "cache":
+            s_label, s_conf = "Application Cache", "heuristic"
+        else:   # temp
+            s_label, s_conf = "Temporary Files", "heuristic"
+        return "Cache & Temp", f"cache/temp keyword: {kw}", s_label, s_conf
 
     # ── 3. Log files ─────────────────────────────────────────────────
-    if lower_ext in _LOG_EXTS or lower_name == "logs":
+    # A .log file is a log by its content type. A folder called "logs" is a
+    # log folder only where applications keep their data; elsewhere it is
+    # someone's folder with that name.
+    if (not is_dir and lower_ext in _LOG_EXTS) or (
+            lower_name == "logs" and set(segs[:-1]) & _APP_DATA_SEGMENTS):
         return "System Logs", f"log: {lower_name}", "Log Files", "exact"
 
     # ── 4. Path ownership detection (specific patterns) ─────────────
@@ -600,6 +689,10 @@ def assign_risk(category: str, path: str, size_bytes: int) -> tuple:
         ext = os.path.splitext(path)[1].lower()
         if ext in _SOURCE_EXTS:
             return "Review", "source code — user-written, verify before removing"
+        if lower.rstrip("/").rsplit("/", 1)[-1] in _AMBIGUOUS_DEV_NAMES:
+            return "Review", ("named like build output, but a single path "
+                              "cannot show it belongs to a project — review "
+                              "before removing")
         return "Safe", "dev artifact — regenerated by build tools"
 
     if category == "Applications":

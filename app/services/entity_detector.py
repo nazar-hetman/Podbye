@@ -1513,6 +1513,13 @@ _DEV_ASSET_DIR_NAMES = {
     "snapshots", "__snapshots__", "coverage", ".storybook", "stories",
     "assets", "static", "public",
 }
+# Words that make a folder name a log folder's - matched as whole words.
+_LOG_NAME_WORDS = frozenset({
+    "log", "logs", "diag", "diagnostics", "trace", "traces", "dump", "dumps",
+    "crash", "crashes", "crashdumps", "crashreports",
+})
+# Development folders that tooling writes and can write again.
+_GENERATED_DEV_DIR_NAMES = frozenset({"coverage", ".nyc_output", "htmlcov"})
 _BUILD_ARTIFACT_DIR_NAMES = {
     "build", "builds", "dist", "out", "output", "outputs", "target",
     "release", "debug", ".next", ".nuxt", ".svelte-kit", ".vite",
@@ -1750,8 +1757,15 @@ def _last_chance_folder_classification(
     norm_path: str,
     folder_name: str,
     direct_children: list[Finding],
+    parent_is_project: bool = False,
 ) -> tuple[Optional[str], str]:
-    """Classify common folder roles before falling back to Unknown."""
+    """Classify common folder roles before falling back to Unknown.
+
+    *parent_is_project* is whether the folder's parent carries a project
+    marker. Project-material names (config, assets, fixtures, tests) mean
+    something only inside a project, and even there they are the project's
+    own source - never regenerable output.
+    """
     lname = folder_name.lower()
     path_parts = set(norm_path.rstrip("/").split("/"))
     direct_file_names = {c.name.lower() for c in direct_children if not c.is_dir}
@@ -1767,16 +1781,28 @@ def _last_chance_folder_classification(
     if lname in {"tmp", "temp", "temporary"} or lname.endswith("tmp"):
         return "temp_folder", Reason("Temporary folder name")
 
-    if lname in {"log", "logs"} or any(k in lname for k in ("log", "diag", "trace", "dump", "crash")):
+    # Whole words, not substrings: "log" sits inside Blog, Catalog and
+    # Dialogues, and each of those was filed as a Safe log folder.
+    if set(re.split(r"[^a-z0-9]+", lname)) & _LOG_NAME_WORDS:
         return "log_folder", Reason("Log/diagnostic folder name")
 
-    if lname in _DEV_ASSET_DIR_NAMES:
-        return "dev_artifacts", "Development/test asset folder name"
+    if lname in _GENERATED_DEV_DIR_NAMES:
+        if parent_is_project:
+            return "dev_artifacts", "Generated development output"
+    elif lname in _DEV_ASSET_DIR_NAMES:
+        # Tests, fixtures, assets and static files are written by people.
+        # Inside a project they are part of it; outside one the name says
+        # nothing, and the contents are left to decide.
+        if parent_is_project:
+            return "dev_project", Reason("Part of a software project — its "
+                                         "source, tests or assets")
 
     if lname in _CONFIG_DIR_NAMES:
         if path_parts & _APPLICATION_SUPPORT_SEGMENTS:
             return "application_data", "Application configuration/support data"
-        return "dev_artifacts", "Configuration folder"
+        if parent_is_project:
+            return "dev_project", Reason("Part of a software project — its "
+                                         "source, tests or assets")
 
     if path_parts & _APPLICATION_SUPPORT_SEGMENTS:
         return "application_data", Reason("Application support data path")
@@ -3422,7 +3448,8 @@ def _pass7_sweep(ctx: "_DetectionContext"):
             etype = "installer_cache"
         elif not etype:
             fallback_type, fallback_reason = _last_chance_folder_classification(
-                norm_path, d.name, direct
+                norm_path, d.name, direct,
+                parent_is_project=_parent_is_project(ctx, norm_path.rstrip("/")),
             )
             if fallback_type:
                 etype = fallback_type
@@ -4513,6 +4540,178 @@ def _retype_workspaces(ctx: "_DetectionContext", entities: list, log_fn):
                f"workspaces rather than projects")
 
 
+# ── Safe needs evidence ───────────────────────────────────────────
+#
+# Safe is the one verdict that tells a person they need not look. Several
+# passes award a disposable type from a folder's name - pass 1's exact names,
+# pass 4's cache words, the sweep's last-chance names - and each of them was
+# found calling ordinary user folders Safe: D:/Temp holding a passport scan,
+# ClientX/out holding a finished video, "Blog" and "Product Catalog" read as
+# log folders because "log" sits inside the word. Rather than patch each award
+# site, every Safe row is checked once here, after all of them have run, so a
+# pass added later is held to the same rule.
+#
+# Two questions, in order:
+#   1. Is there evidence beyond the name? A curated location, a proven
+#      component, a self-describing tool directory, pyvenv.cfg, a project
+#      marker beside a build folder, an app-data or game-library location for
+#      a cache, or log files inside a log folder.
+#   2. Does it hold a person's own files? Documents, photos, video, audio,
+#      archives, saves. Structural evidence answers this already - a web
+#      build next to package.json is full of images and still regenerable -
+#      but a cache or temp folder found by location alone does not.
+# A row failing either is Review, as unknown_folder: no whole-folder delete.
+
+_SAFE_DISPOSABLE_TYPES = frozenset({
+    "dev_artifacts", "build_folder", "venv", "node_modules", "cache_folder",
+    "temp_folder", "shader_cache", "log_folder", "ai_cache", "game_cache",
+})
+
+# Tool directories whose name is the whole story: nothing else is called this.
+_SELF_DESCRIBING_DIRS = frozenset({
+    "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache",
+    ".ruff_cache", ".tox", ".nox", ".gradle", ".next", ".nuxt", ".svelte-kit",
+    ".parcel-cache", ".turbo", "bower_components", ".angular", ".vite",
+    ".eslintcache", "cmake-build-debug", "cmake-build-release",
+})
+
+# Where applications keep data they can rebuild. A cache or log folder here
+# is the application's; the same name on a data drive is not evidence.
+_APP_DATA_SEGMENTS = frozenset({
+    "appdata", "application data", "local settings", "localappdata",
+    "roaming", "locallow", "programdata", ".cache",
+})
+_GAME_LIBRARY_SEGMENTS = frozenset({"steamapps"})
+
+_LOG_CONTENT_EXTS = frozenset({".log", ".etl", ".dmp", ".mdmp", ".trace",
+                               ".blf", ".evtx"}) | frozenset(_LOG_EXTS)
+
+_USER_CONTENT_EXTS = frozenset(
+    _DOC_EXTS | _IMAGE_EXTS | _VIDEO_EXTS | _AUDIO_EXTS | _ARCHIVE_EXTS
+    | _PROJECT_EXTS
+    | {".sav", ".vcf", ".ics", ".epub", ".mobi", ".odt", ".ods", ".odp",
+       ".rtf", ".heic", ".heif", ".tif", ".cr2", ".nef", ".arw", ".dng",
+       ".sql", ".kdbx", ".pst", ".ost", ".img"})
+
+# Share of a folder's sampled files, by count or by bytes, above which it is
+# treated as holding a person's own files.
+_USER_CONTENT_SHARE = 0.3
+
+# Evidence that already answers question 2: the folder is structurally a
+# regenerable part of software, whatever file types it contains.
+_STRUCTURAL_EVIDENCE = frozenset({
+    "known location", "proven component", "self-describing", "pyvenv.cfg",
+    "project build",
+})
+
+# An application's own cache folder inside its data folder is its cache even
+# when it holds media (an After Effects extension keeps preview .mp4s in
+# AppData/.../Cache). Temp is different: email attachments and half-finished
+# downloads land in Temp, so a temp folder is always checked for them.
+_APP_DATA_TRUSTED_TYPES = frozenset({
+    "cache_folder", "shader_cache", "game_cache", "ai_cache", "log_folder",
+})
+
+
+def _parent_is_project(ctx: "_DetectionContext", norm_path: str) -> bool:
+    """True when the folder's parent carries a project marker."""
+    parent = norm_path.rsplit("/", 1)[0] if "/" in norm_path else ""
+    if not parent:
+        return False
+    for child in ctx.gather_direct(parent):
+        name = child.name.lower()
+        if child.is_dir:
+            if name in _VCS_DIR_NAMES:
+                return True
+            continue
+        if (name in _PROJECT_MARKER_FILES
+                or os.path.splitext(name)[1] in _PROJECT_MARKER_EXTS):
+            return True
+    return False
+
+
+def _safe_evidence(ctx: "_DetectionContext", e: SmartEntity) -> str:
+    """What, beyond its name, shows *e* is disposable - or "" for nothing."""
+    norm = e.path.replace("\\", "/").lower().rstrip("/")
+    parts = norm.split("/")
+    leaf = parts[-1] if parts else ""
+    ancestors = set(parts[:-1])
+
+    try:
+        from app.services.known_paths import lookup as _known_lookup
+        if _known_lookup(e.path):
+            return "known location"
+    except Exception:
+        pass
+    if getattr(e, "component_rule_id", ""):
+        return "proven component"
+    if e.entity_type == "node_modules" or leaf in _SELF_DESCRIBING_DIRS:
+        return "self-describing"
+    if e.entity_type == "venv":
+        direct = {c.name.lower() for c in ctx.gather_direct(norm)}
+        return "pyvenv.cfg" if "pyvenv.cfg" in direct else ""
+    if e.entity_type in ("build_folder", "dev_artifacts"):
+        return "project build" if _parent_is_project(ctx, norm) else ""
+    # Caches, temp, logs, shader/game/AI caches.
+    if ancestors & _APP_DATA_SEGMENTS:
+        return "application data"
+    if ancestors & _GAME_LIBRARY_SEGMENTS:
+        return "game library"
+    if _parent_is_project(ctx, norm):
+        return "project"
+    if e.entity_type == "log_folder":
+        files = [c for c in ctx.sample(norm, 400) if not c.is_dir]
+        if files and sum(1 for c in files
+                         if c.extension.lower() in _LOG_CONTENT_EXTS) * 2 >= len(files):
+            return "log content"
+    return ""
+
+
+def _holds_user_content(ctx: "_DetectionContext", norm: str) -> bool:
+    files = [c for c in ctx.sample(norm, 400) if not c.is_dir]
+    if not files:
+        return False
+    hits = [c for c in files if c.extension.lower() in _USER_CONTENT_EXTS]
+    if not hits:
+        return False
+    total = sum(c.size_bytes for c in files)
+    by_count = len(hits) / len(files)
+    by_bytes = (sum(c.size_bytes for c in hits) / total) if total else 0.0
+    return by_count >= _USER_CONTENT_SHARE or by_bytes >= _USER_CONTENT_SHARE
+
+
+def _enforce_safe_evidence(ctx: "_DetectionContext", entities: list,
+                           log_fn=None) -> int:
+    """Demote every Safe row that has only a name, or holds a person's files."""
+    demoted = 0
+    for e in entities:
+        if e.risk != "Safe" or e.entity_type not in _SAFE_DISPOSABLE_TYPES:
+            continue
+        norm = e.path.replace("\\", "/").lower().rstrip("/")
+        evidence = _safe_evidence(ctx, e)
+        if not evidence:
+            reason = Reason("A name alone does not make this safe to remove "
+                            "— review what is inside before removing it")
+        elif (evidence not in _STRUCTURAL_EVIDENCE
+                and not (evidence == "application data"
+                         and e.entity_type in _APP_DATA_TRUSTED_TYPES)
+                and _holds_user_content(ctx, norm)):
+            reason = Reason("Holds your own files — documents, photos, video "
+                            "or archives — so review it before removing it")
+        else:
+            continue
+        e.entity_type = "unknown_folder"
+        e.risk = "Review"
+        e.risk_reason = reason
+        e.summary = (f"{ENTITY_TYPES.get('unknown_folder', 'Folder')} · "
+                     f"{e.file_count:,} files · {e.size}")
+        demoted += 1
+    if demoted and log_fn:
+        log_fn(f"[smart] {demoted} row(s) named like disposable data kept at "
+               f"Review: nothing beyond the name confirmed it")
+    return demoted
+
+
 def _postprocess(ctx: "_DetectionContext", t0: float) -> list:
     """Drop empty/aggregate entities, absorb sub-folder entities into
     parents, annotate cloud-sync and age, sort, and return the final list."""
@@ -4641,6 +4840,10 @@ def _postprocess(ctx: "_DetectionContext", t0: float) -> list:
     retyped = _apply_component_roles(entities)
     if retyped:
         log_fn(f"[smart] retyped {retyped} proven component entit(ies)")
+
+    # Safe needs evidence. After every pass that can award a disposable type
+    # and after the curated and component rules, so it judges final verdicts.
+    _enforce_safe_evidence(ctx, entities, log_fn)
 
     # One folder, one folder-backed row.
     entities = _one_entity_per_root(entities, log_fn)

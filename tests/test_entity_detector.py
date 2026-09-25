@@ -62,30 +62,56 @@ def test_tiny_unknown_findings_are_suppressed():
     assert any("suppressed" in line and "placeholder" in line for line in logs)
 
 
+# Fixtures, assets and config used to be dev_artifacts - "produced by
+# development tooling, safe to regenerate" - on their name alone, wherever they
+# were. They are written by people: deleting a project's config or its test
+# fixtures breaks it. Inside a project they are now project material (Review);
+# outside one the name decides nothing. Either way, never Safe.
+
 def test_fixture_folders_are_development_artifacts_before_unknown():
     tree = [
         mkdir(f"{ROOT}/fixtures"),
         mkfile(f"{ROOT}/fixtures/catalog.json", 80_000),
+        mkfile(f"{ROOT}/package.json", 1_000),
     ]
 
     entities = detect_entities(tree, ROOT)
 
     assert len(entities) == 1
-    assert entities[0].entity_type == "dev_artifacts"
+    assert entities[0].entity_type == "dev_project"
     assert entities[0].category == "Dev Artifacts"
+    assert entities[0].risk == "Review"
 
 
 def test_development_asset_folders_are_classified_before_unknown():
     tree = [
         mkdir(f"{ROOT}/assets"),
         mkfile(f"{ROOT}/assets/bundle.js", 80_000),
+        mkfile(f"{ROOT}/package.json", 1_000),
     ]
 
     entities = detect_entities(tree, ROOT)
 
     assert len(entities) == 1
-    assert entities[0].entity_type == "dev_artifacts"
+    assert entities[0].entity_type == "dev_project"
     assert entities[0].category == "Dev Artifacts"
+    assert entities[0].risk == "Review"
+
+
+import pytest as _pytest
+
+
+@_pytest.mark.parametrize("name,fname", [
+    ("fixtures", "catalog.json"), ("assets", "bundle.js"),
+    ("config", "settings.json"), ("public", "index.html"),
+])
+def test_project_material_names_are_never_safe(name, fname):
+    for with_project in (False, True):
+        tree = [mkdir(f"{ROOT}/{name}"), mkfile(f"{ROOT}/{name}/{fname}", 80_000)]
+        if with_project:
+            tree.append(mkfile(f"{ROOT}/package.json", 1_000))
+        for e in detect_entities(tree, ROOT):
+            assert e.risk != "Safe", (name, with_project, e.entity_type, e.risk_reason)
 
 
 def test_project_marker_folders_are_development_projects():
@@ -119,13 +145,15 @@ def test_configuration_folders_do_not_fall_to_unknown():
     tree = [
         mkdir(f"{ROOT}/config"),
         mkfile(f"{ROOT}/config/settings.json", 80_000),
+        mkfile(f"{ROOT}/package.json", 1_000),
     ]
 
     entities = detect_entities(tree, ROOT)
 
     assert len(entities) == 1
-    assert entities[0].entity_type == "dev_artifacts"
+    assert entities[0].entity_type == "dev_project"
     assert entities[0].category == "Dev Artifacts"
+    assert entities[0].risk == "Review"
 
 
 def test_meaningful_small_known_findings_still_surface():
@@ -139,22 +167,45 @@ def test_meaningful_small_known_findings_still_surface():
     assert any(e.entity_type == "log_folder" for e in entities)
 
 
+# The golden tree's "cache" is a bare folder of that name at an arbitrary scan
+# root, holding two opaque .bin files. Nothing but the name says it is a cache
+# - no application-data location, no project, no curated rule - so it is no
+# longer Safe: it stays visible, at Review, as an unclassified folder. "logs"
+# keeps its type because its contents are log files, which is evidence.
+
 def test_known_directory_types_detected():
     by_type = {e.entity_type for e in detect_entities(_golden_tree(), ROOT)}
     assert "node_modules" in by_type
     assert "photo_collection" in by_type
-    assert "cache_folder" in by_type
     assert "log_folder" in by_type
+    assert "cache_folder" not in by_type, "a bare name is not evidence of a cache"
 
 
 def test_categories_and_risk():
-    by_type = {e.entity_type: e for e in detect_entities(_golden_tree(), ROOT)}
+    entities = detect_entities(_golden_tree(), ROOT)
+    by_type = {e.entity_type: e for e in entities}
     assert by_type["node_modules"].category == "Dev Artifacts"
     assert by_type["node_modules"].risk == "Safe"
-    assert by_type["cache_folder"].category == "Cache & Temp"
-    assert by_type["cache_folder"].risk == "Safe"
     assert by_type["log_folder"].category == "System Logs"
+    assert by_type["log_folder"].risk == "Safe"
     assert by_type["photo_collection"].category == "Images"
+    cache = next(e for e in entities if e.path.endswith("/cache"))
+    assert cache.risk == "Review"
+    assert cache.entity_type == "unknown_folder"
+
+
+def test_a_cache_folder_inside_application_data_is_still_safe():
+    tree = [
+        mkdir(f"{ROOT}/AppData"), mkdir(f"{ROOT}/AppData/Local"),
+        mkdir(f"{ROOT}/AppData/Local/Widget"),
+        mkdir(f"{ROOT}/AppData/Local/Widget/cache"),
+        mkfile(f"{ROOT}/AppData/Local/Widget/cache/blob1.bin"),
+        mkfile(f"{ROOT}/AppData/Local/Widget/cache/blob2.bin"),
+    ]
+    cache = next(e for e in detect_entities(tree, ROOT)
+                 if e.path.endswith("/cache"))
+    assert cache.entity_type == "cache_folder"
+    assert cache.risk == "Safe"
 
 
 def test_containment_rule_no_loose_files():

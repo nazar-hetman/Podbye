@@ -877,5 +877,8 @@
   "Left in place — removing it would also delete it from your cloud account, and that was not confirmed": "Nicht angetastet — das Entfernen würde es auch aus Ihrem Cloud-Konto löschen, und das wurde nicht bestätigt",
   "Don't ask again for Safe and Optional items": "Bei „Sicher“- und „Optional“-Elementen nicht mehr fragen",
   "Confirm every cleanup": "Jede Bereinigung bestätigen",
-  "When off, a cleanup of only Safe and Optional items starts without asking. Items that need review, and items in a cloud-sync folder, are always confirmed first.": "Wenn aus, startet eine Bereinigung nur mit „Sicher“- und „Optional“-Elementen ohne Nachfrage. Zu prüfende Elemente und Elemente in einem Cloud-Sync-Ordner werden immer zuerst bestätigt."
+  "When off, a cleanup of only Safe and Optional items starts without asking. Items that need review, and items in a cloud-sync folder, are always confirmed first.": "Wenn aus, startet eine Bereinigung nur mit „Sicher“- und „Optional“-Elementen ohne Nachfrage. Zu prüfende Elemente und Elemente in einem Cloud-Sync-Ordner werden immer zuerst bestätigt.",
+  "A name alone does not make this safe to remove — review what is inside before removing it": "Ein Name allein macht das Entfernen nicht sicher — prüfen Sie den Inhalt, bevor Sie es entfernen",
+  "Holds your own files — documents, photos, video or archives — so review it before removing it": "Enthält Ihre eigenen Dateien — Dokumente, Fotos, Videos oder Archive — prüfen Sie es also vor dem Entfernen",
+  "Part of a software project — its source, tests or assets": "Teil eines Softwareprojekts — Quellcode, Tests oder Assets"
 }

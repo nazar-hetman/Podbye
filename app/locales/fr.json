@@ -1379,5 +1379,8 @@
   "Left in place — removing it would also delete it from your cloud account, and that was not confirmed": "Laissé en place — le supprimer l’effacerait aussi de votre compte cloud, et cela n’a pas été confirmé",
   "Don't ask again for Safe and Optional items": "Ne plus demander pour les éléments « Sûr » et « Optionnel »",
   "Confirm every cleanup": "Confirmer chaque nettoyage",
-  "When off, a cleanup of only Safe and Optional items starts without asking. Items that need review, and items in a cloud-sync folder, are always confirmed first.": "Désactivé, un nettoyage ne contenant que des éléments « Sûr » et « Optionnel » démarre sans demander. Les éléments à vérifier et ceux d’un dossier synchronisé dans le cloud sont toujours confirmés d’abord."
+  "When off, a cleanup of only Safe and Optional items starts without asking. Items that need review, and items in a cloud-sync folder, are always confirmed first.": "Désactivé, un nettoyage ne contenant que des éléments « Sûr » et « Optionnel » démarre sans demander. Les éléments à vérifier et ceux d’un dossier synchronisé dans le cloud sont toujours confirmés d’abord.",
+  "A name alone does not make this safe to remove — review what is inside before removing it": "Un nom seul ne rend pas la suppression sûre — vérifiez le contenu avant de le supprimer",
+  "Holds your own files — documents, photos, video or archives — so review it before removing it": "Contient vos propres fichiers — documents, photos, vidéos ou archives — vérifiez-le donc avant de le supprimer",
+  "Part of a software project — its source, tests or assets": "Fait partie d’un projet logiciel — son code, ses tests ou ses ressources"
 }
